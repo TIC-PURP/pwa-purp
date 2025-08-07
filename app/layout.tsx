@@ -1,12 +1,16 @@
-import InstallButton from "../components/InstallButton"
-import type React from "react";
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import { Providers } from "@/components/providers";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+'use client'
 
-const inter = Inter({ subsets: ["latin"] });
+import InstallButton from "../components/InstallButton"
+import type React from "react"
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import "./globals.css"
+import { Providers } from "@/components/providers"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { useEffect } from "react"
+import { startSync } from "@/lib/database" // asegúrate que esta ruta esté correcta
+
+const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "PWA",
@@ -19,13 +23,22 @@ export const metadata: Metadata = {
     maximumScale: 1,
   },
   generator: "v0.dev",
-};
+}
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
+  useEffect(() => {
+    console.log("Iniciando sincronización CouchDB ↔ PouchDB")
+    try {
+      startSync()
+    } catch (error) {
+      console.error("Error al iniciar la sincronización:", error)
+    }
+  }, [])
+
   return (
     <html lang="es">
       <body className={inter.className}>
@@ -33,8 +46,7 @@ export default function RootLayout({
           <ErrorBoundary>{children}</ErrorBoundary>
           <InstallButton />
         </Providers>
-  </body>
+      </body>
     </html>
-  );
+  )
 }
-

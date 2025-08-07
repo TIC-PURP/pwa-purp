@@ -13,7 +13,7 @@ if (isClient) {
 
   localDB = new PouchDB("gestion_pwa_local")
   if (process.env.NEXT_PUBLIC_COUCHDB_URL) {
-    remoteDB = new PouchDB(process.env.NEXT_PUBLIC_COUCHDB_URL)
+    remoteDB = new PouchDB(`${process.env.NEXT_PUBLIC_COUCHDB_URL}/gestion_pwa`)
   }
 }
 
