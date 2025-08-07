@@ -13,13 +13,7 @@ if (isClient) {
 
   localDB = new PouchDB("gestion_pwa_local")
   if (process.env.NEXT_PUBLIC_COUCHDB_URL) {
-   remoteDB = new PouchDB("https://2f5759232030.ngrok-free.app/gestion_pwa", {
-  auth: {
-    username: "admin",
-    password: "Purp_*2023"
-  },
-  skip_setup: true
-})
+    remoteDB = new PouchDB(process.env.NEXT_PUBLIC_COUCHDB_URL)
   }
 }
 
