@@ -1,0 +1,50 @@
+# === DEPENDENCIES ===
+node_modules/
+
+# === NEXT.JS ===
+.next/
+out/
+build/
+
+# === TYPESCRIPT ===
+*.tsbuildinfo
+next-env.d.ts
+
+# === ENV FILES ===
+.env
+.env.*
+!.env.example  # Deja visible solo un ejemplo si lo tienes
+
+# === LOG FILES ===
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# === VERCEL ===
+.vercel/
+
+# === SENTRY ===
+.env.sentry-build-plugin
+.sentryclirc
+.sentry/            # Carpeta de configuración si la usas
+.sentry-release.sh  # Script de release si lo generaste
+
+# === SYSTEM FILES ===
+.DS_Store
+Thumbs.db
+
+# === IDES ===
+.vscode/
+.idea/
+
+# === TESTING ===
+coverage/
+jest-html-reporters-*.html
+
+# === BUILD TOOLS ===
+*.log
+*.cache/
+.cache/
+turbo/
