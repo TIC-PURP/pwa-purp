@@ -10,7 +10,7 @@ export default function HomePage() {
   const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth)
 
   useEffect(() => {
-    console.log("🧪 Ejecutando startSync desde HomePage")
+    console.log("Ejecutando startSync desde HomePage")
     startSync()
   }, [])
 
