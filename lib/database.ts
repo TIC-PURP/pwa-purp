@@ -181,12 +181,16 @@ export async function loginOnlineToCouchDB(email: string, password: string): Pro
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: new URLSearchParams({ name: email, password })
-    })
+      body: new URLSearchParams({
+        name: email,
+        password
+      }),
+      credentials: "include" // ← esto es CLAVE para que use cookies
+    });
 
-    return res.ok
+    return res.ok;
   } catch (err) {
-    console.error("Error conectando con CouchDB:", err)
-    return false
+    console.error("Error conectando con CouchDB:", err);
+    return false;
   }
 }
