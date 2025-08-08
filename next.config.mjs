@@ -29,7 +29,7 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: `
     default-src 'self';
-    connect-src 'self' http://127.0.0.1:5984 https://*.ingest.sentry.io;
+    connect-src 'self' https://couchdb-purp.onrender.com https://*.ingest.sentry.io;
     script-src 'self' 'unsafe-eval' 'unsafe-inline';
     style-src 'self' 'unsafe-inline';
     img-src * data:;
