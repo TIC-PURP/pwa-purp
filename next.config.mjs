@@ -28,16 +28,14 @@ const nextConfig = {
           {
             key: "Content-Security-Policy",
             value: `
-    default-src 'self';
-    connect-src 'self' https://couchdb-purp.onrender.com https://*.ingest.sentry.io;
-    script-src 'self' 'unsafe-eval' 'unsafe-inline';
-    style-src 'self' 'unsafe-inline';
-    img-src * data:;
-    worker-src 'self' blob:;
-    object-src 'none';
-  `
-              .replace(/\s{2,}/g, " ")
-              .trim(),
+              default-src 'self';
+              connect-src 'self' https://couchdb-purp.onrender.com https://*.ingest.sentry.io;
+              script-src 'self' 'unsafe-eval' 'unsafe-inline';
+              style-src 'self' 'unsafe-inline';
+              img-src * data:;
+              worker-src 'self' blob:;
+              object-src 'none';
+            `.replace(/\s{2,}/g, " ").trim(),
           },
         ],
       },
