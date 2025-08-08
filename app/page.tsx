@@ -3,10 +3,16 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAppSelector } from "@/lib/hooks"
+import { startSync } from "@/lib/database"
 
 export default function HomePage() {
   const router = useRouter()
   const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth)
+
+  useEffect(() => {
+    console.log("🧪 Ejecutando startSync desde HomePage")
+    startSync()
+  }, [])
 
   useEffect(() => {
     if (!isLoading) {

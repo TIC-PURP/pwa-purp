@@ -13,8 +13,10 @@ if (isClient) {
 
   localDB = new PouchDB("gestion_pwa_local")
   if (process.env.NEXT_PUBLIC_COUCHDB_URL) {
-    remoteDB = new PouchDB(process.env.NEXT_PUBLIC_COUCHDB_URL)
-  }
+  console.log("Conectando a:", process.env.NEXT_PUBLIC_COUCHDB_URL)
+  remoteDB = new PouchDB(process.env.NEXT_PUBLIC_COUCHDB_URL)
+}
+
 }
 
 import type { User } from "./types"
@@ -22,7 +24,7 @@ import type { User } from "./types"
 let syncHandler: any = null
 
 export const startSync = () => {
-  console.log("📡 startSync llamado")
+  console.log("startSync llamado")
 
   if (!isClient) {
     console.warn("No está en cliente")
