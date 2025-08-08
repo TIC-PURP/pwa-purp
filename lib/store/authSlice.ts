@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit"
 import type { AuthState, LoginCredentials } from "../types"
-import { authenticateUser, startSync, stopSync } from "../database"
+import { authenticateUser, startSync, stopSync, loginOnlineToCouchDB } from "../database"
 
 const initialState: AuthState = {
   user: null,
@@ -14,10 +14,32 @@ export const loginUser = createAsyncThunk(
   "auth/loginUser",
   async (credentials: LoginCredentials, { rejectWithValue }) => {
     try {
-      const user = await authenticateUser(credentials.email, credentials.password)
-      if (!user) {
-        return rejectWithValue("Credenciales inválidas")
-      }
+      let user = await authenticateUser(credentials.email, credentials.password)
+
+if (!user) {
+  const onlineSuccess = await loginOnlineToCouchDB(credentials.email, credentials.password)
+
+  if (!onlineSuccess) {
+    return rejectWithValue("Credenciales inválidas")
+  }
+
+  await startSync()
+
+  // Esperar sincronización del usuario
+  let tries = 0
+  const maxTries = 10
+  const delay = (ms: number) => new Promise(res => setTimeout(res, ms))
+
+  while (!user && tries < maxTries) {
+    await delay(500)
+    user = await authenticateUser(credentials.email, credentials.password)
+    tries++
+  }
+
+  if (!user) {
+    return rejectWithValue("Error sincronizando usuario desde CouchDB")
+  }
+}
 
       // Generar token simple (en producción usar JWT)
       const token = `token_${user.id}_${Date.now()}`

@@ -173,3 +173,20 @@ export const updateUserById = async (userId: string, updates: Partial<User>): Pr
     console.error("Error al actualizar usuario:", error)
   }
 }
+
+export async function loginOnlineToCouchDB(email: string, password: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_COUCHDB_URL}/_session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ name: email, password })
+    })
+
+    return res.ok
+  } catch (err) {
+    console.error("Error conectando con CouchDB:", err)
+    return false
+  }
+}
