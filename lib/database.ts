@@ -194,3 +194,18 @@ export async function loginOnlineToCouchDB(email: string, password: string): Pro
     return false;
   }
 }
+export const guardarUsuarioOffline = async (user: any) => {
+  if (!localDB) return
+  const _id = `user_${user.username || user.email}` // usa email como ID único si no hay username
+  try {
+    const existing = await localDB.get(_id)
+    user._rev = existing._rev
+    await localDB.put({ _id, ...user })
+  } catch (err: any) {
+    if (err.status === 404) {
+      await localDB.put({ _id, ...user })
+    } else {
+      console.error("Error guardando usuario offline:", err)
+    }
+  }
+}

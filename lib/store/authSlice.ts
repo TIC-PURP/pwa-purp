@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit"
 import type { AuthState, LoginCredentials } from "../types"
-import { authenticateUser, startSync, stopSync, loginOnlineToCouchDB } from "../database"
+import { authenticateUser, startSync, stopSync, loginOnlineToCouchDB, guardarUsuarioOffline } from "../database"
 
 const initialState: AuthState = {
   user: null,
@@ -16,30 +16,35 @@ export const loginUser = createAsyncThunk(
     try {
       let user = await authenticateUser(credentials.email, credentials.password)
 
-if (!user) {
-  const onlineSuccess = await loginOnlineToCouchDB(credentials.email, credentials.password)
+      // Si no se encuentra localmente, intenta login online
+      if (!user) {
+        const onlineSuccess = await loginOnlineToCouchDB(credentials.email, credentials.password)
 
-  if (!onlineSuccess) {
-    return rejectWithValue("Credenciales inválidas")
-  }
+        if (!onlineSuccess) {
+          return rejectWithValue("Credenciales inválidas")
+        }
 
-  await startSync()
+        // Iniciar sincronización para traer datos del usuario
+        await startSync()
 
-  // Esperar sincronización del usuario
-  let tries = 0
-  const maxTries = 10
-  const delay = (ms: number) => new Promise(res => setTimeout(res, ms))
+        // Esperar que el usuario sea replicado (opcional pero recomendable)
+        let tries = 0
+        const maxTries = 10
+        const delay = (ms: number) => new Promise(res => setTimeout(res, ms))
 
-  while (!user && tries < maxTries) {
-    await delay(500)
-    user = await authenticateUser(credentials.email, credentials.password)
-    tries++
-  }
+        while (!user && tries < maxTries) {
+          await delay(500)
+          user = await authenticateUser(credentials.email, credentials.password)
+          tries++
+        }
 
-  if (!user) {
-    return rejectWithValue("Error sincronizando usuario desde CouchDB")
-  }
-}
+        if (!user) {
+          return rejectWithValue("Error sincronizando usuario desde CouchDB")
+        }
+      }
+
+      // 👇 Guardar usuario localmente para permitir login offline
+      await guardarUsuarioOffline(user)
 
       // Generar token simple (en producción usar JWT)
       const token = `token_${user.id}_${Date.now()}`
@@ -48,7 +53,7 @@ if (!user) {
       localStorage.setItem("auth_token", token)
       localStorage.setItem("auth_user", JSON.stringify(user))
 
-      // Iniciar sincronización
+      // Iniciar sincronización (en caso de que aún no se haya llamado)
       startSync()
 
       return { user, token }
@@ -56,7 +61,7 @@ if (!user) {
       return rejectWithValue("Error de autenticación")
     }
   },
-)
+) 
 
 export const logoutUser = createAsyncThunk("auth/logoutUser", async (_, { dispatch }) => {
   // Limpiar localStorage
