@@ -44,8 +44,32 @@ const withPwa = withPWA({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  fallbacks: { document: "/offline.html" }, // crea este archivo
-});
+  precachePages: ["/", "/auth/login", "/principal"],
+  runtimeCaching: [
+    {
+      urlPattern: ({ request, sameOrigin }) => sameOrigin && request.destination === "document",
+      handler: "NetworkFirst",
+      options: {
+        cacheName: "html-pages",
+        networkTimeoutSeconds: 3,
+        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
+      },
+    },
+    {
+      urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
+      handler: "StaleWhileRevalidate",
+      options: { cacheName: "static-resources" },
+    },
+    {
+      urlPattern: ({ request }) => request.destination === "image",
+      handler: "StaleWhileRevalidate",
+      options: { cacheName: "images", expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 } },
+    },
+  ],
+  fallbacks: { document: "/offline.html" },
+})
+
+
 
 const nextConfig = withPwa(baseConfig);
 
