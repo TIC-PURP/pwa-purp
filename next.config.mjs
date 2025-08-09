@@ -5,8 +5,8 @@ import { withSentryConfig } from "@sentry/nextjs";
 /** @type {import('next').NextConfig} */
 const baseConfig = {
   images: { unoptimized: true },
-  eslint: { ignoreDuringBuilds: false },       // ✅ no ignores en prod
-  typescript: { ignoreBuildErrors: false },    // ✅ no ignores en prod
+  eslint: { ignoreDuringBuilds: false }, // ✅ no ignores en prod
+  typescript: { ignoreBuildErrors: false }, // ✅ no ignores en prod
   async headers() {
     return [
       {
@@ -30,7 +30,9 @@ const baseConfig = {
               img-src * data:;
               worker-src 'self' blob:;
               object-src 'none';
-            `.replace(/\s{2,}/g, " ").trim(),
+            `
+              .replace(/\s{2,}/g, " ")
+              .trim(),
           },
         ],
       },
@@ -44,14 +46,15 @@ const withPwa = withPWA({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  clientsClaim: true,                 // 👈 toma control inmediato
+  clientsClaim: true, // 👈 toma control inmediato
   cleanupOutdatedCaches: true,
 
   runtimeCaching: [
     // A) Documentos en general (App Router)
     {
       urlPattern: ({ url, request }) =>
-        url.origin === self.location.origin && request.destination === "document",
+        url.origin === self.location.origin &&
+        request.destination === "document",
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -65,7 +68,9 @@ const withPwa = withPWA({
     {
       urlPattern: ({ url }) =>
         url.origin === self.location.origin &&
-        (url.pathname === "/auth/login" || url.pathname === "/principal" || url.pathname === "/"),
+        (url.pathname === "/auth/login" ||
+          url.pathname === "/principal" ||
+          url.pathname === "/"),
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -91,12 +96,21 @@ const withPwa = withPWA({
         expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
       },
     },
+    // dentro de runtimeCaching: [ ... ]
+    {
+      urlPattern: /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
+      handler: "NetworkFirst",
+      options: {
+        cacheName: "html-pages",
+        networkTimeoutSeconds: 3,
+        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
+      },
+    },
   ],
 
   // Fallback cuando ni red ni caché
   fallbacks: { document: "/offline.html" },
 });
-
 
 const nextConfig = withPwa(baseConfig);
 
