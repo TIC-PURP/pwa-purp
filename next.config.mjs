@@ -44,10 +44,13 @@ const withPwa = withPWA({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  precachePages: ["/", "/auth/login", "/principal"],
+
+  // Cache en tiempo de ejecución
   runtimeCaching: [
     {
-      urlPattern: ({ request, sameOrigin }) => sameOrigin && request.destination === "document",
+      // Documentos/páginas (App Router)
+      urlPattern: ({ request, sameOrigin }) =>
+        sameOrigin && request.destination === "document",
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -56,20 +59,26 @@ const withPwa = withPWA({
       },
     },
     {
-      urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
+      // JS/CSS/Workers
+      urlPattern: ({ request }) =>
+        ["style", "script", "worker"].includes(request.destination),
       handler: "StaleWhileRevalidate",
       options: { cacheName: "static-resources" },
     },
     {
+      // Imágenes
       urlPattern: ({ request }) => request.destination === "image",
       handler: "StaleWhileRevalidate",
-      options: { cacheName: "images", expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 } },
+      options: {
+        cacheName: "images",
+        expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
+      },
     },
   ],
+
+  // Fallback cuando no hay red ni caché del documento
   fallbacks: { document: "/offline.html" },
-})
-
-
+});
 
 const nextConfig = withPwa(baseConfig);
 
