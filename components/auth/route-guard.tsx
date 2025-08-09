@@ -4,7 +4,7 @@ import type React from "react";
 import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAppSelector } from "@/lib/hooks";
-import { LoginForm } from "@/components/auth/login-form";
+import { LoginForm } from "@/components/auth/login-form"; // If you prefer default export, change this import
 
 interface RouteGuardProps {
   children: React.ReactNode;
@@ -20,15 +20,14 @@ export function RouteGuard({
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAppSelector((s) => s.auth);
 
-  const offline =
-    typeof navigator !== "undefined" ? !navigator.onLine : false;
+  const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
 
   const lacksAuthOrRole = useMemo(
     () => !isAuthenticated || (requiredRole && user?.role !== requiredRole),
     [isAuthenticated, requiredRole, user?.role]
   );
 
-  // Solo redirige cuando HAY red. En offline NO navegamos (renderizamos login inline).
+  // Only redirect when ONLINE. Offline we render Login inline.
   useEffect(() => {
     if (isLoading) return;
     if (!offline && lacksAuthOrRole) {
@@ -36,7 +35,6 @@ export function RouteGuard({
     }
   }, [isLoading, offline, lacksAuthOrRole, redirectTo, router]);
 
-  // Cargando estado auth
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -45,7 +43,7 @@ export function RouteGuard({
     );
   }
 
-  // En offline SIN sesión -> mostrar LoginForm inline (sin navegar)
+  // OFFLINE & not authenticated/role => show Login inline (no navigation)
   if (offline && lacksAuthOrRole) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
@@ -62,11 +60,8 @@ export function RouteGuard({
     );
   }
 
-  // En online SIN sesión -> dejamos que el useEffect redirija (y retornamos vacío)
-  if (!offline && lacksAuthOrRole) {
-    return null;
-  }
+  // ONLINE but not authorized yet -> effect will redirect; render nothing
+  if (!offline && lacksAuthOrRole) return null;
 
-  // Autorizado
   return <>{children}</>;
 }
