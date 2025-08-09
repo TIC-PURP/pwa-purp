@@ -71,6 +71,8 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
     "@testing-library/jest-dom": "^6.6.4",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
@@ -79,6 +81,7 @@
     "@types/pouchdb": "^6.4.2",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "babel-loader": "^10.0.0",
     "jest": "^30.0.5",
     "jest-environment-jsdom": "^30.0.5",
     "postcss": "^8.5",
