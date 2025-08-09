@@ -44,13 +44,14 @@ const withPwa = withPWA({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
+  clientsClaim: true,                 // 👈 toma control inmediato
+  cleanupOutdatedCaches: true,
 
-  // Cache en tiempo de ejecución
   runtimeCaching: [
+    // A) Documentos en general (App Router)
     {
-      // Documentos/páginas (App Router)
-      urlPattern: ({ request, sameOrigin }) =>
-        sameOrigin && request.destination === "document",
+      urlPattern: ({ url, request }) =>
+        url.origin === self.location.origin && request.destination === "document",
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -58,15 +59,31 @@ const withPwa = withPWA({
         expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
       },
     },
+
+    // B) Fuerza cache específico de /auth/login y /principal, sin importar el 'destination'.
+    //    Así podemos "precalentar" vía Cache API o fetch() normal.
     {
-      // JS/CSS/Workers
+      urlPattern: ({ url }) =>
+        url.origin === self.location.origin &&
+        (url.pathname === "/auth/login" || url.pathname === "/principal" || url.pathname === "/"),
+      handler: "NetworkFirst",
+      options: {
+        cacheName: "html-pages",
+        networkTimeoutSeconds: 3,
+        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
+      },
+    },
+
+    // Estáticos (JS/CSS/Workers)
+    {
       urlPattern: ({ request }) =>
         ["style", "script", "worker"].includes(request.destination),
       handler: "StaleWhileRevalidate",
       options: { cacheName: "static-resources" },
     },
+
+    // Imágenes
     {
-      // Imágenes
       urlPattern: ({ request }) => request.destination === "image",
       handler: "StaleWhileRevalidate",
       options: {
@@ -76,9 +93,10 @@ const withPwa = withPWA({
     },
   ],
 
-  // Fallback cuando no hay red ni caché del documento
+  // Fallback cuando ni red ni caché
   fallbacks: { document: "/offline.html" },
 });
+
 
 const nextConfig = withPwa(baseConfig);
 
