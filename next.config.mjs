@@ -1,17 +1,12 @@
+// next.config.mjs
+import withPWA from "next-pwa";
 import { withSentryConfig } from "@sentry/nextjs";
 
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  eslint: {
-    reactStrictMode: true,
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  images: {
-    unoptimized: true,
-  },
+const baseConfig = {
+  images: { unoptimized: true },
+  eslint: { ignoreDuringBuilds: false },       // ✅ no ignores en prod
+  typescript: { ignoreBuildErrors: false },    // ✅ no ignores en prod
   async headers() {
     return [
       {
@@ -43,6 +38,18 @@ const nextConfig = {
   },
 };
 
+// PWA
+const withPwa = withPWA({
+  dest: "public",
+  register: true,
+  skipWaiting: true,
+  disable: process.env.NODE_ENV === "development",
+  fallbacks: { document: "/offline.html" }, // crea este archivo
+});
+
+const nextConfig = withPwa(baseConfig);
+
+// Sentry al final
 const sentryWebpackPluginOptions = {
   org: "tic-ev",
   project: "javascript-nextjs",

@@ -8,19 +8,6 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const inter = Inter({ subsets: ["latin"] });
 
-export const metadata: Metadata = {
-  title: "PWA",
-  description: "PWA",
-  manifest: "/manifest.json",
-  themeColor: [{ media: "(prefers-color-scheme: dark)", color: "#0f172a" }],
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-  },
-  generator: "v0.dev",
-};
-
 export default function RootLayout({
   children,
 }: {
