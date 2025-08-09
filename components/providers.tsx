@@ -12,13 +12,13 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { user, isAuthenticated } = useAppSelector((s) => s.auth);
 
-  // Seed local DB + session rehydrate
+  // Semilla local + rehidratación de sesión
   useEffect(() => {
     initializeDefaultUsers();
     dispatch(loadUserFromStorage());
   }, [dispatch]);
 
-  // Warm cache for key pages once (when online)
+  // 🔥 Precalentar caché de páginas clave cuando hay red y el SW controla la pestaña
   useEffect(() => {
     const warm = async () => {
       try {
@@ -26,23 +26,31 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
         if (!("caches" in window)) return;
         if (!navigator.onLine) return;
 
+        // espera a que el SW esté listo y controle la pestaña
         await navigator.serviceWorker?.ready;
         if (!navigator.serviceWorker?.controller) return;
 
-        const cache = await caches.open("html-pages");
+        const cache = await caches.open("html-pages"); // debe coincidir con next.config.mjs
         const urls = ["/", "/auth/login", "/principal"];
+
+        // addAll falla si una ruta da 404; mejor en serie con try/catch
         for (const u of urls) {
-          try { await cache.add(u); }
-          catch { try { await fetch(u, { cache: "no-store" }); } catch {} }
+          try {
+            await cache.add(u);
+          } catch {
+            // como plan B, intenta fetch para que pase por runtimeCaching
+            try { await fetch(u, { cache: "no-store" }); } catch {}
+          }
         }
       } catch (e) {
+        // silencioso: no queremos romper la UI por el warmup
         console.debug("warm cache skipped:", e);
       }
     };
     warm();
   }, []);
 
-  // On reconnect: re-auth and start sync
+  // ♻️ Al volver online: intenta sesión CouchDB y activa sync para subir lo offline
   useEffect(() => {
     const onOnline = async () => {
       try {

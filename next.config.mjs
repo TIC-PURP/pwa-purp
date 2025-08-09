@@ -5,8 +5,8 @@ import { withSentryConfig } from "@sentry/nextjs";
 /** @type {import('next').NextConfig} */
 const baseConfig = {
   images: { unoptimized: true },
-  eslint: { ignoreDuringBuilds: false },       // ✅ no ignores en prod
-  typescript: { ignoreBuildErrors: false },    // ✅ no ignores en prod
+  eslint: { ignoreDuringBuilds: false }, // ✅ no ignores en prod
+  typescript: { ignoreBuildErrors: false }, // ✅ no ignores en prod
   async headers() {
     return [
       {
@@ -30,7 +30,9 @@ const baseConfig = {
               img-src * data:;
               worker-src 'self' blob:;
               object-src 'none';
-            `.replace(/\s{2,}/g, " ").trim(),
+            `
+              .replace(/\s{2,}/g, " ")
+              .trim(),
           },
         ],
       },
@@ -43,15 +45,16 @@ const withPwa = withPWA({
   dest: "public",
   register: true,
   skipWaiting: true,
-  clientsClaim: true,
-  cleanupOutdatedCaches: true,
   disable: process.env.NODE_ENV === "development",
+  clientsClaim: true, // 👈 toma control inmediato
+  cleanupOutdatedCaches: true,
 
   runtimeCaching: [
-    // Documents/pages (App Router navigations)
+    // A) Documentos en general (App Router)
     {
       urlPattern: ({ url, request }) =>
-        url.origin === self.location.origin && request.destination === "document",
+        url.origin === self.location.origin &&
+        request.destination === "document",
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -59,7 +62,41 @@ const withPwa = withPWA({
         expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
       },
     },
-    // Force cache for key routes even if not a 'document' navigation
+
+    // B) Fuerza cache específico de /auth/login y /principal, sin importar el 'destination'.
+    //    Así podemos "precalentar" vía Cache API o fetch() normal.
+    {
+      urlPattern: ({ url }) =>
+        url.origin === self.location.origin &&
+        (url.pathname === "/auth/login" ||
+          url.pathname === "/principal" ||
+          url.pathname === "/"),
+      handler: "NetworkFirst",
+      options: {
+        cacheName: "html-pages",
+        networkTimeoutSeconds: 3,
+        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
+      },
+    },
+
+    // Estáticos (JS/CSS/Workers)
+    {
+      urlPattern: ({ request }) =>
+        ["style", "script", "worker"].includes(request.destination),
+      handler: "StaleWhileRevalidate",
+      options: { cacheName: "static-resources" },
+    },
+
+    // Imágenes
+    {
+      urlPattern: ({ request }) => request.destination === "image",
+      handler: "StaleWhileRevalidate",
+      options: {
+        cacheName: "images",
+        expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
+      },
+    },
+    // dentro de runtimeCaching: [ ... ]
     {
       urlPattern: /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
       handler: "NetworkFirst",
@@ -69,37 +106,15 @@ const withPwa = withPWA({
         expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
       },
     },
-    // JS/CSS/Workers
-    {
-      urlPattern: ({ request }) =>
-        ["style", "script", "worker"].includes(request.destination),
-      handler: "StaleWhileRevalidate",
-      options: { cacheName: "static-resources" },
-    },
-    // Images
-    {
-      urlPattern: ({ request }) => request.destination === "image",
-      handler: "StaleWhileRevalidate",
-      options: {
-        cacheName: "images",
-        expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
-      },
-    },
-    // Next static assets (optional)
-    {
-      urlPattern: /^https:\/\/[^/]+\/_next\/static\/.*/i,
-      handler: "StaleWhileRevalidate",
-      options: { cacheName: "next-static" },
-    },
   ],
 
-  // Fallback when there's no network and no cached document
+  // Fallback cuando ni red ni caché
   fallbacks: { document: "/offline.html" },
 });
 
 const nextConfig = withPwa(baseConfig);
 
-// Sentry (unchanged)
+// Sentry al final
 const sentryWebpackPluginOptions = {
   org: "tic-ev",
   project: "javascript-nextjs",
