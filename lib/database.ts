@@ -189,3 +189,89 @@ export async function deleteUserById(idOrCouchId: string): Promise<void> {
   const doc = await localDB.get(_id);
   await localDB.remove(doc);
 }
+
+// --- AGREGAR AL FINAL DE lib/database.ts ---
+
+/** Login con preferencia online y fallback offline */
+export async function authenticateUser(email: string, password: string) {
+  try {
+    // Online: cookie + bootstrap + buscar perfil
+    await loginOnlineToCouchDB(email, password);
+    await bootstrapAfterLogin();
+
+    const res = await localDB.find({
+      selector: { type: "user", email },
+      limit: 1,
+    });
+
+    let user = res.docs[0] as User | undefined;
+
+    if (!user) {
+      // Si no hay perfil, creamos uno mínimo local (se replicará si el user tiene permisos)
+      const now = new Date().toISOString();
+      user = {
+        type: "user",
+        id: crypto.randomUUID(),
+        name: email.split("@")[0],
+        email,
+        role: "user" as any,
+        permissions: ["app_access"] as any,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await createUser(user);
+    }
+
+    guardarUsuarioOffline(user);
+    return { ok: true, user, offline: false as const };
+  } catch (e) {
+    // Offline: permitir si ya existe el perfil local (sin validar password)
+    const res = await localDB.find({
+      selector: { type: "user", email },
+      limit: 1,
+    });
+    const user = res.docs[0] as User | undefined;
+    if (user) {
+      guardarUsuarioOffline(user);
+      return { ok: true, user, offline: true as const };
+    }
+    return { ok: false, error: "Credenciales inválidas o sin datos locales." };
+  }
+}
+
+/** Guarda un pequeño rastro para reabrir sesión offline */
+export function guardarUsuarioOffline(user: User) {
+  try {
+    localStorage.setItem("purp.last_user_email", user.email);
+    localStorage.setItem("purp.last_user_id", user.id);
+  } catch {}
+}
+
+/** Semilla opcional del manager (solo si pones las envs). Si no, no hace nada. */
+export async function initializeDefaultUsers() {
+  try {
+    const anyUser = await localDB.find({ selector: { type: "user" }, limit: 1 });
+    if (anyUser.docs.length > 0) return;
+
+    const email = process.env.NEXT_PUBLIC_SEED_MANAGER_EMAIL;
+    const password = process.env.NEXT_PUBLIC_SEED_MANAGER_PASSWORD;
+    const name = process.env.NEXT_PUBLIC_SEED_MANAGER_NAME || "Manager";
+
+    if (!email || !password) return; // sin envs => no seed
+
+    const now = new Date().toISOString();
+    const user: User = {
+      type: "user",
+      id: crypto.randomUUID(),
+      name,
+      email,
+      role: "manager" as any,
+      permissions: ["app_access", "users_read", "users_write", "users_delete"] as any,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await createUser(user);
+  } catch {}
+}

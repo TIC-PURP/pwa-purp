@@ -8,16 +8,30 @@ import { Navbar } from "@/components/layout/navbar";
 import { UserForm } from "@/components/users/user-form";
 import { Button } from "@/components/ui/button";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { User, CreateUserData } from "@/lib/types";
 import {
-  getAllUsers, createUser, updateUser, softDeleteUser, deleteUserById,
+  getAllUsers,
+  createUser,
+  updateUser,
+  softDeleteUser,
+  deleteUserById,
 } from "@/lib/database";
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
@@ -34,7 +48,9 @@ async function provisionUserInCouch(params: {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || data?.reason || "No se pudo crear el usuario en CouchDB");
+    throw new Error(
+      data?.error || data?.reason || "No se pudo crear el usuario en CouchDB"
+    );
   }
   return data;
 }
@@ -46,8 +62,9 @@ export default function UsersPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  const [deleteMode, setDeleteMode] =
-    useState<"soft" | "hard" | "activate">("soft");
+  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
+    "soft"
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -71,11 +88,14 @@ export default function UsersPage() {
 
       // 2) Guardar perfil en Pouch (sin password)
       await createUser({
+        type: "user", // 👈 REQUERIDO
         id: crypto.randomUUID(),
         name: data.name,
         email: data.email,
-        role: data.role,
-        permissions: data.permissions,
+        role: (data.role as any) ?? "user",
+        permissions: data.permissions?.length
+          ? data.permissions
+          : ["app_access"],
         isActive: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -103,6 +123,7 @@ export default function UsersPage() {
         email: data.email,
         role: data.role,
         permissions: data.permissions,
+        type: "user",
       });
       await loadUsers();
       setEditingUser(null);
@@ -126,7 +147,9 @@ export default function UsersPage() {
       }
       await loadUsers();
       toast.success(
-        `Usuario ${deleteMode === "soft" ? "desactivado" : "eliminado permanentemente"}`
+        `Usuario ${
+          deleteMode === "soft" ? "desactivado" : "eliminado permanentemente"
+        }`
       );
       setDeletingUser(null);
     } catch (error) {
@@ -140,7 +163,7 @@ export default function UsersPage() {
   const handleToggleUserStatus = async (user: User) => {
     setIsLoading(true);
     try {
-      await updateUser({ ...user, isActive: !user.isActive });
+      await updateUser({ ...user, isActive: !user.isActive, type: "user" });
       await loadUsers();
       toast.success(
         `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
@@ -192,7 +215,9 @@ export default function UsersPage() {
 
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">Panel de control</h1>
+                <h1 className="text-3xl font-bold text-slate-900">
+                  Panel de control
+                </h1>
                 <p className="mt-2 text-slate-600">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
@@ -203,7 +228,10 @@ export default function UsersPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {users.map((user) => (
-                <Card key={user.id} className={!user.isActive ? "opacity-60" : ""}>
+                <Card
+                  key={user.id}
+                  className={!user.isActive ? "opacity-60" : ""}
+                >
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
@@ -211,7 +239,11 @@ export default function UsersPage() {
                         <CardDescription>{user.email}</CardDescription>
                       </div>
                       <div className="flex space-x-1">
-                        <Button variant="ghost" size="sm" onClick={() => setEditingUser(user)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingUser(user)}
+                        >
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
@@ -241,21 +273,33 @@ export default function UsersPage() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Rol:</span>
-                        <Badge variant={user.role === "manager" ? "default" : "secondary"}>
+                        <Badge
+                          variant={
+                            user.role === "manager" ? "default" : "secondary"
+                          }
+                        >
                           {user.role}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Estado:</span>
-                        <Badge variant={user.isActive ? "default" : "destructive"}>
+                        <Badge
+                          variant={user.isActive ? "default" : "destructive"}
+                        >
                           {user.isActive ? "Activo" : "Inactivo"}
                         </Badge>
                       </div>
                       <div>
-                        <span className="text-sm text-slate-600">Permisos:</span>
+                        <span className="text-sm text-slate-600">
+                          Permisos:
+                        </span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {user.permissions.map((p) => (
-                            <Badge key={p} variant="outline" className="text-xs">
+                            <Badge
+                              key={p}
+                              variant="outline"
+                              className="text-xs"
+                            >
                               {p.replace("_", " ")}
                             </Badge>
                           ))}
@@ -283,7 +327,10 @@ export default function UsersPage() {
           </div>
         </main>
 
-        <AlertDialog open={!!deletingUser} onOpenChange={() => setDeletingUser(null)}>
+        <AlertDialog
+          open={!!deletingUser}
+          onOpenChange={() => setDeletingUser(null)}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
@@ -303,7 +350,10 @@ export default function UsersPage() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction onClick={handleDeleteUser} disabled={isLoading}>
+              <AlertDialogAction
+                onClick={handleDeleteUser}
+                disabled={isLoading}
+              >
                 {isLoading
                   ? deleteMode === "soft"
                     ? "Desactivando..."
