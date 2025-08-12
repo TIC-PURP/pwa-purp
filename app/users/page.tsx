@@ -58,6 +58,7 @@ export default function UsersPage() {
     try {
       const now = new Date().toISOString()
       await createUser({
+        type: 'user',
         id: crypto.randomUUID(),
         type: 'user',
         name: data.name,

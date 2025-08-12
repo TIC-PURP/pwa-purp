@@ -1,22 +1,11 @@
-"use client";
+'use client'
 
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { createUserSchema, editUserSchema } from "@/lib/validations";
-import type { CreateUserData, User, Role, Permission } from "@/lib/types";
+import { useState, useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import type { User, CreateUserData, Role, Permission } from '@/lib/types'
 
-const PERMISSION_OPTIONS: Permission[] = [
-  "app_access",
-  "users_read",
-  "users_write",
-  "users_delete",
-];
+const allPermissions: Permission[] = ["app_access","users_read","users_write","users_delete"]
 
 export function UserForm({
   user,
@@ -24,123 +13,112 @@ export function UserForm({
   onCancel,
   isLoading,
 }: {
-  user?: User;
-  onSubmit: (data: CreateUserData | Partial<CreateUserData>) => Promise<void> | void;
-  onCancel: () => void;
-  isLoading?: boolean;
+  user?: User
+  onSubmit: (data: CreateUserData | Partial<CreateUserData>) => void | Promise<void>
+  onCancel: () => void
+  isLoading?: boolean
 }) {
-  const isEditing = !!user;
+  const isEditing = !!user
+  const [name, setName] = useState(user?.name || '')
+  const [email, setEmail] = useState(user?.email || '')
+  const [password, setPassword] = useState('') // solo creación/edición
+  const [role, setRole] = useState<Role>((user?.role as Role) || 'user')
+  const [permissions, setPermissions] = useState<Permission[]>(
+    (user?.permissions as Permission[]) || ['app_access']
+  )
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors },
-  } = useForm<CreateUserData | Partial<CreateUserData>>({
-    resolver: zodResolver(isEditing ? editUserSchema : createUserSchema) as any,
-    // ⬇⬇⬇ AQUÍ el fix: usar valores válidos para Permission
-    defaultValues: isEditing
-      ? {
-          name: user?.name,
-          email: user?.email,
-          role: user?.role as Role,
-          permissions: user?.permissions as Permission[],
-        }
-      : {
-          name: "",
-          email: "",
-          password: "",
-          role: "user",
-          permissions: ["app_access"], // ⬅️ ya no "read"
-        },
-  });
-
-  const permissions = (watch("permissions") as Permission[]) || [];
-
-  const togglePermission = (p: Permission, checked: boolean) => {
-    const current = new Set(permissions);
-    if (checked) current.add(p);
-    else current.delete(p);
-    setValue("permissions", Array.from(current) as any, { shouldValidate: true });
-  };
-
-  const submit = handleSubmit(async (data) => {
-    // En edición, la contraseña suele ser opcional: limpia si viene vacía
-    if (isEditing) {
-      const { password, ...rest } = data as CreateUserData;
-      await onSubmit(password ? (data as CreateUserData) : (rest as Partial<CreateUserData>));
-    } else {
-      await onSubmit(data as CreateUserData);
+  useEffect(() => {
+    if (user) {
+      setName(user.name)
+      setEmail(user.email)
+      setRole(user.role as Role)
+      setPermissions((user.permissions as Permission[]) || [])
     }
-  });
+  }, [user])
+
+  const togglePerm = (p: Permission) => {
+    setPermissions((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const data: any = { name, email, role, permissions }
+    if (password) data.password = password
+    await onSubmit(data)
+  }
 
   return (
-    <form className="space-y-4" onSubmit={submit}>
-      <div>
-        <Label>Nombre</Label>
-        <Input {...register("name")} />
-        {errors.name && <p className="text-red-600 text-sm">{String(errors.name.message)}</p>}
-      </div>
-
-      <div>
-        <Label>Correo</Label>
-        <Input type="email" {...register("email")} />
-        {errors.email && <p className="text-red-600 text-sm">{String(errors.email.message)}</p>}
-      </div>
-
-      {!isEditing && (
-        <div>
-          <Label>Contraseña</Label>
-          <Input type="password" {...register("password")} />
-          {errors.password && <p className="text-red-600 text-sm">{String(errors.password.message)}</p>}
-        </div>
-      )}
-
-      <div>
-        <Label>Rol</Label>
-        <Select
-          defaultValue={(isEditing ? user?.role : "user") as Role}
-          onValueChange={(v) => setValue("role", v as Role, { shouldValidate: true })}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Selecciona un rol" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="user">user</SelectItem>
-            <SelectItem value="manager">manager</SelectItem>
-            <SelectItem value="administrador">administrador</SelectItem>
-          </SelectContent>
-        </Select>
-        {errors.role && <p className="text-red-600 text-sm">{String(errors.role.message)}</p>}
-      </div>
-
-      <div>
-        <Label>Permisos</Label>
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          {PERMISSION_OPTIONS.map((p) => (
-            <label key={p} className="flex items-center gap-2">
-              <Checkbox
-                checked={permissions.includes(p)}
-                onCheckedChange={(c) => togglePermission(p, Boolean(c))}
-              />
-              <span className="text-sm">{p}</span>
-            </label>
-          ))}
-        </div>
-        {errors.permissions && (
-          <p className="text-red-600 text-sm">{String(errors.permissions.message)}</p>
-        )}
-      </div>
-
-      <div className="flex gap-2">
-        <Button type="submit" disabled={isLoading}>
-          {isEditing ? "Guardar cambios" : "Crear usuario"}
-        </Button>
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-          Cancelar
-        </Button>
-      </div>
-    </form>
-  );
+    <Card>
+      <CardContent className="space-y-4 p-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Nombre</label>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Email</label>
+            <input
+              type="email"
+              className="w-full border rounded px-3 py-2"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Contraseña</label>
+            <input
+              type="password"
+              className="w-full border rounded px-3 py-2"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={isEditing ? "Dejar vacío para no cambiar" : ""}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Rol</label>
+            <select
+              className="w-full border rounded px-3 py-2"
+              value={role}
+              onChange={(e) => setRole(e.target.value as Role)}
+            >
+              <option value="user">user</option>
+              <option value="manager">manager</option>
+              <option value="administrador">administrador</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Permisos</label>
+            <div className="flex flex-wrap gap-3">
+              {allPermissions.map((p) => (
+                <label key={p} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={permissions.includes(p)}
+                    onChange={() => togglePerm(p)}
+                  />
+                  <span className="text-sm">{p}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button type="submit" disabled={!!isLoading}>
+              {isEditing ? (isLoading ? "Guardando..." : "Guardar Cambios") : (isLoading ? "Creando..." : "Crear Usuario")}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onCancel}>
+              Cancelar
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  )
 }
