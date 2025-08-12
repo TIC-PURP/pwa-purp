@@ -1,14 +1,31 @@
 // next.config.mjs
-import withPWA from "next-pwa";
-import { withSentryConfig } from "@sentry/nextjs";
+import withPWA from "next-pwa"
+import { withSentryConfig } from "@sentry/nextjs"
+
+const couchUrl = process.env.NEXT_PUBLIC_COUCHDB_URL || ""
+let couchHost = ""
+try { couchHost = couchUrl ? new URL(couchUrl).host : "" } catch { couchHost = "" }
 
 /** @type {import('next').NextConfig} */
 const baseConfig = {
   images: { unoptimized: true },
   eslint: { ignoreDuringBuilds: false },
   typescript: { ignoreBuildErrors: false },
-
   async headers() {
+    const connectHosts = ["'self'"]
+    if (couchHost) connectHosts.push(`https://${couchHost}`)
+    connectHosts.push("https://*.ingest.sentry.io")
+
+    const csp = [
+      "default-src 'self'",
+      `connect-src ${connectHosts.join(" ")}`,
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src * data:",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+    ].join("; ")
+
     return [
       {
         source: "/(.*)",
@@ -17,69 +34,43 @@ const baseConfig = {
           { key: "X-XSS-Protection", value: "1; mode=block" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
-          {
-            key: "Content-Security-Policy",
-            // 👇 Ajusta el dominio de CloudFront si cambia
-            value: `
-              default-src 'self';
-              connect-src 'self' https://d2zfthqcwakql2.cloudfront.net https://*.ingest.sentry.io blob:;
-              script-src 'self' 'unsafe-eval' 'unsafe-inline';
-              style-src 'self' 'unsafe-inline';
-              img-src * data:;
-              worker-src 'self' blob:;
-              object-src 'none';
-            `.replace(/\s{2,}/g, " ").trim(),
-          },
+          { key: "Content-Security-Policy", value: csp },
         ],
       },
-    ];
+    ]
   },
-};
+}
 
-// --- PWA (next-pwa) ---
+// PWA
 const withPwa = withPWA({
   dest: "public",
   register: true,
   skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
   clientsClaim: true,
   cleanupOutdatedCaches: true,
-
+  disable: process.env.NODE_ENV === "development",
   runtimeCaching: [
-    // 1) Páginas/HTML
     {
-      urlPattern: ({ request }) => request.destination === "document",
+      urlPattern: ({ url, request }) => url.origin === self.location.origin && request.destination === "document",
       handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
+      options: { cacheName: "html-pages", networkTimeoutSeconds: 3, expiration: { maxEntries: 50, maxAgeSeconds: 604800 } },
     },
-    // 2) JS/CSS/Workers
     {
       urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
       handler: "StaleWhileRevalidate",
       options: { cacheName: "static-resources" },
     },
-    // 3) Imágenes
     {
       urlPattern: ({ request }) => request.destination === "image",
       handler: "StaleWhileRevalidate",
-      options: {
-        cacheName: "images",
-        expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
-      },
+      options: { cacheName: "images", expiration: { maxEntries: 100, maxAgeSeconds: 2592000 } },
     },
   ],
-
-  // Fallback cuando no hay red ni caché
   fallbacks: { document: "/offline.html" },
-});
+})
 
-const nextConfig = withPwa(baseConfig);
+const nextConfig = withPwa(baseConfig)
 
-// --- Sentry ---
 const sentryWebpackPluginOptions = {
   org: "tic-ev",
   project: "javascript-nextjs",
@@ -88,6 +79,6 @@ const sentryWebpackPluginOptions = {
   tunnelRoute: "/monitoring",
   disableLogger: true,
   automaticVercelMonitors: true,
-};
+}
 
-export default withSentryConfig(nextConfig, sentryWebpackPluginOptions);
+export default withSentryConfig(nextConfig, sentryWebpackPluginOptions)

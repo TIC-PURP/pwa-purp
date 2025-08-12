@@ -1,69 +1,70 @@
 // lib/database.ts
+// Modo offline‑first con PouchDB (local) + CouchDB (remoto)
+// - Guarda todo en local cuando no hay internet
+// - Cuando hay conexión, sincroniza con CouchDB
+// - Login online con BASIC AUTH (evita cookies de terceros bloqueadas)
 
-// Solo ejecutar en cliente
-const isClient = typeof window !== "undefined"
+const isClient: boolean = typeof window !== "undefined"
 
 let PouchDB: any = null
-let localDB: PouchDB.Database | null = null
-let remoteDB: PouchDB.Database | null = null
+let localDB: any = null
+let remoteDB: any = null
 let syncHandler: any = null
 
-type CouchEnv = { serverBase: string; dbName: string }
+type CouchEnv = {
+  serverBase: string   // ej. https://d2z...cloudfront.net
+  serverWithAuth: string // ej. https://user:pass@host
+  dbName: string       // ej. gestion_pwa
+}
 
-const DEFAULT_REMOTE_DB = "gestion_pwa"
+const DEFAULT_REMOTE_DB = (process.env.NEXT_PUBLIC_COUCHDB_DB || "gestion_pwa").trim()
 
 function parseCouchEnv(raw?: string): CouchEnv {
-  if (!raw) return { serverBase: "", dbName: DEFAULT_REMOTE_DB }
+  if (!raw) {
+    return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
+  }
   try {
     const url = new URL(raw)
     const path = (url.pathname || "/").replace(/\/+$/, "")
+    const envDb = (process.env.NEXT_PUBLIC_COUCHDB_DB || "").trim()
     const dbName =
       path && path !== "/"
         ? path.split("/").filter(Boolean).slice(-1)[0]
-        : DEFAULT_REMOTE_DB
-    const serverBase = `${url.protocol}//${url.host}` // sin credenciales
-    return { serverBase, dbName }
+        : (envDb || DEFAULT_REMOTE_DB)
+
+    const serverBase = `${url.protocol}//${url.host}`
+    const authPrefix =
+      (url.username ? decodeURIComponent(url.username) : "") +
+      (url.password ? ":" + decodeURIComponent(url.password) : "")
+    const authAt = authPrefix ? `${authPrefix}@` : ""
+    const serverWithAuth = `${url.protocol}//${authAt}${url.host}`
+
+    return { serverBase, serverWithAuth, dbName }
   } catch {
-    return { serverBase: "", dbName: DEFAULT_REMOTE_DB }
+    return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
   }
 }
 
-const COUCH_URL = process.env.NEXT_PUBLIC_COUCHDB_URL || ""
-const COUCH_USER = process.env.NEXT_PUBLIC_COUCHDB_USER || ""
-const COUCH_PASS = process.env.NEXT_PUBLIC_COUCHDB_PASS || ""
-
-function buildAuthHeader() {
-  if (!isClient || !COUCH_USER || !COUCH_PASS) return undefined
-  return "Basic " + btoa(`${COUCH_USER}:${COUCH_PASS}`)
-}
-
-function createRemoteWithAuth(base: string, dbName: string) {
-  const auth = buildAuthHeader()
-  return new (PouchDB as any)(`${base.replace(/\/$/, "")}/${dbName}`, {
-    fetch: (url: any, opts: any = {}) => {
-      if (auth) {
-        opts.headers = { ...(opts.headers || {}), Authorization: auth }
-      }
-      return fetch(url, opts)
-    },
-  })
-}
-
 if (isClient) {
-  const PouchCore = require("pouchdb").default
-  const PouchFind = require("pouchdb-find").default
+  // Carga PouchDB sólo en cliente
+  const PouchCore = require("pouchdb").default || require("pouchdb")
+  const PouchFind = require("pouchdb-find").default || require("pouchdb-find")
   PouchCore.plugin(PouchFind)
   PouchDB = PouchCore
 
-  // Local
+  // Base local (persistente en el dispositivo)
   localDB = new PouchDB("gestion_pwa_local")
 
-  // Remoto (si hay URL)
-  if (COUCH_URL) {
-    const { serverBase, dbName } = parseCouchEnv(COUCH_URL)
-    if (serverBase) {
-      remoteDB = createRemoteWithAuth(serverBase, dbName)
-    }
+  // Si la URL ya trae user:pass, inicializa remoto desde el arranque
+  const raw = process.env.NEXT_PUBLIC_COUCHDB_URL
+  if (raw) {
+    try {
+      const { serverWithAuth, serverBase, dbName } = parseCouchEnv(raw)
+      const baseForPouch = (serverWithAuth || serverBase)
+      if (baseForPouch) {
+        remoteDB = new PouchDB(`${baseForPouch.replace(/\/$/, "")}/${dbName}`, { skip_setup: false })
+      }
+    } catch {}
   }
 }
 
@@ -71,10 +72,9 @@ import type { User } from "./types"
 
 // ====== Sync ======
 export const startSync = () => {
-  if (!isClient) return console.warn("startSync: No está en cliente")
-  if (!localDB) return console.warn("startSync: localDB no disponible")
-  if (!remoteDB) return console.warn("startSync: CouchDB remoto no disponible")
-  if (syncHandler) return console.warn("startSync: Ya hay un sync activo")
+  if (!isClient) return
+  if (!localDB || !remoteDB) return
+  if (syncHandler) return
 
   syncHandler = (PouchDB as any)
     .sync(localDB, remoteDB, { live: true, retry: true })
@@ -87,11 +87,13 @@ export const startSync = () => {
 }
 
 export const stopSync = () => {
-  if (syncHandler?.cancel) syncHandler.cancel()
+  if (syncHandler?.cancel) {
+    syncHandler.cancel()
+  }
   syncHandler = null
 }
 
-// ====== Inicializar usuarios por defecto (solo local) ======
+// ====== Inicializar usuarios por defecto (local) ======
 export const initializeDefaultUsers = async (): Promise<void> => {
   if (!localDB) return
   try {
@@ -104,7 +106,7 @@ export const initializeDefaultUsers = async (): Promise<void> => {
         id: `user_${Date.now()}`,
         name: "Manager",
         email: "manager@purp.com.mx",
-        password: "Purp2023@", // TODO: migrar a hash (bcryptjs)
+        password: "Purp2023@",  // ⚠️ para demo. En prod usa hash (bcryptjs)
         role: "manager",
         permissions: ["read", "write", "delete", "manage_users"],
         isActive: true,
@@ -135,7 +137,12 @@ export const updateUser = async (user: User): Promise<void> => {
   if (!localDB || !user._id) return
   const existing = (await localDB.get(user._id)) as User
   const passwordToSave = user.password?.trim() ? user.password : existing.password
-  const updatedUser = { ...existing, ...user, password: passwordToSave, updatedAt: new Date().toISOString() }
+  const updatedUser = {
+    ...existing,
+    ...user,
+    password: passwordToSave,
+    updatedAt: new Date().toISOString(),
+  }
   await localDB.put(updatedUser)
 }
 
@@ -173,7 +180,10 @@ export const authenticateUser = async (email: string, password: string): Promise
   if (!localDB) return null
   try {
     await localDB.createIndex({ index: { fields: ["email", "password", "isActive"] } })
-    const result = await localDB.find({ selector: { email, password, isActive: true }, limit: 1 })
+    const result = await localDB.find({
+      selector: { email, password, isActive: true },
+      limit: 1,
+    })
     return (result.docs[0] as User) || null
   } catch (err) {
     console.error("Error autenticando usuario:", err)
@@ -181,69 +191,47 @@ export const authenticateUser = async (email: string, password: string): Promise
   }
 }
 
-// ====== Login online ======
-// Si hay COUCH_USER/PASS -> usa Basic Auth por header (sin cookies)
-// Si NO hay -> intenta _session (cookies) para same-origin
-export async function loginOnlineToCouchDB(email: string, password: string): Promise<boolean> {
+// ====== Login online (CouchDB) usando BASIC AUTH ======
+// IMPORTANTE: el nombre de usuario debe existir en CouchDB.
+// Puedes usar el correo como 'name' del usuario CouchDB, o un username simple.
+export async function loginOnlineToCouchDB(username: string, password: string): Promise<boolean> {
   try {
-    const { serverBase, dbName } = parseCouchEnv(COUCH_URL)
-    if (!serverBase) throw new Error("Falta NEXT_PUBLIC_COUCHDB_URL")
+    const raw = process.env.NEXT_PUBLIC_COUCHDB_URL
+    if (!raw) throw new Error("Falta NEXT_PUBLIC_COUCHDB_URL")
 
-    if (COUCH_USER && COUCH_PASS) {
-      if (isClient && PouchDB) remoteDB = createRemoteWithAuth(serverBase, dbName)
-      await remoteDB?.info()
-      return true
-    }
+    const { serverBase, dbName } = parseCouchEnv(raw)
+    if (!serverBase) throw new Error("URL de CouchDB inválida")
 
-    // Fallback: sesión por cookies (_session)
-    const sessionUrl = `${serverBase}/_session`
-    const res = await fetch(sessionUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ name: email, password }),
-      credentials: "include",
-    })
-    if (!res.ok) return false
-
+    // Crea remoteDB con BASIC AUTH directamente (evita cookies de terceros)
     if (isClient && PouchDB) {
-      remoteDB = new PouchDB(`${serverBase}/${dbName}`, {
-        fetch: (url: string, opts: any = {}) => fetch(url, { ...opts, credentials: "include" }),
-      })
+      const u = new URL(serverBase)
+      const authUrl = `${u.protocol}//${encodeURIComponent(username)}:${encodeURIComponent(password)}@${u.host}/${dbName}`
+      remoteDB = new PouchDB(authUrl, { skip_setup: false })
     }
+
+    // Verifica credenciales
     await remoteDB?.info()
     return true
   } catch (err) {
     console.error("Error conectando con CouchDB:", err)
+    remoteDB = null
     return false
   }
 }
 
 // ====== Guardar usuario offline con _id estable ======
-export const guardarUsuarioOffline = async (user: Partial<User> & { username?: string; email?: string }) => {
+export const guardarUsuarioOffline = async (user: any) => {
   if (!localDB) return
-  const key = (user.username || user.email || '').toString().trim() || Date.now().toString()
-  const _id = `user_${key}`
-
+  const _id = `user_${user.username || user.email}`
   try {
-    const existing: any = await localDB.get(_id)
-    await localDB.put({
-      ...existing,
-      ...user,
-      _id,
-      _rev: existing._rev,
-      updatedAt: new Date().toISOString(),
-    })
+    const existing = await localDB.get(_id)
+    user._rev = (existing as any)._rev
+    await localDB.put({ _id, ...user })
   } catch (err: any) {
     if (err?.status === 404) {
-      await localDB.put({
-        _id,
-        ...user,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
+      await localDB.put({ _id, ...user })
     } else {
       console.error("Error guardando usuario offline:", err)
-      throw err
     }
   }
 }
