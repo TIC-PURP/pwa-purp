@@ -1,32 +1,43 @@
-"use client";
+'use client'
 
-import { Component, ReactNode } from "react";
+import React from 'react'
 
-type Props = { children: ReactNode };
-type State = { hasError: boolean; error?: Error };
+type Props = {
+  children: React.ReactNode
+}
 
-export default class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+type State = {
+  hasError: boolean
+  error?: Error
+}
 
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props)
+    this.state = { hasError: false }
   }
 
-  componentDidCatch(error: Error, info: unknown) {
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.error("ErrorBoundary:", error, info);
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // Aquí puedes enviar el error a un servicio como Sentry o tu backend
+    if (process.env.NODE_ENV !== 'development') {
+      console.error('App Error:', error, info)
     }
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-4 text-red-600">
-          Ocurrió un error inesperado. Recarga la página.
+        <div className="p-6 text-center text-red-500">
+          <h2 className="text-lg font-semibold">¡Algo salió mal!</h2>
+          <p>Por favor, intenta de nuevo más tarde.</p>
         </div>
-      );
+      )
     }
-    return this.props.children;
+
+    return this.props.children
   }
 }

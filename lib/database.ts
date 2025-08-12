@@ -1,152 +1,261 @@
 // lib/database.ts
-import PouchDB from "pouchdb-browser"
-import PouchFind from "pouchdb-find"
-import type { User } from "@/lib/types"
 
-PouchDB.plugin(PouchFind)
+// Solo ejecutar en cliente
+const isClient = typeof window !== "undefined"
 
-const COUCH_URL = process.env.NEXT_PUBLIC_COUCH_URL!
-const DB_NAME = process.env.NEXT_PUBLIC_COUCH_DB || "gestion_pwa"
+let PouchDB: any = null
+let localDB: PouchDB.Database | null = null
+let remoteDB: PouchDB.Database | null = null
+let syncHandler: any = null
 
-export const localDB = new PouchDB(DB_NAME, {
-  auto_compaction: true,
-  revs_limit: 10,
-})
-
-function mkRemoteDB() {
-  const base = COUCH_URL.replace(/\/+$/, "")
-  const url = `${base}/${DB_NAME}`
-  return new PouchDB(url, {
-    skip_setup: true,
-    fetch: (url: any, opts: any) => fetch(url as RequestInfo, { ...(opts || {}), credentials: "include" }),
-  })
+type CouchEnv = {
+  serverBase: string
+  serverWithAuth: string
+  dbName: string
 }
 
-let syncHandler: PouchDB.Replication.Sync<{}> | null = null
+const DEFAULT_REMOTE_DB = "gestion_pwa" // cámbiala si tu DB remota se llama distinto
 
-function log(...args: any[]) {
-  if (process.env.NODE_ENV !== "production") {
-    // eslint-disable-next-line no-console
-    console.log("[Pouch]", ...args)
+function parseCouchEnv(raw?: string): CouchEnv {
+  if (!raw) {
+    return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
+  }
+
+  try {
+    const url = new URL(raw)
+    const path = (url.pathname || "/").replace(/\/+$/, "")
+    const envDb = process.env.NEXT_PUBLIC_COUCHDB_DB?.trim()
+    const dbName =
+      path && path !== "/"
+        ? path.split("/").filter(Boolean).slice(-1)[0]
+        : (envDb || DEFAULT_REMOTE_DB)
+
+    const serverBase = `${url.protocol}//${url.host}`
+
+    // Conserva user:pass si vinieran en la URL
+    const authPrefix =
+      (url.username ? decodeURIComponent(url.username) : "") +
+      (url.password ? ":" + decodeURIComponent(url.password) : "")
+    const authAt = authPrefix ? `${authPrefix}@` : ""
+    const serverWithAuth = `${url.protocol}//${authAt}${url.host}`
+
+    return { serverBase, serverWithAuth, dbName }
+  } catch {
+    return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
   }
 }
 
-// -------- Auth (CouchDB cookie) --------
-export async function loginOnlineToCouchDB(name: string, password: string): Promise<void> {
-  const res = await fetch(`${COUCH_URL}/_session`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ name, password }),
-  })
-  if (!res.ok) {
-    let msg = "Credenciales inválidas"
+if (isClient) {
+  const PouchCore = require("pouchdb").default
+  const PouchFind = require("pouchdb-find").default
+  PouchCore.plugin(PouchFind)
+  PouchDB = PouchCore
+
+  // Local
+  localDB = new PouchDB("gestion_pwa_local")
+
+  // Remoto (opcional al arranque; si usas _session por cookies, se re-crea en login)
+  if (process.env.NEXT_PUBLIC_COUCHDB_URL) {
     try {
-      const j = await res.json()
-      msg = (j?.reason || j?.error || msg)
-    } catch {}
-    throw new Error(msg)
+      const { serverWithAuth, serverBase, dbName } = parseCouchEnv(process.env.NEXT_PUBLIC_COUCHDB_URL)
+      const baseForPouch = (serverWithAuth || serverBase)
+      if (baseForPouch) {
+        remoteDB = new PouchDB(`${baseForPouch.replace(/\/$/, "")}/${dbName}`)
+      }
+    } catch {
+      /* noop: se construirá en login */
+    }
   }
 }
 
-export async function logoutFromCouchDB(): Promise<void> {
-  try {
-    await fetch(`${COUCH_URL}/_session`, { method: "DELETE", credentials: "include" })
-  } catch {}
-  stopSync()
-}
+import type { User } from "./types"
 
-// -------- Sync helpers --------
-export async function primeLocalFromRemote(): Promise<void> {
-  const remote = mkRemoteDB()
-  await localDB.replicate.from(remote, { retry: true })
-}
-
-export function startSync(): void {
-  if (syncHandler) return
-  const remote = mkRemoteDB()
-  syncHandler = PouchDB.sync(localDB, remote, {
-    live: true,
-    retry: true,
-    batch_size: 100,
-    back_off_function: (delay) => (delay === 0 ? 1000 : Math.min(delay * 2, 60000)),
-  })
-    .on("change", (info) => log("change", info.direction, info.change?.docs?.length ?? 0))
-    .on("paused", (err) => log("paused", err || "ok"))
-    .on("active", () => log("active"))
-    .on("denied", (err) => log("denied", err))
-    .on("error", (err) => log("error", err))
-}
-
-export function stopSync(): void {
+// ====== Sync ======
+export const startSync = () => {
+  if (!isClient) {
+    console.warn("startSync: No está en cliente")
+    return
+  }
+  if (!localDB) {
+    console.warn("startSync: localDB no disponible")
+    return
+  }
+  if (!remoteDB) {
+    console.warn("startSync: CouchDB remoto no disponible")
+    return
+  }
   if (syncHandler) {
+    console.warn("startSync: Ya hay un sync activo")
+    return
+  }
+
+  syncHandler = (PouchDB as any)
+    .sync(localDB, remoteDB, { live: true, retry: true })
+    .on("change", (info: any) => console.log("Sync change:", info))
+    .on("paused", () => console.log("Sync paused"))
+    .on("active", () => console.log("Sync active"))
+    .on("denied", (err: any) => console.error("Sync denied:", err))
+    .on("complete", (info: any) => console.log("Sync complete:", info))
+    .on("error", (err: any) => console.error("Sync error:", err))
+}
+
+export const stopSync = () => {
+  if (syncHandler?.cancel) {
     syncHandler.cancel()
-    syncHandler = null
   }
+  syncHandler = null
 }
 
-export async function bootstrapAfterLogin(): Promise<void> {
-  const info = await localDB.info()
-  const count = (info as any).doc_count ?? 0
-  const seq = (info as any).update_seq ?? 0
-  if (count + (Number(seq) || 0) < 1) {
-    await primeLocalFromRemote()
-  }
-  await ensureIndexes()
-  startSync()
-}
-
-// -------- Indexes --------
-async function ensureIndexes() {
+// ====== Inicializar usuarios por defecto (solo local) ======
+export const initializeDefaultUsers = async (): Promise<void> => {
+  if (!localDB) return
   try {
-    await (localDB as any).createIndex({
-      index: { fields: ["type", "email"] },
-      ddoc: "idx_type_email",
-      name: "idx_type_email",
-    } as any)
-
-    await (localDB as any).createIndex({
-      index: { fields: ["type", "createdAt"] },
-      ddoc: "idx_type_createdAt",
-      name: "idx_type_createdAt",
-    } as any)
-  } catch {}
+    await localDB.createIndex({ index: { fields: ["id"] } })
+    const result = await localDB.find({ selector: { id: { $regex: "^user_" } } })
+    if (result.docs.length === 0) {
+      const now = new Date().toISOString()
+      await localDB.put({
+        _id: `user_${Date.now()}`,
+        id: `user_${Date.now()}`,
+        name: "Manager",
+        email: "manager@purp.com.mx",
+        password: "Purp2023@", // ⚠️ Recomendación: migrar a hash (bcryptjs)
+        role: "manager",
+        permissions: ["read", "write", "delete", "manage_users"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+  } catch (error) {
+    console.error("Error inicializando usuarios por defecto:", error)
+  }
 }
 
-// -------- CRUD Users --------
-const usersPrefix = "user_"
-
-export async function getAllUsers(): Promise<User[]> {
-  const res = await (localDB as any).find({
-    selector: { type: "user" },
-    sort: ["type"],
-  })
-  return res.docs as User[]
+// ====== CRUD Usuarios (local) ======
+export const getAllUsers = async (): Promise<User[]> => {
+  if (!localDB) return []
+  await localDB.createIndex({ index: { fields: ["id"] } })
+  const result = await localDB.find({ selector: { id: { $regex: "^user_" } } })
+  return result.docs as User[]
 }
 
-export async function createUser(u: User): Promise<void> {
-  await localDB.put({ ...u, _id: u._id || `${usersPrefix}${u.id}` })
+export const createUser = async (user: User): Promise<void> => {
+  if (!localDB) return
+  const _id = `user_${Date.now()}`
+  await localDB.put({ ...user, _id, id: _id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
 }
 
-export async function updateUser(u: User): Promise<void> {
-  const _id = u._id || `${usersPrefix}${u.id}`
-  const current = await localDB.get(_id).catch(() => null as any)
-  await localDB.put({
-    ...current,
-    ...u,
-    _id,
+export const updateUser = async (user: User): Promise<void> => {
+  if (!localDB || !user._id) return
+  const existing = (await localDB.get(user._id)) as User
+
+  const passwordToSave = user.password?.trim() ? user.password : existing.password
+
+  const updatedUser = {
+    ...existing,
+    ...user,
+    password: passwordToSave,
     updatedAt: new Date().toISOString(),
-  })
+  }
+  await localDB.put(updatedUser)
 }
 
-export async function softDeleteUser(idOrCouchId: string): Promise<void> {
-  const _id = idOrCouchId.startsWith("user_") ? idOrCouchId : `${usersPrefix}${idOrCouchId}`
-  const doc = await localDB.get(_id)
-  await localDB.put({ ...doc, isActive: false, updatedAt: new Date().toISOString() })
+export const softDeleteUser = async (_id: string): Promise<void> => {
+  if (!localDB) return
+  const user = (await localDB.get(_id)) as User
+  user.isActive = false
+  user.updatedAt = new Date().toISOString()
+  await localDB.put(user)
 }
 
-export async function deleteUserById(idOrCouchId: string): Promise<void> {
-  const _id = idOrCouchId.startsWith("user_") ? idOrCouchId : `${usersPrefix}${idOrCouchId}`
-  const doc = await localDB.get(_id)
-  await localDB.remove(doc)
+export const deleteUserById = async (userId: string): Promise<void> => {
+  if (!localDB) return
+  try {
+    const user = await localDB.get(userId)
+    await localDB.remove(user)
+  } catch (error) {
+    console.error("Error al eliminar usuario:", error)
+  }
 }
+
+export const updateUserById = async (userId: string, updates: Partial<User>): Promise<void> => {
+  if (!localDB) return
+  try {
+    const user = await localDB.get(userId)
+    const updatedUser = { ...user, ...updates, updatedAt: new Date().toISOString() }
+    await localDB.put(updatedUser)
+  } catch (error) {
+    console.error("Error al actualizar usuario:", error)
+  }
+}
+
+// ====== Autenticación offline (local) ======
+export const authenticateUser = async (email: string, password: string): Promise<User | null> => {
+  if (!localDB) return null
+  try {
+    await localDB.createIndex({ index: { fields: ["email", "password", "isActive"] } })
+    const result = await localDB.find({
+      selector: { email, password, isActive: true },
+      limit: 1,
+    })
+    return (result.docs[0] as User) || null
+  } catch (err) {
+    console.error("Error autenticando usuario:", err)
+    return null
+  }
+}
+
+// ====== Login online (CouchDB _session) ======
+export async function loginOnlineToCouchDB(email: string, password: string): Promise<boolean> {
+  try {
+    const raw = process.env.NEXT_PUBLIC_COUCHDB_URL
+    if (!raw) throw new Error("Falta NEXT_PUBLIC_COUCHDB_URL")
+
+    const { serverBase, dbName } = parseCouchEnv(raw)
+    if (!serverBase) throw new Error("URL de CouchDB inválida")
+
+    // 1) Sesión por cookie
+    const sessionUrl = `${serverBase}/_session`
+    const res = await fetch(sessionUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ name: email, password }),
+      credentials: "include",
+    })
+    if (!res.ok) return false
+
+    // 2) Re-crear remoteDB para usar cookies
+    if (isClient && PouchDB) {
+      remoteDB = new PouchDB(`${serverBase}/${dbName}`, {
+        fetch: (url: string, opts: any = {}) =>
+          fetch(url, { ...opts, credentials: "include" }),
+      })
+    }
+
+    await remoteDB?.info()
+    return true
+  } catch (err) {
+    console.error("Error conectando con CouchDB:", err)
+    return false
+  }
+}
+
+// ====== Guardar usuario offline con _id estable ======
+export const guardarUsuarioOffline = async (user: any) => {
+  if (!localDB) return
+  const _id = `user_${user.username || user.email}`
+  try {
+    const existing = await localDB.get(_id)
+    user._rev = (existing as any)._rev
+    await localDB.put({ _id, ...user })
+  } catch (err: any) {
+    if (err?.status === 404) {
+      await localDB.put({ _id, ...user })
+    } else {
+      console.error("Error guardando usuario offline:", err)
+    }
+  }
+}
+
+export { localDB, remoteDB }
