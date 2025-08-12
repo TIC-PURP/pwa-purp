@@ -1,12 +1,15 @@
-import InstallButton from "../components/InstallButton"
-import type React from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Providers } from "@/components/providers";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import Providers from "@/components/providers";        // ⬅️ sin llaves
+import ErrorBoundary from "@/components/ErrorBoundary"; // ⬅️ sin llaves
 
 const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "PURP PWA",
+  description: "Gestión PWA con PouchDB ⇄ CouchDB",
+};
 
 export default function RootLayout({
   children,
@@ -16,12 +19,10 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={inter.className}>
-        <Providers>
-          <ErrorBoundary>{children}</ErrorBoundary>
-          <InstallButton />
-        </Providers>
-  </body>
+        <ErrorBoundary>
+          <Providers>{children}</Providers>
+        </ErrorBoundary>
+      </body>
     </html>
   );
 }
-

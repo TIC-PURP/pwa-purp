@@ -1,30 +1,32 @@
-'use client'
-import React from 'react'
+"use client";
 
-type Props = { children: React.ReactNode }
-type State = { hasError: boolean; error?: any }
+import { Component, ReactNode } from "react";
 
-export default class ErrorBoundary extends React.Component<Props, State> {
-  constructor(props: Props) {
-    super(props)
-    this.state = { hasError: false }
+type Props = { children: ReactNode };
+type State = { hasError: boolean; error?: Error };
+
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
   }
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error }
+
+  componentDidCatch(error: Error, info: unknown) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.error("ErrorBoundary:", error, info);
+    }
   }
-  componentDidCatch(error: any, info: any) {
-    // eslint-disable-next-line no-console
-    console.error('ErrorBoundary', error, info)
-  }
+
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-6">
-          <h1 className="text-xl font-semibold">Algo salió mal</h1>
-          <p className="text-sm text-gray-600">Intenta recargar la página.</p>
+        <div className="p-4 text-red-600">
+          Ocurrió un error inesperado. Recarga la página.
         </div>
-      )
+      );
     }
-    return this.props.children
+    return this.props.children;
   }
 }
