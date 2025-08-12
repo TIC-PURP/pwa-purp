@@ -218,4 +218,34 @@ export async function loginOnlineToCouchDB(email: string, password: string): Pro
   }
 }
 
+// ====== Guardar usuario offline con _id estable ======
+export const guardarUsuarioOffline = async (user: Partial<User> & { username?: string; email?: string }) => {
+  if (!localDB) return
+  const key = (user.username || user.email || '').toString().trim() || Date.now().toString()
+  const _id = `user_${key}`
+
+  try {
+    const existing: any = await localDB.get(_id)
+    await localDB.put({
+      ...existing,
+      ...user,
+      _id,
+      _rev: existing._rev,
+      updatedAt: new Date().toISOString(),
+    })
+  } catch (err: any) {
+    if (err?.status === 404) {
+      await localDB.put({
+        _id,
+        ...user,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    } else {
+      console.error("Error guardando usuario offline:", err)
+      throw err
+    }
+  }
+}
+
 export { localDB, remoteDB }
