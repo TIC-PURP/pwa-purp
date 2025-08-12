@@ -1,29 +1,35 @@
-// lib/database.ts
+"use client";
+
+// /lib/database.ts
 import PouchDB from "pouchdb-browser";
 import PouchFind from "pouchdb-find";
-import type { User as AppUser } from "@/lib/types";
 
 PouchDB.plugin(PouchFind);
 
+// ----- Config -----
 const COUCH_URL = process.env.NEXT_PUBLIC_COUCH_URL!;
 const DB_NAME = process.env.NEXT_PUBLIC_COUCH_DB || "gestion_pwa";
 
+// DB local única de la app (IndexedDB)
 export const localDB = new PouchDB(DB_NAME, {
   auto_compaction: true,
   revs_limit: 10,
 });
 
+// Si usas cookie de Couch, hay que forzar credentials en cada fetch del remoto
 function mkRemoteDB() {
   const remoteUrl = `${COUCH_URL.replace(/\/+$/, "")}/${DB_NAME}`;
   return new PouchDB(remoteUrl, {
     skip_setup: true,
     fetch: (url: any, opts: any) =>
-      fetch(url, { ...opts, credentials: "include" }),
+      fetch(url, { ...opts, credentials: "include" } as RequestInit),
   });
 }
 
+// Mantengo una referencia global al replicador para poder cancelarlo
 let syncHandler: PouchDB.Replication.Sync<{}> | null = null;
 
+// Pequeño logger visible en consola
 function log(...args: any[]) {
   if (process.env.NODE_ENV !== "production") {
     // eslint-disable-next-line no-console
@@ -32,6 +38,7 @@ function log(...args: any[]) {
 }
 
 // ---------- LOGIN / LOGOUT ----------
+
 export async function loginOnlineToCouchDB(
   name: string,
   password: string
@@ -47,7 +54,7 @@ export async function loginOnlineToCouchDB(
     let msg = "Error desconocido";
     try {
       const j = await res.json();
-      msg = j?.reason || j?.error || msg;
+      msg = (j as any)?.reason || (j as any)?.error || msg;
     } catch {}
     throw new Error(msg || "Credenciales inválidas");
   }
@@ -64,6 +71,7 @@ export async function logoutFromCouchDB(): Promise<void> {
 }
 
 // ---------- SYNC ----------
+
 export async function primeLocalFromRemote(): Promise<void> {
   const remote = mkRemoteDB();
   await localDB.replicate.from(remote, { retry: true });
@@ -77,13 +85,16 @@ export function startSync(): void {
     live: true,
     retry: true,
     batch_size: 100,
-    back_off_function: (delay) => (delay === 0 ? 1000 : Math.min(delay * 2, 60000)),
+    back_off_function: (delay: number) => {
+      if (delay === 0) return 1000;
+      return Math.min(delay * 2, 60_000);
+    },
   })
-    .on("change", (info) => log("change", info.direction, info.change.docs?.length ?? 0))
-    .on("paused", (err) => log("paused", err || "ok"))
+    .on("change", (info: any) => log("change", info.direction, info.change?.docs?.length ?? 0))
+    .on("paused", (err: any) => log("paused", err || "ok"))
     .on("active", () => log("active"))
-    .on("denied", (err) => log("denied", err))
-    .on("error", (err) => log("error", err));
+    .on("denied", (err: any) => log("denied", err))
+    .on("error", (err: any) => log("error", err));
 }
 
 export function stopSync(): void {
@@ -95,72 +106,80 @@ export function stopSync(): void {
 
 export async function bootstrapAfterLogin() {
   const info = await localDB.info();
-  if ((info.doc_count ?? 0) + (info.update_seq as number) < 1) {
+  if (((info as any).doc_count ?? 0) + (info.update_seq as number) < 1) {
     await primeLocalFromRemote();
   }
   await ensureIndexes();
   startSync();
 }
 
-// ---------- ÍNDICES ----------
+// ---------- ÍNDICES / DISEÑOS ----------
+
 async function ensureIndexes() {
   try {
-    // Algunos @types no aceptan 'name'; dejamos solo 'ddoc' e 'index'
-    await (localDB as any).createIndex({
+    await localDB.createIndex({
       index: { fields: ["type", "email"] },
-      ddoc: "idx_type_email",
     });
-
-    await (localDB as any).createIndex({
+    await localDB.createIndex({
       index: { fields: ["type", "createdAt"] },
-      ddoc: "idx_type_createdAt",
     });
   } catch {}
 }
 
-// ---------- Tipos internos ----------
-type UserDoc = AppUser & { type: "user" };
+// ---------- Tipos & CRUD ----------
+
+export type UserRole = "manager" | "user" | "administrador";
+export type Permission =
+  | "users_read"
+  | "users_write"
+  | "users_delete"
+  | "app_access";
+
+export interface User {
+  _id?: string;
+  _rev?: string;
+  id: string;
+  type: "user";
+  name: string;
+  email: string;
+  role: UserRole;
+  permissions: Permission[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const usersPrefix = "user_";
 
-// ---------- CRUD ----------
-export async function getAllUsers(): Promise<AppUser[]> {
+export async function getAllUsers(): Promise<User[]> {
   const res = await localDB.find({
     selector: { type: "user" },
     sort: ["type"],
   });
-  // Quitamos 'type' al devolver para que cuadre con AppUser
-  return (res.docs as UserDoc[]).map(({ type, ...u }) => u);
+  return res.docs as User[];
 }
 
-export async function createUser(u: AppUser): Promise<void> {
-  const _id = `${usersPrefix}${u.id}`;
-  const doc: UserDoc = { ...u, type: "user", _id };
-  await localDB.put(doc);
+export async function createUser(u: User): Promise<void> {
+  await localDB.put({ ...u, _id: `${usersPrefix}${u.id}` });
 }
 
-export async function updateUser(u: AppUser): Promise<void> {
+export async function updateUser(u: User): Promise<void> {
   const _id = u._id || `${usersPrefix}${u.id}`;
-  const current = (await localDB.get(_id).catch(() => null)) as any;
-  const doc: UserDoc = {
+  const current = await localDB.get(_id).catch(() => null as any);
+  await localDB.put({
     ...(current || {}),
     ...u,
     _id,
-    type: "user",
     updatedAt: new Date().toISOString(),
-  };
-  await localDB.put(doc);
+  });
 }
 
 export async function softDeleteUser(idOrCouchId: string): Promise<void> {
   const _id = idOrCouchId.startsWith("user_")
     ? idOrCouchId
     : `${usersPrefix}${idOrCouchId}`;
-  const doc = (await localDB.get(_id)) as UserDoc;
-  await localDB.put({
-    ...doc,
-    isActive: false,
-    updatedAt: new Date().toISOString(),
-  } as UserDoc);
+  const doc = await localDB.get(_id);
+  await localDB.put({ ...doc, isActive: false, updatedAt: new Date().toISOString() });
 }
 
 export async function deleteUserById(idOrCouchId: string): Promise<void> {
