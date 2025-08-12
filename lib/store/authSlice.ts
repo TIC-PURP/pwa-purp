@@ -1,171 +1,87 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit"
-import type { AuthState, LoginCredentials, User } from "../types"
+// lib/store/authSlice.ts
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit'
+import type { AuthState, LoginCredentials, User } from '../types'
 import {
-  authenticateUser,
-  startSync,
-  stopSync,
   loginOnlineToCouchDB,
-  guardarUsuarioOffline,
+  logoutFromCouchDB,
+  bootstrapAfterLogin,
   localDB,
-} from "../database"
+} from '../database'
 
-// Estado inicial
 const initialState: AuthState = {
   user: null,
   token: null,
   isAuthenticated: false,
-  isLoading: true,
-  // @ts-ignore (por si tu tipo no tiene 'error')
+  isLoading: false,
   error: null,
 }
 
-// Helpers de storage
-const saveSession = (payload: { user: User; token: string }) => {
-  try {
-    localStorage.setItem("auth", JSON.stringify(payload))
-  } catch {}
-}
-const clearSession = () => {
-  try {
-    localStorage.removeItem("auth")
-  } catch {}
-}
-
-// LOGIN con fallback offline
-export const loginUser = createAsyncThunk(
-  "auth/loginUser",
-  async (credentials: LoginCredentials, { rejectWithValue }) => {
-    const { email, password } = credentials
-    const online = typeof navigator === "undefined" ? true : navigator.onLine
-
-    // Intento ONLINE si hay red
-    if (online) {
-      try {
-        const ok = await loginOnlineToCouchDB(email, password)
-        if (ok) {
-          // Si el usuario ya existía local, úsalo; si no, crea/upserta uno base
-          let user = await authenticateUser(email, password)
-          if (!user) {
-            const now = new Date().toISOString()
-            user = {
-              id: `user_${email}`,
-              name: email.split("@")[0],
-              email,
-              password, // ⚠️ en producción: usa hash (bcryptjs)
-              role: "user",
-              permissions: ["read"],
-              isActive: true,
-              createdAt: now,
-              updatedAt: now,
-              _id: `user_${email}`,
-            } as User
-            await guardarUsuarioOffline(user)
-          } else {
-            // Refresca updatedAt y guarda por si cambió algo
-            user.updatedAt = new Date().toISOString()
-            await guardarUsuarioOffline(user)
-          }
-
-          // Arranca sync (si definiste filtros, agrégalos en database.ts)
-          try { await startSync() } catch {}
-
-          // Persistencia de sesión
-          saveSession({ user, token: "cookie-session" })
-
-          return { user, token: "cookie-session" }
-        }
-        // Si el servidor rechazó (401) intenta OFFLINE como plan B
-      } catch {
-        // Ignora: caeremos a offline
-      }
-    }
-
-    // Fallback OFFLINE (sin red o error online)
+export const loginUser = createAsyncThunk<User, LoginCredentials>(
+  'auth/login',
+  async ({ email, password }, { rejectWithValue }) => {
     try {
-      const offlineUser = await authenticateUser(email, password)
-      if (!offlineUser) {
-        return rejectWithValue("Sin conexión y no hay sesión previa/local para esas credenciales.")
+      await loginOnlineToCouchDB(email, password)
+      await bootstrapAfterLogin()
+      // intenta leer perfil
+      const res: any = await (localDB as any).find({ selector: { type: 'user', email } })
+      let user: User | null = res.docs[0] as User | undefined || null
+      if (!user) {
+        const now = new Date().toISOString()
+        user = {
+          id: crypto.randomUUID(),
+          type: 'user',
+          name: email.split('@')[0],
+          email,
+          role: 'user',
+          permissions: ['app_access'],
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        }
       }
-      saveSession({ user: offlineUser, token: "offline" })
-      return { user: offlineUser, token: "offline" }
-    } catch (e) {
-      return rejectWithValue("No se pudo autenticar offline.")
+      return user
+    } catch (err: any) {
+      return rejectWithValue(err?.message || 'No se pudo iniciar sesión')
     }
   }
 )
 
-// Cargar sesión desde localStorage al iniciar la app
-export const loadUserFromStorage = createAsyncThunk("auth/loadUserFromStorage", async () => {
-  try {
-    const raw = localStorage.getItem("auth")
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { user: User; token: string }
-    return parsed
-  } catch {
-    return null
-  }
-})
-
-// Logout
-export const logoutUser = createAsyncThunk("auth/logoutUser", async () => {
-  try { await stopSync() } catch {}
-  clearSession()
-  return true
+export const logoutUser = createAsyncThunk('auth/logout', async () => {
+  await logoutFromCouchDB()
 })
 
 const authSlice = createSlice({
-  name: "auth",
+  name: 'auth',
   initialState,
   reducers: {
-    clearError(state) {
-      // @ts-ignore
-      state.error = null
+    setUser(state, action: PayloadAction<User | null>) {
+      state.user = action.payload
+      state.isAuthenticated = !!action.payload
     },
   },
   extraReducers: (builder) => {
     builder
-      // login
       .addCase(loginUser.pending, (state) => {
         state.isLoading = true
-        // @ts-ignore
         state.error = null
       })
       .addCase(loginUser.fulfilled, (state, action) => {
         state.isLoading = false
+        state.user = action.payload
         state.isAuthenticated = true
-        state.user = action.payload.user
-        state.token = action.payload.token
       })
-      .addCase(loginUser.rejected, (state, action: any) => {
+      .addCase(loginUser.rejected, (state, action) => {
         state.isLoading = false
-        state.isAuthenticated = false
+        state.error = (action.payload as string) || 'Error de login'
         state.user = null
-        state.token = null
-        // @ts-ignore
-        state.error = action.payload || "No se pudo iniciar sesión."
+        state.isAuthenticated = false
       })
-
-      // load from storage
-      .addCase(loadUserFromStorage.fulfilled, (state, action) => {
-        if (action.payload) {
-          state.user = action.payload.user
-          state.token = action.payload.token
-          state.isAuthenticated = true
-        }
-        state.isLoading = false
-      })
-
-      // logout
       .addCase(logoutUser.fulfilled, (state) => {
         state.user = null
-        state.token = null
         state.isAuthenticated = false
-        state.isLoading = false
-        // @ts-ignore
-        state.error = null
       })
   },
 })
 
-export const { clearError } = authSlice.actions
+export const { setUser } = authSlice.actions
 export default authSlice.reducer

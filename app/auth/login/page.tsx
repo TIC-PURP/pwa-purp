@@ -1,42 +1,16 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { loginOnlineToCouchDB, bootstrapAfterLogin } from "@/lib/database";
-import { toast } from "sonner";
+'use client'
+import { LoginForm } from '@/components/auth/login-form'
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      // 1) Login contra Couch (guarda cookie)
-      await loginOnlineToCouchDB(email, pass);
-
-      // 2) Si el cache local está vacío o lo borraste, baja todo y enciende sync
-      await bootstrapAfterLogin();
-
-      toast.success("¡Bienvenido!");
-      router.push("/principal");
-    } catch (err: any) {
-      toast.error(err?.message || "Credenciales inválidas");
-      console.error("Login error:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <form onSubmit={onSubmit}>
-      {/* tus inputs */}
-      <button disabled={loading} type="submit">
-        {loading ? "Entrando..." : "Iniciar Sesión"}
-      </button>
-    </form>
-  );
+    <div className="min-h-screen grid place-items-center p-6">
+      <div className="w-full max-w-sm border rounded-xl p-6 shadow-sm bg-white">
+        <h1 className="text-2xl font-bold mb-2">Iniciar sesión</h1>
+        <p className="text-sm text-gray-600 mb-6">
+          Usa tus credenciales de CouchDB.
+        </p>
+        <LoginForm />
+      </div>
+    </div>
+  )
 }

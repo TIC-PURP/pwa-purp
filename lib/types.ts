@@ -1,24 +1,17 @@
 // lib/types.ts
-
-export type Role = "manager" | "administrador" | "user";
+export type Role = 'manager' | 'administrador' | 'user';
 
 export type Permission =
-  | "users_read"
-  | "users_write"
-  | "users_delete"
-  | "app_access";
+  | 'users_read'
+  | 'users_write'
+  | 'users_delete'
+  | 'app_access';
 
-export type CreateUserData = {
-  name: string;
-  email: string;
-  password: string; // solo para alta/edición, NO se guarda en Pouch
-  role: Role;
-  permissions: Permission[];
-};
-
-export type User = {
-  // Documento de usuario para la app (sin password)
-  id: string;           // ID lógico de tu app
+export interface User {
+  _id?: string;
+  _rev?: string;
+  id: string;
+  type: 'user';
   name: string;
   email: string;
   role: Role;
@@ -26,6 +19,25 @@ export type User = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  _id?: string;         // si viene de Couch/Pouch
-  _rev?: string;
-};
+}
+
+export interface CreateUserData {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  permissions: Permission[];
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface AuthState {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+}

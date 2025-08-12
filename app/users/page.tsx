@@ -1,20 +1,20 @@
-"use client";
+'use client'
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { RouteGuard } from "@/components/auth/route-guard";
-import { Navbar } from "@/components/layout/navbar";
-import { UserForm } from "@/components/users/user-form";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+import { RouteGuard } from '@/components/auth/route-guard'
+import { Navbar } from '@/components/layout/navbar'
+import { UserForm } from '@/components/users/user-form'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+} from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,157 +24,105 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import type { User, CreateUserData } from "@/lib/types";
+} from '@/components/ui/alert-dialog'
+import type { User, CreateUserData } from '@/lib/types'
 import {
   getAllUsers,
   createUser,
   updateUser,
   softDeleteUser,
   deleteUserById,
-} from "@/lib/database";
-import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
-
-/* ===== API para crear cuenta en _users de CouchDB (login/contraseña) ===== */
-async function provisionUserInCouch(params: {
-  email: string;
-  password: string;
-  role?: string;
-}) {
-  const res = await fetch("/api/couch/create-user", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.ok) {
-    throw new Error(
-      data?.error || data?.reason || "No se pudo crear el usuario en CouchDB"
-    );
-  }
-  return data;
-}
-/* ========================================================================= */
+} from '@/lib/database'
+import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from 'lucide-react'
 
 export default function UsersPage() {
-  const router = useRouter();
-  const [users, setUsers] = useState<User[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
-    "soft"
-  );
-  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter()
+  const [users, setUsers] = useState<User[]>([])
+  const [showForm, setShowForm] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [deletingUser, setDeletingUser] = useState<User | null>(null)
+  const [deleteMode, setDeleteMode] = useState<'soft' | 'hard' | 'activate'>('soft')
+  const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    loadUsers();
-  }, []);
+    loadUsers()
+  }, [])
 
   const loadUsers = async () => {
-    const allUsers = await getAllUsers(); // <- ya devuelve User[] (sin password)
-    setUsers(allUsers);
-  };
+    const allUsers = await getAllUsers()
+    setUsers(allUsers)
+  }
 
   const handleCreateUser = async (data: CreateUserData) => {
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      // 1) Crear cuenta en CouchDB (_users) para poder iniciar sesión
-      await provisionUserInCouch({
-        email: data.email,
-        password: data.password,
-        role: data.role || "user",
-      });
-
-      // 2) Guardar perfil en Pouch (sin password)
+      const now = new Date().toISOString()
       await createUser({
-        type: "user", // 👈 REQUERIDO
         id: crypto.randomUUID(),
-        name: data.name,
-        email: data.email,
-        role: (data.role as any) ?? "user",
-        permissions: data.permissions?.length
-          ? data.permissions
-          : ["app_access"],
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-
-      await loadUsers();
-      setShowForm(false);
-      toast.success("Usuario creado");
-    } catch (error: any) {
-      console.error("Error creando usuario:", error);
-      toast.error(error?.message || "No se pudo crear el usuario");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleEditUser = async (data: CreateUserData) => {
-    if (!editingUser) return;
-    setIsLoading(true);
-    try {
-      // Si quieres cambiar password/email en Couch, crea un endpoint /api/couch/update-user
-      await updateUser({
-        ...editingUser,
+        type: 'user',
         name: data.name,
         email: data.email,
         role: data.role,
         permissions: data.permissions,
-        type: "user",
-      });
-      await loadUsers();
-      setEditingUser(null);
-      toast.success("Usuario actualizado");
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      })
+      await loadUsers()
+      setShowForm(false)
+      toast.success('Usuario creado')
     } catch (error) {
-      console.error("Error actualizando usuario:", error);
-      toast.error("No se pudo actualizar el usuario");
+      console.error('Error creando usuario:', error)
+      toast.error('No se pudo crear el usuario')
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
+
+  const handleEditUser = async (data: CreateUserData) => {
+    if (!editingUser) return
+    setIsLoading(true)
+    try {
+      await updateUser({
+        ...editingUser,
+        type: 'user',
+        name: data.name,
+        email: data.email,
+        role: data.role,
+        permissions: data.permissions,
+      })
+      await loadUsers()
+      setEditingUser(null)
+      toast.success('Usuario actualizado')
+    } catch (error) {
+      console.error('Error actualizando usuario:', error)
+      toast.error('No se pudo actualizar el usuario')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const handleDeleteUser = async () => {
-    if (!deletingUser) return;
-    setIsLoading(true);
+    if (!deletingUser) return
+    setIsLoading(true)
     try {
-      if (deleteMode === "soft") {
-        await softDeleteUser(deletingUser._id || deletingUser.id);
+      if (deleteMode === 'soft') {
+        await softDeleteUser(deletingUser._id || deletingUser.id)
       } else {
-        await deleteUserById(deletingUser._id || deletingUser.id);
+        await deleteUserById(deletingUser._id || deletingUser.id)
       }
-      await loadUsers();
+      await loadUsers()
       toast.success(
-        `Usuario ${
-          deleteMode === "soft" ? "desactivado" : "eliminado permanentemente"
-        }`
-      );
-      setDeletingUser(null);
+        `Usuario ${deleteMode === 'soft' ? 'desactivado' : 'eliminado permanentemente'}`
+      )
+      setDeletingUser(null)
     } catch (error) {
-      console.error("Error eliminando usuario:", error);
-      toast.error("No se pudo eliminar el usuario");
+      console.error('Error eliminando usuario:', error)
+      toast.error('No se pudo eliminar el usuario')
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
-
-  const handleToggleUserStatus = async (user: User) => {
-    setIsLoading(true);
-    try {
-      await updateUser({ ...user, isActive: !user.isActive, type: "user" });
-      await loadUsers();
-      toast.success(
-        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
-      );
-    } catch (error) {
-      console.error("Error cambiando estado del usuario:", error);
-      toast.error("No se pudo cambiar el estado");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }
 
   if (showForm || editingUser) {
     return (
@@ -187,8 +135,8 @@ export default function UsersPage() {
                 user={editingUser || undefined}
                 onSubmit={editingUser ? handleEditUser : handleCreateUser}
                 onCancel={() => {
-                  setShowForm(false);
-                  setEditingUser(null);
+                  setShowForm(false)
+                  setEditingUser(null)
                 }}
                 isLoading={isLoading}
               />
@@ -196,7 +144,7 @@ export default function UsersPage() {
           </main>
         </div>
       </RouteGuard>
-    );
+    )
   }
 
   return (
@@ -212,12 +160,9 @@ export default function UsersPage() {
               <ArrowLeftCircle className="h-5 w-5 mr-2" />
               <span>Regresar</span>
             </button>
-
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">
-                  Panel de control
-                </h1>
+                <h1 className="text-3xl font-bold text-slate-900">Panel de control</h1>
                 <p className="mt-2 text-slate-600">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
@@ -228,10 +173,7 @@ export default function UsersPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {users.map((user) => (
-                <Card
-                  key={user.id}
-                  className={!user.isActive ? "opacity-60" : ""}
-                >
+                <Card key={user.id} className={`${!user.isActive ? 'opacity-60' : ''}`}>
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
@@ -250,8 +192,8 @@ export default function UsersPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setDeletingUser(user);
-                            setDeleteMode(user.isActive ? "soft" : "activate");
+                            setDeletingUser(user)
+                            setDeleteMode(user.isActive ? 'soft' : 'activate')
                           }}
                         >
                           <UserX className="h-4 w-4 text-yellow-600" />
@@ -260,8 +202,8 @@ export default function UsersPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setDeletingUser(user);
-                            setDeleteMode("hard");
+                            setDeletingUser(user)
+                            setDeleteMode('hard')
                           }}
                         >
                           <Trash2 className="h-4 w-4 text-red-600" />
@@ -273,34 +215,22 @@ export default function UsersPage() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Rol:</span>
-                        <Badge
-                          variant={
-                            user.role === "manager" ? "default" : "secondary"
-                          }
-                        >
+                        <Badge variant={user.role === 'manager' ? 'default' : 'secondary'}>
                           {user.role}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Estado:</span>
-                        <Badge
-                          variant={user.isActive ? "default" : "destructive"}
-                        >
-                          {user.isActive ? "Activo" : "Inactivo"}
+                        <Badge variant={user.isActive ? 'default' : 'destructive'}>
+                          {user.isActive ? 'Activo' : 'Inactivo'}
                         </Badge>
                       </div>
                       <div>
-                        <span className="text-sm text-slate-600">
-                          Permisos:
-                        </span>
+                        <span className="text-sm text-slate-600">Permisos:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {user.permissions.map((p) => (
-                            <Badge
-                              key={p}
-                              variant="outline"
-                              className="text-xs"
-                            >
-                              {p.replace("_", " ")}
+                          {user.permissions.map((permission) => (
+                            <Badge key={permission} variant="outline" className="text-xs">
+                              {permission.replace('_', ' ')}
                             </Badge>
                           ))}
                         </div>
@@ -327,49 +257,43 @@ export default function UsersPage() {
           </div>
         </main>
 
-        <AlertDialog
-          open={!!deletingUser}
-          onOpenChange={() => setDeletingUser(null)}
-        >
+        <AlertDialog open={!!deletingUser} onOpenChange={() => setDeletingUser(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {deleteMode === "soft"
-                  ? "¿Desactivar usuario?"
-                  : deleteMode === "activate"
-                  ? "¿Activar usuario?"
-                  : "¿Eliminar usuario permanentemente?"}
+                {deleteMode === 'soft'
+                  ? '¿Desactivar usuario?'
+                  : deleteMode === 'activate'
+                  ? '¿Activar usuario?'
+                  : '¿Eliminar usuario permanentemente?'}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {deleteMode === "soft"
+                {deleteMode === 'soft'
                   ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
-                  : deleteMode === "activate"
+                  : deleteMode === 'activate'
                   ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
                   : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleDeleteUser}
-                disabled={isLoading}
-              >
+              <AlertDialogAction onClick={handleDeleteUser} disabled={isLoading}>
                 {isLoading
-                  ? deleteMode === "soft"
-                    ? "Desactivando..."
-                    : deleteMode === "activate"
-                    ? "Activando..."
-                    : "Eliminando..."
-                  : deleteMode === "soft"
-                  ? "Desactivar"
-                  : deleteMode === "activate"
-                  ? "Activar"
-                  : "Eliminar"}
+                  ? deleteMode === 'soft'
+                    ? 'Desactivando...'
+                    : deleteMode === 'activate'
+                    ? 'Activando...'
+                    : 'Eliminando...'
+                  : deleteMode === 'soft'
+                  ? 'Desactivar'
+                  : deleteMode === 'activate'
+                  ? 'Activar'
+                  : 'Eliminar'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </div>
     </RouteGuard>
-  );
+  )
 }
