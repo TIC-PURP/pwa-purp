@@ -1,17 +1,26 @@
-// lib/types.ts
-export type Role = 'manager' | 'administrador' | 'user';
+// añade/ajusta estos tipos
+export type Role = "manager" | "user" | "administrador";
 
 export type Permission =
-  | 'users_read'
-  | 'users_write'
-  | 'users_delete'
-  | 'app_access';
+  | "app_access"
+  | "users_read"
+  | "users_write"
+  | "users_delete";
 
-export interface User {
+export type CreateUserData = {
+  name: string;
+  email: string;
+  password: string;        // requerido al crear
+  role: Role;
+  permissions: Permission[]; // ⬅️ importante
+};
+
+// si ya tienes User aquí, que coincida con database.ts (sin password)
+export type User = {
   _id?: string;
   _rev?: string;
   id: string;
-  type: 'user';
+  type: "user";
   name: string;
   email: string;
   role: Role;
@@ -19,25 +28,4 @@ export interface User {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface CreateUserData {
-  name: string;
-  email: string;
-  password: string;
-  role: Role;
-  permissions: Permission[];
-}
-
-export interface LoginCredentials {
-  email: string;
-  password: string;
-}
-
-export interface AuthState {
-  user: User | null;
-  token: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: string | null;
-}
+};

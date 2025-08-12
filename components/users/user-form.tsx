@@ -4,40 +4,18 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { createUserSchema, editUserSchema } from "@/lib/validations";
-import type { CreateUserData, User } from "@/lib/types";
-import { Eye, EyeOff } from "lucide-react";
-import type { SubmitHandler } from "react-hook-form";
+import type { CreateUserData, User, Role, Permission } from "@/lib/types";
 
-interface UserFormProps {
-  user?: User;
-  onSubmit: SubmitHandler<CreateUserData>;
-  onCancel: () => void;
-  isLoading?: boolean;
-}
-
-const availablePermissions = [
-  { id: "read", label: "Lectura" },
-  { id: "write", label: "Escritura" },
-  { id: "delete", label: "Eliminación" },
-  { id: "manage_users", label: "Gestionar Usuarios" },
+const PERMISSION_OPTIONS: Permission[] = [
+  "app_access",
+  "users_read",
+  "users_write",
+  "users_delete",
 ];
 
 export function UserForm({
@@ -45,205 +23,124 @@ export function UserForm({
   onSubmit,
   onCancel,
   isLoading,
-}: UserFormProps) {
-  const [showPassword, setShowPassword] = useState(false);
+}: {
+  user?: User;
+  onSubmit: (data: CreateUserData | Partial<CreateUserData>) => Promise<void> | void;
+  onCancel: () => void;
+  isLoading?: boolean;
+}) {
   const isEditing = !!user;
 
   const {
     register,
     handleSubmit,
-    formState: { errors },
     setValue,
     watch,
-  } = useForm<CreateUserData>({
+    formState: { errors },
+  } = useForm<CreateUserData | Partial<CreateUserData>>({
     resolver: zodResolver(isEditing ? editUserSchema : createUserSchema) as any,
-    defaultValues: user
+    // ⬇⬇⬇ AQUÍ el fix: usar valores válidos para Permission
+    defaultValues: isEditing
       ? {
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          permissions: user.permissions,
+          name: user?.name,
+          email: user?.email,
+          role: user?.role as Role,
+          permissions: user?.permissions as Permission[],
         }
       : {
-          permissions: ["read"],
+          name: "",
+          email: "",
+          password: "",
+          role: "user",
+          permissions: ["app_access"], // ⬅️ ya no "read"
         },
   });
 
-  const watchedPermissions = watch("permissions") || [];
+  const permissions = (watch("permissions") as Permission[]) || [];
 
-  const handlePermissionChange = (permissionId: string, checked: boolean) => {
-    const currentPermissions = watchedPermissions;
-    if (checked) {
-      setValue("permissions", [...currentPermissions, permissionId]);
-    } else {
-      setValue(
-        "permissions",
-        currentPermissions.filter((p) => p !== permissionId)
-      );
-    }
+  const togglePermission = (p: Permission, checked: boolean) => {
+    const current = new Set(permissions);
+    if (checked) current.add(p);
+    else current.delete(p);
+    setValue("permissions", Array.from(current) as any, { shouldValidate: true });
   };
 
+  const submit = handleSubmit(async (data) => {
+    // En edición, la contraseña suele ser opcional: limpia si viene vacía
+    if (isEditing) {
+      const { password, ...rest } = data as CreateUserData;
+      await onSubmit(password ? (data as CreateUserData) : (rest as Partial<CreateUserData>));
+    } else {
+      await onSubmit(data as CreateUserData);
+    }
+  });
+
   return (
-    <Card className="w-full max-w-2xl mx-auto">
-      <CardHeader>
-        <CardTitle>
-          {isEditing ? "Editar Usuario" : "Crear Nuevo Usuario"}
-        </CardTitle>
-        <CardDescription>
-          {isEditing
-            ? "Modifica la información del usuario existente"
-            : "Completa los datos para crear un nuevo usuario"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          onSubmit={handleSubmit((data) => {
-            if (isEditing && user) {
-              const changed =
-                user.name !== data.name ||
-                user.email !== data.email ||
-                user.role !== data.role ||
-                JSON.stringify(user.permissions.sort()) !==
-                  JSON.stringify((data.permissions || []).sort()) ||
-                (data.password && data.password.trim().length > 0);
+    <form className="space-y-4" onSubmit={submit}>
+      <div>
+        <Label>Nombre</Label>
+        <Input {...register("name")} />
+        {errors.name && <p className="text-red-600 text-sm">{String(errors.name.message)}</p>}
+      </div>
 
-              if (!changed) {
-                alert(
-                  "No se detectaron cambios. No se actualizará el usuario."
-                );
-                return;
-              }
+      <div>
+        <Label>Correo</Label>
+        <Input type="email" {...register("email")} />
+        {errors.email && <p className="text-red-600 text-sm">{String(errors.email.message)}</p>}
+      </div>
 
-              // Si no se ingresó nueva contraseña, establecer el campo como undefined para evitar sobreescritura con vacío
-              if (!data.password || data.password.trim() === "") {
-                data.password = "";
-              }
-            }
+      {!isEditing && (
+        <div>
+          <Label>Contraseña</Label>
+          <Input type="password" {...register("password")} />
+          {errors.password && <p className="text-red-600 text-sm">{String(errors.password.message)}</p>}
+        </div>
+      )}
 
-            onSubmit(data);
-          })}
-          className="space-y-6"
+      <div>
+        <Label>Rol</Label>
+        <Select
+          defaultValue={(isEditing ? user?.role : "user") as Role}
+          onValueChange={(v) => setValue("role", v as Role, { shouldValidate: true })}
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Nombre Completo</Label>
-              <Input
-                id="name"
-                placeholder="Nombre del usuario"
-                {...register("name")}
+          <SelectTrigger>
+            <SelectValue placeholder="Selecciona un rol" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="user">user</SelectItem>
+            <SelectItem value="manager">manager</SelectItem>
+            <SelectItem value="administrador">administrador</SelectItem>
+          </SelectContent>
+        </Select>
+        {errors.role && <p className="text-red-600 text-sm">{String(errors.role.message)}</p>}
+      </div>
+
+      <div>
+        <Label>Permisos</Label>
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          {PERMISSION_OPTIONS.map((p) => (
+            <label key={p} className="flex items-center gap-2">
+              <Checkbox
+                checked={permissions.includes(p)}
+                onCheckedChange={(c) => togglePermission(p, Boolean(c))}
               />
-              {errors.name && (
-                <p className="text-sm text-red-600">{errors.name.message}</p>
-              )}
-            </div>
+              <span className="text-sm">{p}</span>
+            </label>
+          ))}
+        </div>
+        {errors.permissions && (
+          <p className="text-red-600 text-sm">{String(errors.permissions.message)}</p>
+        )}
+      </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Correo Electrónico</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="correo@ejemplo.com"
-                {...register("email")}
-              />
-              {errors.email && (
-                <p className="text-sm text-red-600">{errors.email.message}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="password">
-              {isEditing ? "Nueva Contraseña (opcional)" : "Contraseña"}
-            </Label>
-            <div className="relative">
-              <Input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                placeholder={
-                  isEditing ? "Dejar vacío para mantener actual" : "••••••••"
-                }
-                {...register("password")}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-            {errors.password && (
-              <p className="text-sm text-red-600">{errors.password.message}</p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="role">Rol del Usuario</Label>
-            <Select onValueChange={(value) => setValue("role", value as any)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona un rol" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="user">Usuario</SelectItem>
-                <SelectItem value="administrador">Administrador</SelectItem>
-                <SelectItem value="manager">Manager</SelectItem>
-              </SelectContent>
-            </Select>
-            {errors.role && (
-              <p className="text-sm text-red-600">{errors.role.message}</p>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <Label>Permisos</Label>
-            <div className="grid grid-cols-2 gap-3">
-              {availablePermissions.map((permission) => (
-                <div
-                  key={permission.id}
-                  className="flex items-center space-x-2"
-                >
-                  <Checkbox
-                    id={permission.id}
-                    checked={watchedPermissions.includes(permission.id)}
-                    onCheckedChange={(checked) =>
-                      handlePermissionChange(permission.id, checked as boolean)
-                    }
-                  />
-                  <Label htmlFor={permission.id} className="text-sm">
-                    {permission.label}
-                  </Label>
-                </div>
-              ))}
-            </div>
-            {errors.permissions && (
-              <p className="text-sm text-red-600">
-                {errors.permissions.message}
-              </p>
-            )}
-          </div>
-
-          <div className="flex justify-end space-x-4">
-            <Button type="button" variant="outline" onClick={onCancel}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading
-                ? isEditing
-                  ? "Actualizando..."
-                  : "Creando..."
-                : isEditing
-                ? "Actualizar Usuario"
-                : "Crear Usuario"}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+      <div className="flex gap-2">
+        <Button type="submit" disabled={isLoading}>
+          {isEditing ? "Guardar cambios" : "Crear usuario"}
+        </Button>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
+          Cancelar
+        </Button>
+      </div>
+    </form>
   );
 }
