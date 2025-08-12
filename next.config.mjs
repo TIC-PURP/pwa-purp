@@ -7,6 +7,7 @@ const baseConfig = {
   images: { unoptimized: true },
   eslint: { ignoreDuringBuilds: false },
   typescript: { ignoreBuildErrors: false },
+
   async headers() {
     return [
       {
@@ -15,24 +16,19 @@ const baseConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-XSS-Protection", value: "1; mode=block" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          {
-            key: "Permissions-Policy",
-            value:
-              "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-          },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
           {
             key: "Content-Security-Policy",
+            // 👇 Ajusta el dominio de CloudFront si cambia
             value: `
               default-src 'self';
-              connect-src 'self' https://d2zfthqcwakql2.cloudfront.net https://*.ingest.sentry.io;
+              connect-src 'self' https://d2zfthqcwakql2.cloudfront.net https://*.ingest.sentry.io blob:;
               script-src 'self' 'unsafe-eval' 'unsafe-inline';
               style-src 'self' 'unsafe-inline';
               img-src * data:;
               worker-src 'self' blob:;
               object-src 'none';
-            `
-              .replace(/\s{2,}/g, " ")
-              .trim(),
+            `.replace(/\s{2,}/g, " ").trim(),
           },
         ],
       },
@@ -40,21 +36,19 @@ const baseConfig = {
   },
 };
 
-// PWA
+// --- PWA (next-pwa) ---
 const withPwa = withPWA({
   dest: "public",
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  clientsClaim: true, // 👈 toma control inmediato
+  clientsClaim: true,
   cleanupOutdatedCaches: true,
 
   runtimeCaching: [
-    // A) Documentos en general (App Router)
+    // 1) Páginas/HTML
     {
-      urlPattern: ({ url, request }) =>
-        url.origin === self.location.origin &&
-        request.destination === "document",
+      urlPattern: ({ request }) => request.destination === "document",
       handler: "NetworkFirst",
       options: {
         cacheName: "html-pages",
@@ -62,32 +56,13 @@ const withPwa = withPWA({
         expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
       },
     },
-
-    // B) Fuerza cache específico de /auth/login y /principal, sin importar el 'destination'.
-    //    Así podemos "precalentar" vía Cache API o fetch() normal.
+    // 2) JS/CSS/Workers
     {
-      urlPattern: ({ url }) =>
-        url.origin === self.location.origin &&
-        (url.pathname === "/auth/login" ||
-          url.pathname === "/principal" ||
-          url.pathname === "/"),
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
-    },
-
-    // Estáticos (JS/CSS/Workers)
-    {
-      urlPattern: ({ request }) =>
-        ["style", "script", "worker"].includes(request.destination),
+      urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
       handler: "StaleWhileRevalidate",
       options: { cacheName: "static-resources" },
     },
-
-    // Imágenes
+    // 3) Imágenes
     {
       urlPattern: ({ request }) => request.destination === "image",
       handler: "StaleWhileRevalidate",
@@ -96,25 +71,15 @@ const withPwa = withPWA({
         expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
       },
     },
-    // dentro de runtimeCaching: [ ... ]
-    {
-      urlPattern: /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
-    },
   ],
 
-  // Fallback cuando ni red ni caché
+  // Fallback cuando no hay red ni caché
   fallbacks: { document: "/offline.html" },
 });
 
 const nextConfig = withPwa(baseConfig);
 
-// Sentry al final
+// --- Sentry ---
 const sentryWebpackPluginOptions = {
   org: "tic-ev",
   project: "javascript-nextjs",
