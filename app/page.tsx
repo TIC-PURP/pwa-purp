@@ -1,32 +1,23 @@
-"use client"
+'use client'
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { useAppSelector } from "@/lib/hooks"
-import { startSync } from "@/lib/database"
+import { useEffect, useRef } from 'react'
+import { getLocalDB, getRemoteDB, startSync } from '@/lib/database'
 
 export default function HomePage() {
-  const router = useRouter()
-  const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth)
+  const syncRef = useRef<any>(null)
 
   useEffect(() => {
-    console.log("Ejecutando startSync desde HomePage")
-    startSync()
+    console.log('Ejecutando startSync desde HomePage')
+    const local = getLocalDB()      // crea IndexedDB local (usa el nombre de tu DB)
+    const remote = getRemoteDB()    // usa NEXT_PUBLIC_COUCHDB_URL (p.ej. /api/couch/gestion_pwa)
+    const handler = startSync(local, remote)
+    syncRef.current = handler
+
+    // Limpieza al desmontar para no dejar sync duplicado
+    return () => {
+      try { syncRef.current?.cancel?.() } catch {}
+    }
   }, [])
 
-  useEffect(() => {
-    if (!isLoading) {
-      if (isAuthenticated) {
-        router.push("/principal")
-      } else {
-        router.push("/auth/login")
-      }
-    }
-  }, [isAuthenticated, isLoading, router])
-
-  return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-slate-900"></div>
-    </div>
-  )
+  return <div>Sync activo</div>
 }
