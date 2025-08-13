@@ -20,11 +20,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { createUserSchema, editUserSchema } from "@/lib/validations";
 import type { CreateUserData, User } from "@/lib/types";
+
+type PermissionLevel = "none" | "read" | "all"
+
+type CreateUserFormData = Omit<CreateUserData, "permissions"> & { permissionLevel: PermissionLevel }
 import { Eye, EyeOff } from "lucide-react";
 import type { SubmitHandler } from "react-hook-form";
+
+const toPermissionsArray = (role: User["role"], level: PermissionLevel): string[] => {
+  switch (level) {
+    case "none": return []
+    case "read": return ["read"]
+    case "all":
+      if (role === "manager") return ["read","write","delete","manage_users"]
+      if (role === "administrador") return ["read","write"]
+      return ["write"]
+  }
+}
+
+const fromPermissionsArray = (role: User["role"], perms: string[]): PermissionLevel => {
+  if (!perms || perms.length === 0) return "none"
+  if (perms.length === 1 && perms[0] === "read") return "read"
+  return "all"
+}
+
 
 interface UserFormProps {
   user?: User;
@@ -55,33 +77,24 @@ export function UserForm({
     formState: { errors },
     setValue,
     watch,
-  } = useForm<CreateUserData>({
+  } = useForm<CreateUserFormData>({
     resolver: zodResolver(isEditing ? editUserSchema : createUserSchema) as any,
     defaultValues: user
       ? {
           name: user.name,
           email: user.email,
           role: user.role,
-          permissions: user.permissions,
+          permissionLevel: fromPermissionsArray(user.role, user.permissions),
         }
       : {
-          permissions: ["read"],
+          permissionLevel: "read",
         },
   });
 
-  const watchedPermissions = watch("permissions") || [];
+  const watchedPermissionLevel = watch("permissionLevel") as PermissionLevel | undefined;
+  const watchedRole = watch("role") as User["role"] | undefined;
 
-  const handlePermissionChange = (permissionId: string, checked: boolean) => {
-    const currentPermissions = watchedPermissions;
-    if (checked) {
-      setValue("permissions", [...currentPermissions, permissionId]);
-    } else {
-      setValue(
-        "permissions",
-        currentPermissions.filter((p) => p !== permissionId)
-      );
-    }
-  };
+  // (legacy) handlePermissionChange removed
 
   return (
     <Card className="w-full max-w-2xl mx-auto">
@@ -98,13 +111,18 @@ export function UserForm({
       <CardContent>
         <form
           onSubmit={handleSubmit((data) => {
+            const mapped = {
+              ...data,
+              permissions: toPermissionsArray(data.role, data.permissionLevel),
+            };
+    
             if (isEditing && user) {
               const changed =
                 user.name !== data.name ||
                 user.email !== data.email ||
                 user.role !== data.role ||
                 JSON.stringify(user.permissions.sort()) !==
-                  JSON.stringify((data.permissions || []).sort()) ||
+                  JSON.stringify((mapped.permissions || []).sort()) ||
                 (data.password && data.password.trim().length > 0);
 
               if (!changed) {
@@ -120,7 +138,7 @@ export function UserForm({
               }
             }
 
-            onSubmit(data);
+            onSubmit(mapped);
           })}
           className="space-y-6"
         >
@@ -201,47 +219,51 @@ export function UserForm({
           </div>
 
           <div className="space-y-3">
-            <Label>Permisos</Label>
-            <div className="grid grid-cols-2 gap-3">
-              {availablePermissions.map((permission) => (
-                <div
-                  key={permission.id}
-                  className="flex items-center space-x-2"
-                >
-                  <Checkbox
-                    id={permission.id}
-                    checked={watchedPermissions.includes(permission.id)}
-                    onCheckedChange={(checked) =>
-                      handlePermissionChange(permission.id, checked as boolean)
-                    }
-                  />
-                  <Label htmlFor={permission.id} className="text-sm">
-                    {permission.label}
-                  </Label>
+            
+            <Label>Tipo de Acceso</Label>
+            <RadioGroup
+              value={watchedPermissionLevel}
+              onValueChange={(v) => setValue("permissionLevel", v as PermissionLevel)}
+              className="grid gap-3 md:grid-cols-3"
+            >
+              <div className="flex items-start space-x-3 rounded-xl border p-3">
+                <RadioGroupItem id="perm-none" value="none" />
+                <div className="space-y-1">
+                  <Label htmlFor="perm-none" className="font-medium">Sin permisos</Label>
                 </div>
-              ))}
-            </div>
-            {errors.permissions && (
-              <p className="text-sm text-red-600">
-                {errors.permissions.message}
-              </p>
-            )}
-          </div>
+              </div>
 
-          <div className="flex justify-end space-x-4">
-            <Button type="button" variant="outline" onClick={onCancel}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading
-                ? isEditing
-                  ? "Actualizando..."
-                  : "Creando..."
-                : isEditing
-                ? "Actualizar Usuario"
-                : "Crear Usuario"}
-            </Button>
-          </div>
+              <div className="flex items-start space-x-3 rounded-xl border p-3">
+                <RadioGroupItem id="perm-read" value="read" />
+                <div className="space-y-1">
+                  <Label htmlFor="perm-read" className="font-medium">Solo lectura</Label>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3 rounded-xl border p-3">
+                <RadioGroupItem id="perm-all" value="all" />
+                <div className="space-y-1">
+                  <Label htmlFor="perm-all" className="font-medium">Acceso completo</Label>
+                </div>
+              </div>
+            </RadioGroup>
+
+            {errors.permissionLevel && (
+              <p className="text-sm text-red-600">{errors.permissionLevel.message}</p>
+            )}
+    </div>
+        
+            <div className="flex justify-end space-x-4 mt-6">
+              <Button type="button" variant="outline" onClick={onCancel}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading
+                  ? (isEditing ? "Actualizando..." : "Creando...")
+                  : (isEditing ? "Actualizar Usuario" : "Crear Usuario")}
+              </Button>
+            </div>
+    
         </form>
       </CardContent>
     </Card>

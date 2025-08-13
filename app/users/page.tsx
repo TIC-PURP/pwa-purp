@@ -249,17 +249,19 @@ export default function UsersPage() {
                         <span className="text-sm text-slate-600">
                           Permisos:
                         </span>
+                        
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {user.permissions.map((permission) => (
-                            <Badge
-                              key={permission}
-                              variant="outline"
-                              className="text-xs"
-                            >
-                              {permission.replace("_", " ")}
-                            </Badge>
-                          ))}
+                          {(() => {
+                            const perms = (user.permissions || []).sort();
+                            let label = "Acceso completo";
+                            if (perms.length === 0) label = "Sin permisos";
+                            else if (perms.length === 1 && perms[0] === "read") label = "Solo lectura";
+                            return (
+                              <Badge variant="outline" className="text-xs">{label}</Badge>
+                            );
+                          })()}
                         </div>
+
                       </div>
                       <div className="text-xs text-slate-500">
                         Creado: {new Date(user.createdAt).toLocaleDateString()}

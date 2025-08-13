@@ -11,10 +11,10 @@ export const loginSchema = z.object({
     ),
 })
 
-const availablePermissions = ["read", "write", "delete", "manage_users"] as const
-const permissionEnum = z.enum(availablePermissions)
+export const permissionLevelValues = ["none","read","all"] as const
+export const permissionLevelEnum = z.enum(permissionLevelValues)
 
-const baseUserSchema = z.object({
+export const baseUserSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   email: z.string().email("Formato de correo inválido"),
   password: z
@@ -24,74 +24,12 @@ const baseUserSchema = z.object({
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
       "Debe tener 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial"
     ),
-  role: z.enum(["manager", "administrador", "user"]),
-  permissions: z.array(permissionEnum).min(1, "Selecciona al menos un permiso"),
+  role: z.enum(["manager","administrador","user"]),
+  permissionLevel: permissionLevelEnum,
 })
 
-export const createUserSchema = baseUserSchema.refine((data) => {
-  const { role, permissions } = data
+export const createUserSchema = baseUserSchema
 
-  if (role === "manager") return true
-
-  if (role === "administrador") {
-    return (
-      permissions.length <= 2 &&
-      permissions.every((p) => p === "read" || p === "write")
-    )
-  }
-
-  if (role === "user") {
-    return (
-      permissions.length === 1 &&
-      (permissions[0] === "read" || permissions[0] === "write")
-    )
-  }
-
-  return false
-}, {
-  message: "Permisos inválidos para el rol seleccionado",
-  path: ["permissions"],
+export const editUserSchema = baseUserSchema.extend({
+  password: z.string().optional(),
 })
-
-export const editUserSchema = baseUserSchema
-  .extend({
-    password: z
-      .string()
-      .optional()
-      .refine((val) => !val || val.length >= 8, {
-        message: "La contraseña debe tener al menos 8 caracteres",
-      })
-      .refine(
-        (val) =>
-          !val ||
-          /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/.test(val),
-        {
-          message:
-            "Debe tener 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial",
-        }
-      ),
-  })
-  .refine((data) => {
-    const { role, permissions } = data
-
-    if (role === "manager") return true
-
-    if (role === "administrador") {
-      return (
-        permissions.length <= 2 &&
-        permissions.every((p) => p === "read" || p === "write")
-      )
-    }
-
-    if (role === "user") {
-      return (
-        permissions.length === 1 &&
-        (permissions[0] === "read" || permissions[0] === "write")
-      )
-    }
-
-    return false
-  }, {
-    message: "Permisos inválidos para el rol seleccionado",
-    path: ["permissions"],
-  })
