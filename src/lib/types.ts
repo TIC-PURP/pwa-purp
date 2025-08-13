@@ -1,10 +1,13 @@
+export type Role = 'manager' | 'administrador' | 'user'
+export type Permission = 'read' | 'write' | 'delete' | 'manage_users'
+
 export interface User {
   id: string
   name: string
   email: string
   password: string
-  role: "manager" | "administrador" | "user"
-  permissions: string[]
+  role: Role
+  permissions: Permission[]
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -28,6 +31,9 @@ export interface CreateUserData {
   name: string
   email: string
   password: string
-  role: "manager" | "administrador" | "user"
-  permissions: string[]
+  role: Role
+  permissions: Permission[]
 }
+
+
+export type AccessType = 'none' | 'read_only' | 'full';
