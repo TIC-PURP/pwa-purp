@@ -20,6 +20,38 @@ function parseCouchEnv(raw?: string): CouchEnv {
   if (!raw) {
     return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
   }
+  try {
+    // Soporta ruta relativa (p. ej. /api/couch/gestion_pwa)
+    if (raw.startsWith('/')) {
+      const parts = raw.split('/').filter(Boolean)
+      const dbName = parts.length ? parts[parts.length - 1] : DEFAULT_REMOTE_DB
+      const base = (typeof window !== 'undefined' ? window.location.origin : '')
+      return { serverBase: base, serverWithAuth: base, dbName }
+    }
+    // URL absoluta
+    const url = new URL(raw)
+    const path = (url.pathname || "/").replace(/\/+\$/, "")
+    const envDb = process.env.NEXT_PUBLIC_COUCHDB_DB?.trim()
+    const dbName =
+      path && path !== "/"
+        ? path.split("/").filter(Boolean).slice(-1)[0]
+        : (envDb || DEFAULT_REMOTE_DB)
+
+    const serverBase = `${url.protocol}//${url.host}`
+
+    // Conserva user:pass si vinieran en la URL
+    const authPrefix =
+      (url.username ? decodeURIComponent(url.username) : "") +
+      (url.password ? ":" + decodeURIComponent(url.password) : "")
+    const authAt = authPrefix ? `${authPrefix}@` : ""
+    const serverWithAuth = `${url.protocol}//${authAt}${url.host}`
+
+    return { serverBase, serverWithAuth, dbName }
+  } catch {
+    return { serverBase: "", serverWithAuth: "", dbName: DEFAULT_REMOTE_DB }
+  }
+}
+  }
 
   try {
     const url = new URL(raw)

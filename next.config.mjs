@@ -24,7 +24,7 @@ const baseConfig = {
             key: "Content-Security-Policy",
             value: `
               default-src 'self';
-              connect-src 'self' https://d2zfthqcwakql2.cloudfront.net https://*.ingest.sentry.io;
+              connect-src 'self' https://couchdb-purp.onrender.com https://*.ingest.sentry.io;
               script-src 'self' 'unsafe-eval' 'unsafe-inline';
               style-src 'self' 'unsafe-inline';
               img-src * data:;
