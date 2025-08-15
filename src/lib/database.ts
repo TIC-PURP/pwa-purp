@@ -160,7 +160,6 @@ export async function startSync() {
     console.error("[sync] error", e);
     try { window.dispatchEvent(new CustomEvent("purp-sync", { detail: { type: "error", error: String(e?.message || e) } })); } catch {}
   });
-
 }
 
 /** Detiene replicación */
