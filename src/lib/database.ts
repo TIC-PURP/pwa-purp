@@ -3,10 +3,10 @@
 
 const isClient = typeof window !== "undefined";
 
-let PouchDB: any = null;
-let localDB: any = null;
-let remoteDB: any = null;
-let syncHandler: any = null;
+let PouchDB: any = null;     // clase PouchDB (se carga en cliente)
+let localDB: any = null;     // instancia local (IndexedDB)
+let remoteDB: any = null;    // instancia remota (CouchDB vía proxy /couchdb)
+let syncHandler: any = null; // handler de replicación viva
 
 export type CouchEnv = {
   serverBase: string;
@@ -27,10 +27,11 @@ export function getCouchEnv(): CouchEnv {
   return { serverBase, dbName };
 }
 
-/** Carga PouchDB y plugin find */
+/** Carga PouchDB (browser) y plugin find en cliente */
 async function ensurePouch() {
   if (PouchDB) return;
-  const mod = await import("pouchdb");
+  // Importamos sólo en cliente para evitar SSR issues
+  const mod = await import("pouchdb-browser");
   const find = (await import("pouchdb-find")).default;
   PouchDB = (mod as any).default || mod;
   PouchDB.plugin(find);
@@ -45,23 +46,25 @@ function slug(s: string) {
     .replace(/[^a-z0-9._-]/g, "-");
 }
 function toUserDocId(input: string) {
-  // Si ya viene con partición, respeta
+  if (!input) throw new Error("toUserDocId: id vacío");
+  // Ya particionado
   if (input.includes(":")) return input;
-  // Si viene como user_<algo>, conviértelo
+  // Legacy user_<...>
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
-  // Si viene un email/usuario suelto
+  // Email/usuario suelto
   return `user:${slug(input)}`;
 }
+
 function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
   const _id = `user:${key}`;
   const now = new Date().toISOString();
   return {
     _id,
-    id: `user_${key}`, // campo informativo para tu UI
+    id: `user_${key}`, // id lógico para la UI
     type: "user",
     name: data.name || key,
-    email: data.email || "",
+    email: (data.email || "").toLowerCase(),
     password: data.password || "",
     role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
@@ -76,33 +79,35 @@ function buildUserDocFromData(data: any) {
 export async function openDatabases() {
   if (!isClient) return;
   await ensurePouch();
-  const { serverBase, dbName } = getCouchEnv();
+  const { dbName } = getCouchEnv();
 
+  // Local: puede llamarse igual o con sufijo; no afecta a la sync
   if (!localDB) {
     localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
   }
 
+  // Remota: SIEMPRE vía proxy de mismo origen → /couchdb/<db>
   if (!remoteDB) {
-    const remoteUrl = `${serverBase}/${encodeURIComponent(dbName)}`;
+    const remoteUrl = `/couchdb/${encodeURIComponent(dbName)}`;
     remoteDB = new PouchDB(remoteUrl, {
       skip_setup: true,
+      // Forzamos credenciales para que la cookie AuthSession viaje
       fetch: (url: RequestInfo, opts: any = {}) => {
         opts = opts || {};
-        opts.credentials = "include"; // usar cookie AuthSession
+        opts.credentials = "include";
         return (window as any).fetch(url as any, opts);
       },
-      ajax: { withCredentials: true },
     });
   }
 
   return { localDB, remoteDB };
 }
 
-/** Login online contra /_session (name = usuario o email) */
+/** Login online contra /_session (name = usuario o email) en MISMO ORIGEN */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  const { serverBase } = getCouchEnv();
+  // CouchDB espera urlencoded; esto evita problemas de CORS en algunos proxies
   const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetch(`${serverBase}/_session`, {
+  const res = await fetch(`/couchdb/_session`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -120,16 +125,15 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
 
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
-  const { serverBase } = getCouchEnv();
   try {
-    await fetch(`${serverBase}/_session`, {
+    await fetch(`/couchdb/_session`, {
       method: "DELETE",
       credentials: "include",
     });
   } catch {}
 }
 
-/** Arranca replicación continua */
+/** Arranca replicación continua (offline-first) */
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
@@ -137,21 +141,29 @@ export async function startSync() {
 
   if (syncHandler && syncHandler.cancel) return syncHandler;
 
-  const { serverBase } = getCouchEnv();
-  const viaCloudFront = /cloudfront\.net$/i.test(new URL(serverBase).host);
   const opts: any = { live: true, retry: true };
-  if (viaCloudFront) {
-    // supervivencia detrás de CloudFront
-    opts.heartbeat = 25000;
-    opts.timeout = 55000;
-  }
+  // Heartbeat/timeouts útiles detrás de CDN/proxy
+  opts.heartbeat = 25000;
+  opts.timeout = 55000;
 
   syncHandler = localDB.sync(remoteDB, opts);
   syncHandler
-    .on("change", (i: any) => console.log("[sync] change", i.direction))
-    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
     .on("active", () => console.log("[sync] active"))
-    .on("error", (e: any) => console.error("[sync] error", e));
+    .on("paused", (e: any) => {
+      if (e) {
+        console.warn("[sync] paused", e?.status, e?.message || e);
+        // 401 aquí suele indicar cookie expirada → UI puede forzar re-login
+      } else {
+        console.log("[sync] paused");
+      }
+    })
+    .on("change", (i: any) => {
+      // console.log("[sync] change", i?.direction);
+    })
+    .on("error", (e: any) => {
+      console.error("[sync] error", e?.status, e?.message || e);
+    });
+
   return syncHandler;
 }
 
@@ -173,37 +185,60 @@ export async function authenticateUser(identifier: string, password: string) {
   const candidates = [
     `user_${identifier}`,
     identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
-  ].filter(Boolean);
+  ].filter(Boolean) as string[];
 
-  // Buscar por "id" en docs (no por _id) para compatibilidad
+  // Índice por "id" para compatibilidad
   try {
     await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
   } catch {}
-  for (const cand of candidates as string[]) {
-    const r = await localDB.find({ selector: { id: cand as string } });
+  for (const cand of candidates) {
+    const r = await localDB.find({ selector: { id: cand } });
     if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
   }
   return null;
 }
 
-/** Guarda/actualiza usuario en Pouch local */
+/** ======== Utilidades de índice ======== */
+async function ensureUserIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await localDB.createIndex({
+      index: { fields: ["type", "updatedAt"] },
+      name: "idx-type-updatedAt",
+      ddoc: "idx-type-updatedAt",
+    });
+  } catch {}
+  try {
+    await localDB.createIndex({
+      index: { fields: ["type", "email"] },
+      name: "idx-type-email",
+      ddoc: "idx-type-email",
+    });
+  } catch {}
+}
+
+/** Guarda/actualiza usuario en Pouch local (upsert) */
 export async function guardarUsuarioOffline(user: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
 
-  // Normaliza a doc con partición user:
   const key = slug(user.email || user.name || user.id || "");
   const _id = `user:${key}`;
+
+  const now = new Date().toISOString();
   const toSave = {
     ...buildUserDocFromData(user),
     _id,
     id: `user_${key}`,
-    updatedAt: new Date().toISOString(),
+    type: "user",
+    updatedAt: now,
   };
 
   try {
     const existing = await localDB.get(_id);
     toSave._rev = existing._rev;
+    toSave.createdAt = existing.createdAt || toSave.createdAt;
     await localDB.put(toSave);
   } catch (err: any) {
     if (err?.status === 404) {
@@ -225,7 +260,7 @@ export async function initializeDefaultUsers() {
     email: "mario_acosta@purp.com.mx",
     password: "Purp_*2023@",
     role: "manager",
-    permissions: ["read", "write", "delete", "manage_users"],
+    permissions: ["read", "write", "delete", "manage"],
     createdAt: now,
   });
   try {
@@ -238,27 +273,9 @@ export async function initializeDefaultUsers() {
 /* ============================
    ==========  USERS  =========
    ============================
-   CRUD que usa la base local (offline-first); la sync se encarga del remoto.
+   CRUD que usa la base local (offline-first); la sync replica al remoto.
 */
 
-async function ensureUserIndexes() {
-  await openDatabases();
-  if (!localDB) return;
-  try {
-    await localDB.createIndex({
-      index: { fields: ["type", "updatedAt"] },
-      name: "idx-type-updatedAt",
-    });
-  } catch {}
-  try {
-    await localDB.createIndex({
-      index: { fields: ["email"] },
-      name: "idx-email",
-    });
-  } catch {}
-}
-
-/** Lista usuarios (activos por defecto). `opts.includeInactive=true` para traer todos */
 export async function getAllUsers(opts?: {
   includeInactive?: boolean;
   limit?: number;
@@ -268,7 +285,6 @@ export async function getAllUsers(opts?: {
   const includeInactive = Boolean(opts?.includeInactive);
   const limit = opts?.limit ?? 1000;
 
-  // Intento con Mango
   try {
     const selector: any = { type: "user" };
     if (!includeInactive) selector.isActive = { $ne: false };
@@ -278,21 +294,15 @@ export async function getAllUsers(opts?: {
       limit,
     });
     return r.docs || [];
-  } catch (e: any) {
-    // Fallback por prefix en _id (dos variantes)
-    const resA = await localDB.allDocs({
+  } catch {
+    // Fallback por prefijo en _id
+    const res = await localDB.allDocs({
       include_docs: true,
       startkey: "user:",
       endkey: "user;\ufff0",
       limit,
     });
-    const resB = await localDB.allDocs({
-      include_docs: true,
-      startkey: "user_",
-      endkey: "user_\ufff0",
-      limit,
-    });
-    const docs = [...resA.rows, ...resB.rows]
+    const docs = (res.rows || [])
       .map((r: any) => r.doc)
       .filter(Boolean)
       .filter((d: any) =>
@@ -300,7 +310,6 @@ export async function getAllUsers(opts?: {
           ? d.type === "user"
           : d.type === "user" && d.isActive !== false,
       );
-    // Orden por updatedAt desc
     docs.sort((a: any, b: any) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
     );
@@ -315,16 +324,13 @@ export async function createUser(data: any) {
   try {
     const existing = await localDB.get(doc._id);
     doc._rev = existing._rev;
-    // si ya existe, solo actualiza campos
     doc.createdAt = existing.createdAt || doc.createdAt;
-  } catch (e: any) {
-    // no existe, seguimos
-  }
+  } catch {}
   await localDB.put(doc);
   return doc;
 }
 
-/** Obtiene un usuario por ID (acepta user:xxx o user_xxx o email/usuario) */
+/** Obtiene un usuario por ID (acepta user:xxx | user_xxx | email/usuario) */
 export async function getUserById(idOrKey: string) {
   await openDatabases();
   const _id = toUserDocId(idOrKey);
@@ -336,13 +342,7 @@ export async function getUserById(idOrKey: string) {
   }
 }
 
-/** Actualiza un usuario.
- *  Soporta dos formas:
- *   - updateUser(idOrKey, patch)
- *   - updateUser(patchObject)  ← esta es la que usa tu UI en page.tsx
- *
- *  idOrKey/patchObject pueden ser: user:xxx | user_xxx | email | usuario | objeto con _id/id/email/name
- */
+/** Actualiza un usuario (updateUser(idOrKey, patch) o updateUser(patchObject)) */
 export async function updateUser(idOrPatch: any, maybePatch?: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
@@ -351,24 +351,19 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   let patch: any;
 
   if (typeof maybePatch === "undefined") {
-    // Forma: updateUser(patchObject)
     const obj = idOrPatch || {};
     const key = obj._id || obj.id || obj.email || obj.name;
-
     if (!key)
       throw new Error(
         "updateUser: falta identificador (_id | id | email | name)",
       );
-
     _id = toUserDocId(typeof key === "string" ? key : String(key));
-    patch = { ...obj }; // mergearemos sobre el doc existente
+    patch = { ...obj };
   } else {
-    // Forma: updateUser(idOrKey, patch)
     _id = toUserDocId(idOrPatch);
     patch = { ...maybePatch };
   }
 
-  // No permitir que cambien _id/_rev de forma inválida
   delete patch._id;
 
   const doc = await localDB.get(_id);
@@ -391,7 +386,7 @@ export async function softDeleteUser(idOrKey: string) {
   const doc = await localDB.get(_id);
   doc.isActive = false;
   doc.updatedAt = new Date().toISOString();
-  doc.deletedAt = doc.updatedAt;
+  (doc as any).deletedAt = doc.updatedAt;
   await localDB.put(doc);
   return doc;
 }
@@ -403,14 +398,12 @@ export async function restoreUser(idOrKey: string) {
   const doc = await localDB.get(_id);
   doc.isActive = true;
   doc.updatedAt = new Date().toISOString();
-  delete doc.deletedAt;
+  delete (doc as any).deletedAt;
   await localDB.put(doc);
   return doc;
 }
 
-/** Borrado permanente (hard delete) por id/clave.
- *  Acepta: user:xxx | user_xxx | email | usuario
- */
+/** Borrado permanente (hard delete) por id/clave. */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
   await openDatabases();
   const _id = toUserDocId(idOrKey);
@@ -424,41 +417,41 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
   }
 }
 
-/** Alias por si alguna parte del código lo llama así */
 export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
   return deleteUserById(idOrKey);
 }
 
+/** Busca usuario por email (type + email) con índice Mango */
 export async function findUserByEmail(email: string) {
   await openDatabases();
-  // 1) intenta por el _id que usa la PWA
-  const idByEmail = `user_${email}`;
-  try {
-    const doc = await localDB.get(idByEmail);
-    return doc as any;
-  } catch {}
+  await ensureUserIndexes();
+  const e = (email || "").trim().toLowerCase();
+  if (!e) return null;
 
-  // 2) intenta por Mango (type + email)
   try {
     const res = await (localDB as any).find({
-      selector: { type: "user", email },
+      selector: { type: "user", email: e },
       limit: 1,
     });
     if (res.docs && res.docs[0]) return res.docs[0];
   } catch {}
 
-  // 3) intenta por name (user:mario_acosta)
-  const name = email.includes("@") ? email.split("@")[0] : email;
+  // Fallback por _id particionado
   try {
-    const doc = await localDB.get(`user:${name}`);
+    const doc = await localDB.get(`user:${e.split("@")[0]}`);
+    return doc as any;
+  } catch {}
+
+  // Fallback legacy user_<email>
+  try {
+    const doc = await localDB.get(`user_${e}`);
     return doc as any;
   } catch {}
 
   return null;
 }
 
-// Escucha cambios del documento del usuario por email y llama onUpdate(doc) cuando llegue un cambio.
-// Devuelve una función para cancelar el listener.
+/** Suscripción a cambios del doc de usuario por email */
 export async function watchUserDocByEmail(
   email: string,
   onUpdate: (doc: any) => void,
@@ -466,7 +459,6 @@ export async function watchUserDocByEmail(
   await openDatabases();
   if (!localDB) return () => {};
 
-  // IDs posibles según tu app/DB: user_email y/o user:usuario
   const ids = [
     `user_${email}`,
     email.includes("@") ? `user:${email.split("@")[0]}` : `user:${email}`,
@@ -488,7 +480,6 @@ export async function watchUserDocByEmail(
 
   return () => {
     try {
-      // @ts-ignore
       feed?.cancel?.();
     } catch {}
   };
