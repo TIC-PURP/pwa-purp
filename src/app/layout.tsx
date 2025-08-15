@@ -1,11 +1,14 @@
-import InstallButton from "../components/InstallButton"
-import { Toaster } from 'sonner';
+// src/app/layout.tsx
 import type React from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Providers } from "@/components/providers";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import ClientRoot from "@/components/ClientRoot";
+
+export const metadata: Metadata = {
+  title: "PURP PWA",
+  description: "PWA PURP offline/online",
+};
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -17,13 +20,8 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={inter.className}>
-        <Providers>
-          <ErrorBoundary>{children}</ErrorBoundary>
-          <InstallButton />
-        </Providers>
-    <Toaster richColors position="top-center" />
-</body>
+        <ClientRoot>{children}</ClientRoot>
+      </body>
     </html>
   );
 }
-
