@@ -128,6 +128,16 @@ const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
+  setUser(state, action: PayloadAction<User>) {
+  state.user = action.payload
+  state.isAuthenticated = true
+  // Persistimos también en localStorage con el token actual (si existe)
+  if (typeof window !== "undefined") {
+    const token = state.token ?? "cookie-session"
+    window.localStorage.setItem("auth", JSON.stringify({ user: action.payload, token }))
+  }
+},
+
     clearError(state) {
       state.error = null
     },
@@ -177,5 +187,5 @@ const authSlice = createSlice({
   },
 })
 
-export const { clearError } = authSlice.actions
+export const { clearError, setUser } = authSlice.actions
 export default authSlice.reducer

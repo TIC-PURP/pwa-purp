@@ -446,4 +446,41 @@ export async function findUserByEmail(email: string) {
   return null;
 }
 
+// Escucha cambios del documento del usuario por email y llama onUpdate(doc) cuando llegue un cambio.
+// Devuelve una función para cancelar el listener.
+export async function watchUserDocByEmail(
+  email: string,
+  onUpdate: (doc: any) => void
+): Promise<() => void> {
+  await openDatabases()
+  if (!localDB) return () => {}
+
+  // IDs posibles según tu app/DB: user_email y/o user:usuario
+  const ids = [
+    `user_${email}`,
+    email.includes("@") ? `user:${email.split("@")[0]}` : `user:${email}`,
+  ]
+
+  const feed = localDB
+    .changes({
+      live: true,
+      since: "now",
+      include_docs: true,
+      doc_ids: ids,
+    })
+    .on("change", (ch: any) => {
+      if (ch?.doc) onUpdate(ch.doc)
+    })
+    .on("error", (err: any) => {
+      console.warn("[watchUserDocByEmail] error", err?.message || err)
+    })
+
+  return () => {
+    try {
+      // @ts-ignore
+      feed?.cancel?.()
+    } catch {}
+  }
+}
+
 export { localDB, remoteDB }
