@@ -13,7 +13,6 @@ import {
   watchUserDocByEmail,
   guardarUsuarioOffline,
 } from "@/lib/database";
-import { toast } from "sonner";
 
 function AuthInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
@@ -86,32 +85,6 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
-
-// Toast cuando la sync envía cambios (push) o se recupera
-useEffect(() => {
-  const onSync = (e: any) => {
-    const d = e?.detail || {};
-    if (d.type === "change" && d.direction === "push") {
-      toast.success("Cambios sincronizados con la nube.");
-    }
-    if (d.type === "error") {
-      toast.error("Error de sincronización. Se reintentará automáticamente.");
-    }
-  };
-  const onWrite = (e: any) => {
-    const p = e?.detail?.path;
-    if (p === "local") toast.message("Guardado local (offline): será sincronizado.");
-    if (p === "remote") toast.success("Guardado directo en la nube.");
-  };
-  window.addEventListener("purp-sync", onSync as any);
-  window.addEventListener("purp-write", onWrite as any);
-  return () => {
-    window.removeEventListener("purp-sync", onSync as any);
-    window.removeEventListener("purp-write", onWrite as any);
-  };
-}, []);
-
-
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (

@@ -67,127 +67,102 @@ export default function UsersPage() {
     setUsers(allUsers);
   };
 
-const handleCreateUser = async (data: CreateUserData) => {
-  setIsLoading(true);
-  try {
-    const created: any = await createUser(data);
-    const path = created?.___writePath === "remote" ? "remote" : "local";
-    if (path === "remote") toast.success("Usuario creado y guardado en la nube.");
-    else toast.message("Usuario creado offline; se subirá al recuperar Internet.");
+  const handleCreateUser = async (data: CreateUserData) => {
+    setIsLoading(true);
+try {
+  // 1) Actualiza el doc
+  await updateUser({ ...editingUser, ...data });
 
-    const createdEmail = (created?.email || data.email || "").toLowerCase();
-    const meEmail = (me?.email || "").toLowerCase();
-    if (me && createdEmail && createdEmail === meEmail) {
+  // 2) Si el usuario que acabas de editar ES el usuario en sesión, refresca auth
+  const editedEmail = (data.email || editingUser?.email || "").toLowerCase();
+  const meEmail = (me?.email || "").toLowerCase();
+
+  if (me && editedEmail && editedEmail === meEmail) {
+    const fresh: any = await findUserByEmail(me.email);
+    if (fresh) {
+      // Mapea al tipo User de tu app
       const mapped = {
-        ...me,
-        ...created,
-        isActive: created.isActive !== false,
-        createdAt: created.createdAt ?? me.createdAt,
-        updatedAt: created.updatedAt ?? new Date().toISOString(),
-      } as any;
-      try { await guardarUsuarioOffline(mapped); } catch {}
-      dispatch(setUser(mapped));
-    }
+        _id: fresh._id ?? me._id,
+        id: fresh.id ?? me.id,
+        name: fresh.name ?? me.name,
+        email: fresh.email ?? me.email,
+        password: fresh.password ?? me.password,
+        role: fresh.role ?? me.role,
+        permissions: Array.isArray(fresh.permissions) ? fresh.permissions : me.permissions,
+        isActive: fresh.isActive !== false,
+        createdAt: fresh.createdAt ?? me.createdAt,
+        updatedAt: fresh.updatedAt ?? new Date().toISOString(),
+      };
 
-    await loadUsers();
-    setShowForm(false);
-    setEditingUser(null);
-  } catch (error) {
-    console.error(error);
-    toast.error("No se pudo crear el usuario.");
-  } finally {
-    setIsLoading(false);
+      // Guarda local y actualiza Redux + localStorage
+      await guardarUsuarioOffline(mapped);
+      dispatch(setUser(mapped as any));
+    }
   }
-};
+
+  // 3) Refresca la tabla y cierra el modal/edición
+  await loadUsers();
+  setEditingUser(null);
+} catch (error) {
+  console.error(error);
+  // aquí tu manejo de errores/toast
+} finally {
+  setIsLoading(false);
+}
+
+  };
 
   const handleEditUser = async (data: CreateUserData) => {
     if (!editingUser) return;
     setIsLoading(true);
     try {
-  const updated: any = await updateUser({ ...editingUser, ...data });
-  const path = updated?.___writePath === "remote" ? "remote" : "local";
-  if (path === "remote") toast.success("Usuario actualizado en la nube.");
-  else toast.message("Usuario actualizado offline; se subirá al recuperar Internet.");
-  await loadUsers();
-  setEditingUser(null);
-} catch (error) {
-  console.error(error);
-  toast.error("No se pudo actualizar el usuario.");
-} finally {
-  setIsLoading(false);
-}
+      await updateUser({ ...editingUser, ...data });
+      await loadUsers();
+      setEditingUser(null);
+    } catch (error) {
+      console.error("Error actualizando usuario:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleDeleteUser = async () => {
-  if (!deletingUser) return;
-  setIsLoading(true);
-  try {
-    if (deleteMode === "soft") {
-      const updated: any = await updateUser({
-        ...deletingUser,
-        isActive: false,
-        deletedAt: new Date().toISOString(),
-      });
-      const path = updated?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote") toast.success("Usuario desactivado (borrado lógico) en la nube.");
-      else toast.message("Usuario desactivado offline; se subirá al recuperar Internet.");
-    } else if (deleteMode === "activate") {
-      const updated: any = await updateUser({
-        ...deletingUser,
-        isActive: true,
-        deletedAt: undefined,
-      });
-      const path = updated?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote") toast.success("Usuario reactivado en la nube.");
-      else toast.message("Usuario reactivado offline; se subirá al recuperar Internet.");
-    } else {
-      const ok = await deleteUserById(deletingUser._id || deletingUser.id || deletingUser.email);
-      if (ok) {
-        if (typeof navigator !== "undefined" && navigator.onLine) {
-          toast.success("Usuario eliminado permanentemente en la nube.");
-        } else {
-          toast.message("Usuario eliminado localmente; se sincronizará al recuperar Internet.");
-        }
+    if (!deletingUser) return;
+    setIsLoading(true);
+    try {
+      if (deleteMode === "soft") {
+        await softDeleteUser(deletingUser._id || deletingUser.id);
       } else {
-        toast.message("El usuario ya no existe.");
+        await deleteUserById(deletingUser._id || deletingUser.id);
       }
+      await loadUsers();
+      toast.success(
+        `Usuario eliminado${
+          deleteMode === "soft" ? " (desactivado)" : " permanentemente"
+        }`
+      );
+      setDeletingUser(null);
+    } catch (error) {
+      console.error("Error eliminando usuario:", error);
+    } finally {
+      setIsLoading(false);
     }
-
-    await loadUsers();
-    setDeletingUser(null);
-  } catch (error) {
-    console.error(error);
-    toast.error("No se pudo completar la acción.");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   const handleToggleUserStatus = async (user: User) => {
-  setIsLoading(true);
-  try {
-    const toggleTo = !user.isActive;
-    const updated: any = await updateUser({
-      ...user,
-      isActive: toggleTo,
-      deletedAt: toggleTo ? undefined : new Date().toISOString(),
-    });
-    const path = updated?.___writePath === "remote" ? "remote" : "local";
-    if (toggleTo) {
-      if (path === "remote") toast.success("Usuario activado en la nube.");
-      else toast.message("Usuario activado offline; se subirá al recuperar Internet.");
-    } else {
-      if (path === "remote") toast.success("Usuario desactivado en la nube.");
-      else toast.message("Usuario desactivado offline; se subirá al recuperar Internet.");
+    setIsLoading(true);
+    try {
+      await updateUser({ ...user, isActive: !user.isActive });
+      await loadUsers();
+      toast.success(
+        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
+      );
+    } catch (error) {
+      console.error("Error cambiando estado del usuario:", error);
+    } finally {
+      setIsLoading(false);
     }
-    await loadUsers();
-  } catch (error) {
-    console.error(error);
-    toast.error("No se pudo cambiar el estado del usuario.");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   if (showForm || editingUser) {
     return (

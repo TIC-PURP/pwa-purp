@@ -143,23 +143,13 @@ export async function startSync() {
     opts.timeout = 55000
   }
 
+  syncHandler = localDB.sync(remoteDB, opts)
   syncHandler
-  .on("change", (i: any) => {
-    console.log("[sync] change", i.direction);
-    try { window.dispatchEvent(new CustomEvent("purp-sync", { detail: { type: "change", direction: i.direction } })); } catch {}
-  })
-  .on("paused", (e: any) => {
-    console.log("[sync] paused", e?.message || "ok");
-    try { window.dispatchEvent(new CustomEvent("purp-sync", { detail: { type: "paused", error: !!e } })); } catch {}
-  })
-  .on("active", () => {
-    console.log("[sync] active");
-    try { window.dispatchEvent(new CustomEvent("purp-sync", { detail: { type: "active" } })); } catch {}
-  })
-  .on("error", (e: any) => {
-    console.error("[sync] error", e);
-    try { window.dispatchEvent(new CustomEvent("purp-sync", { detail: { type: "error", error: String(e?.message || e) } })); } catch {}
-  });
+    .on("change", (i: any) => console.log("[sync] change", i.direction))
+    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
+    .on("active", () => console.log("[sync] active"))
+    .on("error", (e: any) => console.error("[sync] error", e))
+  return syncHandler
 }
 
 /** Detiene replicación */
@@ -306,40 +296,20 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
   }
 }
 
-/** Crea usuario (o upsert) con write-through */
+/** Crea usuario (o lo upserta si ya existe) */
 export async function createUser(data: any) {
-  await openDatabases();
-  const doc = buildUserDocFromData(data);
-  return await putUserSmart(doc);
-}
-
-/** Write-through: intenta CouchDB; si falla o no hay red, guarda local y luego sync. */
-async function putUserSmart(doc: any) {
-  await openDatabases();
-  const isOnline = typeof navigator !== "undefined" && navigator.onLine;
-
-  // 1) Intento remoto primero (requiere cookie de /_session)
-  if (isOnline && remoteDB) {
-    try {
-      const res = await remoteDB.put(doc);
-      doc._rev = res.rev;
-      (doc as any).___writePath = "remote";
-      try { await localDB.put(doc); } catch {}
-      try { window.dispatchEvent(new CustomEvent("purp-write", { detail: { path: "remote", id: doc._id } })); } catch {}
-      return doc;
-    } catch (e: any) {
-      console.warn("[putUserSmart] remote put failed → fallback local:", e?.message || e);
-    }
+  await openDatabases()
+  const doc = buildUserDocFromData(data)
+  try {
+    const existing = await localDB.get(doc._id)
+    doc._rev = existing._rev
+    // si ya existe, solo actualiza campos
+    doc.createdAt = existing.createdAt || doc.createdAt
+  } catch (e: any) {
+    // no existe, seguimos
   }
-
-  // 2) Fallback a local
-  const existing = await localDB.get(doc._id).catch(() => null);
-  if (existing) doc._rev = existing._rev;
-  const res = await localDB.put(doc);
-  doc._rev = res.rev;
-  (doc as any).___writePath = "local";
-  try { window.dispatchEvent(new CustomEvent("purp-write", { detail: { path: "local", id: doc._id } })); } catch {}
-  return doc;
+  await localDB.put(doc)
+  return doc
 }
 
 /** Obtiene un usuario por ID (acepta user:xxx o user_xxx o email/usuario) */
@@ -354,88 +324,93 @@ export async function getUserById(idOrKey: string) {
   }
 }
 
-/** Actualiza un usuario (acepta user:xxx | user_xxx | email | name | obj con _id/id/email/name) */
+/** Actualiza un usuario.
+ *  Soporta dos formas:
+ *   - updateUser(idOrKey, patch)
+ *   - updateUser(patchObject)  ← esta es la que usa tu UI en page.tsx
+ *
+ *  idOrKey/patchObject pueden ser: user:xxx | user_xxx | email | usuario | objeto con _id/id/email/name
+ */
 export async function updateUser(idOrPatch: any, maybePatch?: any) {
-  await openDatabases();
-  if (!localDB) throw new Error("localDB no inicializado");
+  await openDatabases()
+  if (!localDB) throw new Error("localDB no inicializado")
 
-  let _id: string;
-  let patch: any;
+  let _id: string
+  let patch: any
 
   if (typeof maybePatch === "undefined") {
-    const obj = idOrPatch || {};
-    const key = obj._id || obj.id || obj.email || obj.name;
-    if (!key) throw new Error("updateUser: falta identificador (_id | id | email | name)");
-    _id = toUserDocId(typeof key === "string" ? key : String(key));
-    patch = { ...obj };
+    // Forma: updateUser(patchObject)
+    const obj = idOrPatch || {}
+    const key =
+      obj._id ||
+      obj.id ||
+      obj.email ||
+      obj.name
+
+    if (!key) throw new Error("updateUser: falta identificador (_id | id | email | name)")
+
+    _id = toUserDocId(typeof key === "string" ? key : String(key))
+    patch = { ...obj } // mergearemos sobre el doc existente
   } else {
-    _id = toUserDocId(idOrPatch);
-    patch = { ...maybePatch };
+    // Forma: updateUser(idOrKey, patch)
+    _id = toUserDocId(idOrPatch)
+    patch = { ...maybePatch }
   }
 
-  delete patch._id;
+  // No permitir que cambien _id/_rev de forma inválida
+  delete patch._id
 
-  let base: any = await localDB.get(_id).catch(() => ({ _id }));
+  const doc = await localDB.get(_id)
   const updated = {
-    ...base,
+    ...doc,
     ...patch,
     _id,
-    _rev: base._rev,
+    _rev: doc._rev,
     type: "user",
     updatedAt: new Date().toISOString(),
-  };
-
-  return await putUserSmart(updated);
+  }
+  await localDB.put(updated)
+  return updated
 }
 
-
-/** Borrado lógico (isActive:false) con write-through */
+/** Borrado lógico (isActive:false) */
 export async function softDeleteUser(idOrKey: string) {
-  const _id = toUserDocId(idOrKey);
-  return await updateUser(_id, { isActive: false, deletedAt: new Date().toISOString() });
+  await openDatabases()
+  const _id = toUserDocId(idOrKey)
+  const doc = await localDB.get(_id)
+  doc.isActive = false
+  doc.updatedAt = new Date().toISOString()
+  doc.deletedAt = doc.updatedAt
+  await localDB.put(doc)
+  return doc
 }
 
-/** Restaurar (isActive:true) con write-through */
+/** Restaura usuario (isActive:true) */
 export async function restoreUser(idOrKey: string) {
-  const _id = toUserDocId(idOrKey);
-  return await updateUser(_id, { isActive: true, deletedAt: undefined });
+  await openDatabases()
+  const _id = toUserDocId(idOrKey)
+  const doc = await localDB.get(_id)
+  doc.isActive = true
+  doc.updatedAt = new Date().toISOString()
+  delete doc.deletedAt
+  await localDB.put(doc)
+  return doc
 }
-
 
 /** Borrado permanente (hard delete) por id/clave.
  *  Acepta: user:xxx | user_xxx | email | usuario
  */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
-  return deleteUserSmart(idOrKey);
-}
-
-
-/** Borrado permanente inteligente: intenta remoto si hay red; si no, borra local y se replicará. */
-export async function deleteUserSmart(idOrKey: string): Promise<boolean> {
-  await openDatabases();
-  const _id = toUserDocId(idOrKey);
-  const isOnline = typeof navigator !== "undefined" && navigator.onLine;
-
-  const localDoc = await localDB.get(_id).catch(() => null);
-
-  if (isOnline && remoteDB) {
-    try {
-      const remoteDoc = localDoc || await remoteDB.get(_id);
-      await remoteDB.remove(remoteDoc);
-      if (localDoc) { try { await localDB.remove(localDoc); } catch {} }
-      try { window.dispatchEvent(new CustomEvent("purp-write", { detail: { path: "remote", id: _id, op: "delete" } })); } catch {}
-      return true;
-    } catch (e) {
-      console.warn("[deleteUserSmart] remote remove failed → fallback local.");
-    }
+  await openDatabases()
+  const _id = toUserDocId(idOrKey)
+  try {
+    const doc = await localDB.get(_id)
+    await localDB.remove(doc) // elimina del local; la sync lo replica al remoto
+    return true
+  } catch (e: any) {
+    if (e?.status === 404) return false
+    throw e
   }
-
-  if (localDoc) {
-    await localDB.remove(localDoc);
-    try { window.dispatchEvent(new CustomEvent("purp-write", { detail: { path: "local", id: _id, op: "delete" } })); } catch {}
-    return true;
-  }
-  return false;
 }
 
 /** Alias por si alguna parte del código lo llama así */
