@@ -1,3 +1,4 @@
+// src/lib/store/authSlice.ts
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit"
 import type { User } from "../types"
 import {
@@ -7,6 +8,7 @@ import {
   loginOnlineToCouchDB,
   logoutOnlineSession,
   guardarUsuarioOffline,
+  findUserByEmail, // ← debe existir en ../database
 } from "../database"
 
 export interface AuthState {
@@ -21,7 +23,7 @@ const initialState: AuthState = {
   user: null,
   token: null,
   isAuthenticated: false,
-  isLoading: true,            // ⬅️  Arrancamos cargando
+  isLoading: true, // esperamos la rehidratación al arrancar
   error: null,
 }
 
@@ -51,37 +53,59 @@ export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
   }
 })
 
-export const loginUser = createAsyncThunk(
+export const loginUser = createAsyncThunk<
+  { user: User; token: string },          // ← payload de éxito tipado
+  LoginCredentials
+>(
   "auth/login",
-  async ({ email, password }: LoginCredentials, { rejectWithValue }) => {
+  async ({ email, password }, { rejectWithValue }) => {
     try {
-      // 1) Online -> crea cookie AuthSession
+      // 1) Login ONLINE (crea cookie AuthSession)
       await loginOnlineToCouchDB(email, password)
 
-      // 2) Usuario local (para offline)
+      // 2) Intentar obtener el usuario REAL desde DB (por email)
       const now = new Date().toISOString()
-      const user: User = {
-        id: `user_${email}`,
-        name: email.includes("@") ? email.split("@")[0] : email,
-        email,
-        password, // ⚠️ en prod: hashear
-        role: "user",
-        permissions: ["read"],
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-        _id: `user_${email}`,
-      }
+      const dbUser: any = await findUserByEmail(email)
+
+      // 3) Mapear a tu tipo `User` (sin campo `type`)
+      const user: User = dbUser
+        ? {
+            _id: dbUser._id ?? `user_${email}`,
+            id: dbUser.id ?? `user_${email}`,
+            name: dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
+            email: dbUser.email ?? email,
+            password: dbUser.password ?? password, // ⚠️ en prod: hashear
+            role: dbUser.role ?? "user",
+            permissions: Array.isArray(dbUser.permissions) ? dbUser.permissions : ["read"],
+            isActive: dbUser.isActive !== false,
+            createdAt: dbUser.createdAt ?? now,
+            updatedAt: now,
+          }
+        : {
+            _id: `user_${email}`,
+            id: `user_${email}`,
+            name: email.includes("@") ? email.split("@")[0] : email,
+            email,
+            password, // ⚠️ en prod: hashear
+            role: "user",
+            permissions: ["read"],
+            isActive: true,
+            createdAt: now,
+            updatedAt: now,
+          }
+
+      // 4) Guardar/actualizar en Pouch local (offline-first)
       await guardarUsuarioOffline(user)
 
-      // 3) Sync con cookie
+      // 5) Reiniciar sync (usará la cookie recién creada)
       try { await stopSync() } catch {}
       try { await startSync() } catch {}
 
+      // 6) Persistir sesión
       persistSession(user, "cookie-session")
       return { user, token: "cookie-session" }
     } catch (onlineErr: any) {
-      // Fallback OFFLINE
+      // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
       const offline = await authenticateUser(email, password)
       if (offline) {
         const user = offline as User
@@ -103,10 +127,14 @@ export const logoutUser = createAsyncThunk("auth/logout", async () => {
 const authSlice = createSlice({
   name: "auth",
   initialState,
-  reducers: { clearError(state) { state.error = null } },
+  reducers: {
+    clearError(state) {
+      state.error = null
+    },
+  },
   extraReducers: (builder) => {
     builder
-      // 🔸 Rehidratación
+      // Rehidratación al cargar
       .addCase(loadUserFromStorage.pending, (state) => {
         state.isLoading = true
       })
@@ -115,27 +143,30 @@ const authSlice = createSlice({
         state.user = user
         state.token = token
         state.isAuthenticated = Boolean(user && token)
-        state.isLoading = false                    // ⬅️  ya cargó
+        state.isLoading = false
       })
       .addCase(loadUserFromStorage.rejected, (state) => {
-        state.isLoading = false                    // ⬅️  ya cargó
+        state.isLoading = false
       })
-      // 🔸 Login
+      // Login
+      .addCase(
+        loginUser.fulfilled,
+        (state, action: PayloadAction<{ user: User; token: string }>) => {
+          state.isLoading = false
+          state.isAuthenticated = true
+          state.user = action.payload.user
+          state.token = action.payload.token
+        }
+      )
       .addCase(loginUser.pending, (state) => {
         state.isLoading = true
         state.error = null
-      })
-      .addCase(loginUser.fulfilled, (state, action: PayloadAction<{ user: User; token: string }>) => {
-        state.isLoading = false
-        state.isAuthenticated = true
-        state.user = action.payload.user
-        state.token = action.payload.token
       })
       .addCase(loginUser.rejected, (state, action) => {
         state.isLoading = false
         state.error = (action.payload as string) || action.error.message || "Error de login"
       })
-      // 🔸 Logout
+      // Logout
       .addCase(logoutUser.fulfilled, (state) => {
         state.user = null
         state.token = null

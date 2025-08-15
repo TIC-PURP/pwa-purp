@@ -418,4 +418,32 @@ export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
   return deleteUserById(idOrKey)
 }
 
+export async function findUserByEmail(email: string) {
+  await openDatabases();
+  // 1) intenta por el _id que usa la PWA
+  const idByEmail = `user_${email}`;
+  try {
+    const doc = await localDB.get(idByEmail);
+    return doc as any;
+  } catch {}
+
+  // 2) intenta por Mango (type + email)
+  try {
+    const res = await (localDB as any).find({
+      selector: { type: "user", email },
+      limit: 1,
+    });
+    if (res.docs && res.docs[0]) return res.docs[0];
+  } catch {}
+
+  // 3) intenta por name (user:mario_acosta)
+  const name = email.includes("@") ? email.split("@")[0] : email;
+  try {
+    const doc = await localDB.get(`user:${name}`);
+    return doc as any;
+  } catch {}
+
+  return null;
+}
+
 export { localDB, remoteDB }
