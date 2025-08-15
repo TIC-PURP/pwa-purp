@@ -1,129 +1,39 @@
 // next.config.mjs
-import withPWA from "next-pwa";
-import { withSentryConfig } from "@sentry/nextjs";
+const COUCH_ORIGIN = new URL(
+  process.env.NEXT_PUBLIC_COUCHDB_URL || "https://d2zfthqcwakwql2.cloudfront.net/gestion_pwa"
+).origin;
 
 /** @type {import('next').NextConfig} */
-const baseConfig = {
-  images: { unoptimized: true },
-  eslint: { ignoreDuringBuilds: false }, // ✅ no ignores en prod
-  typescript: { ignoreBuildErrors: false }, // ✅ no ignores en prod
+const nextConfig = {
+  reactStrictMode: true,
   async headers() {
+    const csp = [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "img-src 'self' data: blob: https:",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self' data:",
+      // permitir fetch/XHR a CouchDB y websockets si los hubiese
+      `connect-src 'self' ${COUCH_ORIGIN} ws:`,
+      // en dev necesita 'unsafe-eval' por Next; en prod puedes quitarlo si no lo necesitas
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "frame-ancestors 'self'",
+    ].join("; ");
+
     return [
       {
-        source: "/(.*)",
+        source: "/:path*",
         headers: [
-                { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "X-XSS-Protection", value: "1; mode=block" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          {
-            key: "Permissions-Policy",
-            value:
-              "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-          },
-          {
-            key: "Content-Security-Policy",
-            value: `
-              default-src 'self';
-              connect-src 'self' https://couchdb-purp.onrender.com https://*.ingest.sentry.io;
-              script-src 'self' 'unsafe-eval' 'unsafe-inline';
-              style-src 'self' 'unsafe-inline';
-              img-src * data:;
-              worker-src 'self' blob:;
-              object-src 'none';
-            `
-              .replace(/\s{2,}/g, " ")
-              .trim(),
-          },
+          { key: "Content-Security-Policy", value: csp },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Permissions-Policy", value: "geolocation=*" },
         ],
       },
     ];
   },
 };
 
-// PWA
-const withPwa = withPWA({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
-  clientsClaim: true, // 👈 toma control inmediato
-  cleanupOutdatedCaches: true,
-
-  runtimeCaching: [
-    // A) Documentos en general (App Router)
-    {
-      urlPattern: ({ url, request }) =>
-        url.origin === self.location.origin &&
-        request.destination === "document",
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
-    },
-
-    // B) Fuerza cache específico de /auth/login y /principal, sin importar el 'destination'.
-    //    Así podemos "precalentar" vía Cache API o fetch() normal.
-    {
-      urlPattern: ({ url }) =>
-        url.origin === self.location.origin &&
-        (url.pathname === "/auth/login" ||
-          url.pathname === "/principal" ||
-          url.pathname === "/"),
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
-    },
-
-    // Estáticos (JS/CSS/Workers)
-    {
-      urlPattern: ({ request }) =>
-        ["style", "script", "worker"].includes(request.destination),
-      handler: "StaleWhileRevalidate",
-      options: { cacheName: "static-resources" },
-    },
-
-    // Imágenes
-    {
-      urlPattern: ({ request }) => request.destination === "image",
-      handler: "StaleWhileRevalidate",
-      options: {
-        cacheName: "images",
-        expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
-      },
-    },
-    // dentro de runtimeCaching: [ ... ]
-    {
-      urlPattern: /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
-      handler: "NetworkFirst",
-      options: {
-        cacheName: "html-pages",
-        networkTimeoutSeconds: 3,
-        expiration: { maxEntries: 50, maxAgeSeconds: 7 * 24 * 60 * 60 },
-      },
-    },
-  ],
-
-  // Fallback cuando ni red ni caché
-  fallbacks: { document: "/offline.html" },
-});
-
-const nextConfig = withPwa(baseConfig);
-
-// Sentry al final
-const sentryWebpackPluginOptions = {
-  org: "tic-ev",
-  project: "javascript-nextjs",
-  silent: !process.env.CI,
-  widenClientFileUpload: true,
-  tunnelRoute: "/monitoring",
-  disableLogger: true,
-  automaticVercelMonitors: true,
-};
-
-export default withSentryConfig(nextConfig, sentryWebpackPluginOptions);
+export default nextConfig;

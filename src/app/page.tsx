@@ -3,16 +3,20 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAppSelector } from "@/lib/hooks"
-import { startSync } from "@/lib/database"
+import { startSync, stopSync } from "@/lib/database"
 
 export default function HomePage() {
   const router = useRouter()
   const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth)
 
+  // Inicia/para el sync según el estado de autenticación
   useEffect(() => {
-    console.log("Ejecutando startSync desde HomePage")
-    startSync()
-  }, [])
+    if (isAuthenticated) {
+      startSync().catch(() => {})
+    } else {
+      stopSync().catch(() => {})
+    }
+  }, [isAuthenticated])
 
   useEffect(() => {
     if (!isLoading) {
