@@ -20,12 +20,11 @@ export function RouteGuard({
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAppSelector((s) => s.auth);
 
-  const offline =
-    typeof navigator !== "undefined" ? !navigator.onLine : false;
+  const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
 
   const lacksAuthOrRole = useMemo(
     () => !isAuthenticated || (requiredRole && user?.role !== requiredRole),
-    [isAuthenticated, requiredRole, user?.role]
+    [isAuthenticated, requiredRole, user?.role],
   );
 
   // Solo redirige cuando HAY red. En offline NO navegamos (renderizamos login inline).

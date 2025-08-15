@@ -1,21 +1,21 @@
-"use client"
+"use client";
 
-import { Button } from "@/components/ui/button"
-import { useAppDispatch, useAppSelector } from "@/lib/hooks"
-import { logoutUser } from "@/lib/store/authSlice"
-import { useRouter } from "next/navigation"
-import { LogOut, User, Users, LayoutDashboard } from "lucide-react"
-import Link from "next/link"
+import { Button } from "@/components/ui/button";
+import { useAppDispatch, useAppSelector } from "@/lib/hooks";
+import { logoutUser } from "@/lib/store/authSlice";
+import { useRouter } from "next/navigation";
+import { LogOut, User, Users, LayoutDashboard } from "lucide-react";
+import Link from "next/link";
 
 export function Navbar() {
-  const dispatch = useAppDispatch()
-  const router = useRouter()
-  const { user } = useAppSelector((state) => state.auth)
+  const dispatch = useAppDispatch();
+  const router = useRouter();
+  const { user } = useAppSelector((state) => state.auth);
 
   const handleLogout = async () => {
-    await dispatch(logoutUser())
-    router.push("/auth/login")
-  }
+    await dispatch(logoutUser());
+    router.push("/auth/login");
+  };
 
   return (
     <nav className="bg-white shadow-sm border-b">
@@ -49,7 +49,9 @@ export function Navbar() {
             <div className="flex items-center space-x-2">
               <User className="h-4 w-4 text-slate-600" />
               <span className="text-sm text-slate-700">{user?.name}</span>
-              <span className="text-xs bg-slate-100 px-2 py-1 rounded-full text-slate-600">{user?.role}</span>
+              <span className="text-xs bg-slate-100 px-2 py-1 rounded-full text-slate-600">
+                {user?.role}
+              </span>
             </div>
 
             <Button variant="outline" size="sm" onClick={handleLogout}>
@@ -60,5 +62,5 @@ export function Navbar() {
         </div>
       </div>
     </nav>
-  )
+  );
 }

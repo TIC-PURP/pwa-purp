@@ -1,6 +1,7 @@
 // next.config.mjs
 const COUCH_ORIGIN = new URL(
-  process.env.NEXT_PUBLIC_COUCHDB_URL || "https://d2zfthqcwakql2.cloudfront.net/gestion_pwa"
+  process.env.NEXT_PUBLIC_COUCHDB_URL ||
+    "https://d2zfthqcwakql2.cloudfront.net/gestion_pwa",
 ).origin;
 
 /** @type {import('next').NextConfig} */

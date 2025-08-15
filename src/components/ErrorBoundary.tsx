@@ -1,30 +1,30 @@
-'use client'
+"use client";
 
-import React from 'react'
+import React from "react";
 
 type Props = {
-  children: React.ReactNode
-}
+  children: React.ReactNode;
+};
 
 type State = {
-  hasError: boolean
-  error?: Error
-}
+  hasError: boolean;
+  error?: Error;
+};
 
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
-    super(props)
-    this.state = { hasError: false }
+    super(props);
+    this.state = { hasError: false };
   }
 
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error }
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // Aquí puedes enviar el error a un servicio como Sentry o tu backend
-    if (process.env.NODE_ENV !== 'development') {
-      console.error('App Error:', error, info)
+    if (process.env.NODE_ENV !== "development") {
+      console.error("App Error:", error, info);
     }
   }
 
@@ -35,9 +35,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
           <h2 className="text-lg font-semibold">¡Algo salió mal!</h2>
           <p>Por favor, intenta de nuevo más tarde.</p>
         </div>
-      )
+      );
     }
 
-    return this.props.children
+    return this.props.children;
   }
 }

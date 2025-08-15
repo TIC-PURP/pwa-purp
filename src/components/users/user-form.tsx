@@ -85,7 +85,10 @@ export function UserForm({
       const needsSet =
         full.length !== current.size || full.some((p) => !current.has(p));
       if (needsSet) {
-        setValue("permissions", full, { shouldDirty: true, shouldValidate: true });
+        setValue("permissions", full, {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,7 +122,9 @@ export function UserForm({
                 !!(data.password && data.password.trim().length > 0);
 
               if (!changed) {
-                alert("No se detectaron cambios. No se actualizará el usuario.");
+                alert(
+                  "No se detectaron cambios. No se actualizará el usuario.",
+                );
                 return;
               }
 
@@ -179,7 +184,11 @@ export function UserForm({
                 className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                 onClick={() => setShowPassword(!showPassword)}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </Button>
             </div>
             {errors.password && (
@@ -192,16 +201,19 @@ export function UserForm({
             <Select
               onValueChange={(value) => {
                 const next = value as CreateUserData["role"];
-                setValue("role", next, { shouldDirty: true, shouldValidate: true });
+                setValue("role", next, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
 
                 // Si cambio desde manager a otro rol, no imponemos permisos,
                 // pero si quedan permisos "no válidos" para admin, los recortamos.
                 if (next === "administrador") {
                   const current = new Set<Permission>(
-                    (getValues("permissions") ?? []) as Permission[]
+                    (getValues("permissions") ?? []) as Permission[],
                   );
                   const clamped = [...current].filter(
-                    (p) => p === "read" || p === "write"
+                    (p) => p === "read" || p === "write",
                   ) as Permission[];
                   if (clamped.length !== current.size) {
                     setValue("permissions", clamped, {
@@ -295,8 +307,8 @@ export function UserForm({
                   ? "Actualizando..."
                   : "Creando..."
                 : isEditing
-                ? "Actualizar Usuario"
-                : "Crear Usuario"}
+                  ? "Actualizar Usuario"
+                  : "Crear Usuario"}
             </Button>
           </div>
         </form>

@@ -1,44 +1,44 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
+import { useEffect, useState } from "react";
 
-let deferredPrompt: any = null
+let deferredPrompt: any = null;
 
 export default function InstallButton() {
-  const [isInstallable, setIsInstallable] = useState(false)
+  const [isInstallable, setIsInstallable] = useState(false);
 
   useEffect(() => {
     const handler = (e: any) => {
-      e.preventDefault()
-      deferredPrompt = e
-      setIsInstallable(true)
-    }
+      e.preventDefault();
+      deferredPrompt = e;
+      setIsInstallable(true);
+    };
 
-    window.addEventListener("beforeinstallprompt", handler)
+    window.addEventListener("beforeinstallprompt", handler);
 
     // Cleanup
     return () => {
-      window.removeEventListener("beforeinstallprompt", handler)
-    }
-  }, [])
+      window.removeEventListener("beforeinstallprompt", handler);
+    };
+  }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return
+    if (!deferredPrompt) return;
 
-    deferredPrompt.prompt()
+    deferredPrompt.prompt();
 
-    const { outcome } = await deferredPrompt.userChoice
+    const { outcome } = await deferredPrompt.userChoice;
     if (outcome === "accepted") {
-      console.log("App instalada")
+      console.log("App instalada");
     } else {
-      console.log("Instalación cancelada")
+      console.log("Instalación cancelada");
     }
 
-    deferredPrompt = null
-    setIsInstallable(false)
-  }
+    deferredPrompt = null;
+    setIsInstallable(false);
+  };
 
-  if (!isInstallable) return null
+  if (!isInstallable) return null;
 
   return (
     <button
@@ -47,5 +47,5 @@ export default function InstallButton() {
     >
       Instalar App
     </button>
-  )
+  );
 }

@@ -9,4 +9,4 @@ export default {
     "^.+\\.tsx?$": "ts-jest",
   },
   testPathIgnorePatterns: ["/node_modules/", "/.next/"],
-}
+};

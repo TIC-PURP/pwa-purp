@@ -13,12 +13,12 @@ describe("Creación de usuarios", () => {
       permissions: ["read"],
       isActive: true,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     await createUser(newUser);
     const users = await getAllUsers();
-    const found = users.find(u => u.email === "nuevo@purp.com.mx");
+    const found = users.find((u) => u.email === "nuevo@purp.com.mx");
     expect(found).toBeDefined();
     expect(found?.name).toBe("Nuevo Usuario");
   });

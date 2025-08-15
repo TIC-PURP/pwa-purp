@@ -1,8 +1,7 @@
+import PouchDB from "pouchdb";
+import type { User } from "@/lib/types";
 
-import PouchDB from "pouchdb"
-import type { User } from "@/lib/types"
-
-const localDB = new PouchDB("gestion_pwa_local")
+const localDB = new PouchDB("gestion_pwa_local");
 
 const defaultUser: User = {
   id: "user_manager_purp",
@@ -14,28 +13,28 @@ const defaultUser: User = {
   isActive: true,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
-}
+};
 
 export async function createUserIfNotExists() {
   try {
     const result = await localDB.find({
       selector: { email: defaultUser.email },
       limit: 1,
-    })
+    });
 
     if (result.docs.length > 0) {
-      console.log("✅ El usuario ya existe:", (result.docs[0] as User).email)
-      return
+      console.log("✅ El usuario ya existe:", (result.docs[0] as User).email);
+      return;
     }
 
     await localDB.put({
       _id: defaultUser.id,
       ...defaultUser,
-    })
+    });
 
-    console.log("✅ Usuario creado exitosamente.")
+    console.log("✅ Usuario creado exitosamente.");
   } catch (error) {
-    console.error("❌ Error al crear el usuario:", error)
+    console.error("❌ Error al crear el usuario:", error);
   }
 }
 

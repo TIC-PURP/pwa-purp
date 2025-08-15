@@ -36,13 +36,7 @@ import {
   softDeleteUser,
   deleteUserById,
 } from "@/lib/database";
-import {
-  Plus,
-  Edit,
-  Trash2,
-  UserX,
-  ArrowLeftCircle,
-} from "lucide-react";
+import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
 const dispatch = useAppDispatch();
 const { user: me } = useAppSelector((s) => s.auth);
@@ -54,7 +48,7 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
-    "soft"
+    "soft",
   );
   const [isLoading, setIsLoading] = useState(false);
 
@@ -69,47 +63,52 @@ export default function UsersPage() {
 
   const handleCreateUser = async (data: CreateUserData) => {
     setIsLoading(true);
-try {
-  // 1) Actualiza el doc
-  await updateUser({ ...editingUser, ...data });
+    try {
+      // 1) Actualiza el doc
+      await updateUser({ ...editingUser, ...data });
 
-  // 2) Si el usuario que acabas de editar ES el usuario en sesión, refresca auth
-  const editedEmail = (data.email || editingUser?.email || "").toLowerCase();
-  const meEmail = (me?.email || "").toLowerCase();
+      // 2) Si el usuario que acabas de editar ES el usuario en sesión, refresca auth
+      const editedEmail = (
+        data.email ||
+        editingUser?.email ||
+        ""
+      ).toLowerCase();
+      const meEmail = (me?.email || "").toLowerCase();
 
-  if (me && editedEmail && editedEmail === meEmail) {
-    const fresh: any = await findUserByEmail(me.email);
-    if (fresh) {
-      // Mapea al tipo User de tu app
-      const mapped = {
-        _id: fresh._id ?? me._id,
-        id: fresh.id ?? me.id,
-        name: fresh.name ?? me.name,
-        email: fresh.email ?? me.email,
-        password: fresh.password ?? me.password,
-        role: fresh.role ?? me.role,
-        permissions: Array.isArray(fresh.permissions) ? fresh.permissions : me.permissions,
-        isActive: fresh.isActive !== false,
-        createdAt: fresh.createdAt ?? me.createdAt,
-        updatedAt: fresh.updatedAt ?? new Date().toISOString(),
-      };
+      if (me && editedEmail && editedEmail === meEmail) {
+        const fresh: any = await findUserByEmail(me.email);
+        if (fresh) {
+          // Mapea al tipo User de tu app
+          const mapped = {
+            _id: fresh._id ?? me._id,
+            id: fresh.id ?? me.id,
+            name: fresh.name ?? me.name,
+            email: fresh.email ?? me.email,
+            password: fresh.password ?? me.password,
+            role: fresh.role ?? me.role,
+            permissions: Array.isArray(fresh.permissions)
+              ? fresh.permissions
+              : me.permissions,
+            isActive: fresh.isActive !== false,
+            createdAt: fresh.createdAt ?? me.createdAt,
+            updatedAt: fresh.updatedAt ?? new Date().toISOString(),
+          };
 
-      // Guarda local y actualiza Redux + localStorage
-      await guardarUsuarioOffline(mapped);
-      dispatch(setUser(mapped as any));
+          // Guarda local y actualiza Redux + localStorage
+          await guardarUsuarioOffline(mapped);
+          dispatch(setUser(mapped as any));
+        }
+      }
+
+      // 3) Refresca la tabla y cierra el modal/edición
+      await loadUsers();
+      setEditingUser(null);
+    } catch (error) {
+      console.error(error);
+      // aquí tu manejo de errores/toast
+    } finally {
+      setIsLoading(false);
     }
-  }
-
-  // 3) Refresca la tabla y cierra el modal/edición
-  await loadUsers();
-  setEditingUser(null);
-} catch (error) {
-  console.error(error);
-  // aquí tu manejo de errores/toast
-} finally {
-  setIsLoading(false);
-}
-
   };
 
   const handleEditUser = async (data: CreateUserData) => {
@@ -139,7 +138,7 @@ try {
       toast.success(
         `Usuario eliminado${
           deleteMode === "soft" ? " (desactivado)" : " permanentemente"
-        }`
+        }`,
       );
       setDeletingUser(null);
     } catch (error) {
@@ -155,7 +154,7 @@ try {
       await updateUser({ ...user, isActive: !user.isActive });
       await loadUsers();
       toast.success(
-        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
+        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`,
       );
     } catch (error) {
       console.error("Error cambiando estado del usuario:", error);
@@ -280,19 +279,21 @@ try {
                         <span className="text-sm text-slate-600">
                           Permisos:
                         </span>
-                        
+
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
                             const perms = (user.permissions || []).sort();
                             let label = "Acceso completo";
                             if (perms.length === 0) label = "Sin permisos";
-                            else if (perms.length === 1 && perms[0] === "read") label = "Solo lectura";
+                            else if (perms.length === 1 && perms[0] === "read")
+                              label = "Solo lectura";
                             return (
-                              <Badge variant="outline" className="text-xs">{label}</Badge>
+                              <Badge variant="outline" className="text-xs">
+                                {label}
+                              </Badge>
                             );
                           })()}
                         </div>
-
                       </div>
                       <div className="text-xs text-slate-500">
                         Creado: {new Date(user.createdAt).toLocaleDateString()}
@@ -327,15 +328,15 @@ try {
                 {deleteMode === "soft"
                   ? "¿Desactivar usuario?"
                   : deleteMode === "activate"
-                  ? "¿Activar usuario?"
-                  : "¿Eliminar usuario permanentemente?"}
+                    ? "¿Activar usuario?"
+                    : "¿Eliminar usuario permanentemente?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "soft"
                   ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
                   : deleteMode === "activate"
-                  ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
-                  : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
+                    ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
+                    : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -369,13 +370,13 @@ try {
                   ? deleteMode === "soft"
                     ? "Desactivando..."
                     : deleteMode === "activate"
-                    ? "Activando..."
-                    : "Eliminando..."
+                      ? "Activando..."
+                      : "Eliminando..."
                   : deleteMode === "soft"
-                  ? "Desactivar"
-                  : deleteMode === "activate"
-                  ? "Activar"
-                  : "Eliminar"}
+                    ? "Desactivar"
+                    : deleteMode === "activate"
+                      ? "Activar"
+                      : "Eliminar"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

@@ -29,25 +29,25 @@ export default function Principal() {
               </h1>
             </div>
             {user?.role === "manager" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <Link href="/users" className="block">
-                <div className="rounded-xl border bg-white p-5 shadow-md hover:shadow-lg transition hover:border-blue-50">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-slate-900 text-white p-3 rounded-xl shadow">
-                      <Users className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-800">
-                        Panel de Control
-                      </h3>
-                      <p className="text-sm text-slate-600">
-                        Gestión de usuarios
-                      </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <Link href="/users" className="block">
+                  <div className="rounded-xl border bg-white p-5 shadow-md hover:shadow-lg transition hover:border-blue-50">
+                    <div className="flex items-center gap-4">
+                      <div className="bg-slate-900 text-white p-3 rounded-xl shadow">
+                        <Users className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-800">
+                          Panel de Control
+                        </h3>
+                        <p className="text-sm text-slate-600">
+                          Gestión de usuarios
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Link>
-            </div>
+                </Link>
+              </div>
             )}
           </div>
         </main>

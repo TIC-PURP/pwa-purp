@@ -22,7 +22,9 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   // Semilla local + rehidratación de sesión
   useEffect(() => {
     (async () => {
-      try { await initializeDefaultUsers(); } catch {}
+      try {
+        await initializeDefaultUsers();
+      } catch {}
       // @ts-ignore
       dispatch(loadUserFromStorage());
     })();
@@ -49,7 +51,10 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       // limpia watcher anterior
-      if (cancelWatchRef.current) { cancelWatchRef.current(); cancelWatchRef.current = null; }
+      if (cancelWatchRef.current) {
+        cancelWatchRef.current();
+        cancelWatchRef.current = null;
+      }
 
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
@@ -61,24 +66,32 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             email: doc.email ?? user.email,
             password: doc.password ?? user.password,
             role: doc.role ?? user.role,
-            permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
+            permissions: Array.isArray(doc.permissions)
+              ? doc.permissions
+              : user.permissions,
             isActive: doc.isActive !== false,
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
           } as any;
-          try { await guardarUsuarioOffline(updated); } catch {}
+          try {
+            await guardarUsuarioOffline(updated);
+          } catch {}
           dispatch(setUser(updated));
         });
         cancelWatchRef.current = stop;
       }
     })();
 
-    return () => { if (cancelWatchRef.current) cancelWatchRef.current(); };
+    return () => {
+      if (cancelWatchRef.current) cancelWatchRef.current();
+    };
   }, [isAuthenticated, user?.email, dispatch]);
 
   // Reintentar sync al volver online
   useEffect(() => {
-    const onOnline = () => { if (isAuthenticated) startSync().catch(() => {}); };
+    const onOnline = () => {
+      if (isAuthenticated) startSync().catch(() => {});
+    };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);

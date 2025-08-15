@@ -1,18 +1,26 @@
 import { z } from "zod";
 
 export const loginSchema = z.object({
-  email: z.string().min(1, "El correo es requerido").email("Formato de correo inválido"),
+  email: z
+    .string()
+    .min(1, "El correo es requerido")
+    .email("Formato de correo inválido"),
   password: z
     .string()
     .min(8, "La contraseña debe tener al menos 8 caracteres")
     .regex(
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
-      "La contraseña debe contener al menos: 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial"
+      "La contraseña debe contener al menos: 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial",
     ),
 });
 
 // --- Permisos y roles ---
-const availablePermissions = ["read", "write", "delete", "manage_users"] as const;
+const availablePermissions = [
+  "read",
+  "write",
+  "delete",
+  "manage_users",
+] as const;
 const permissionEnum = z.enum(availablePermissions);
 const roleEnum = z.enum(["manager", "administrador", "user"]);
 
@@ -30,7 +38,7 @@ const baseUserSchema = z.object({
     .min(8, "La contraseña debe tener al menos 8 caracteres")
     .regex(
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
-      "Debe tener 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial"
+      "Debe tener 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial",
     ),
   role: roleEnum,
   permissions: permissionsArray, // sin .min(1): permite crear sin permisos
@@ -86,7 +94,7 @@ function validatePermissionsByRole(data: RefineInput, ctx: z.RefinementCtx) {
 
 // --- CREATE ---
 export const createUserSchema = baseUserSchema.superRefine((data, ctx) =>
-  validatePermissionsByRole(data, ctx)
+  validatePermissionsByRole(data, ctx),
 );
 
 // --- EDIT ---
@@ -102,11 +110,13 @@ export const editUserSchema = baseUserSchema
       .refine(
         (val) =>
           !val ||
-          /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/.test(val),
+          /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/.test(
+            val,
+          ),
         {
           message:
             "Debe tener 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial",
-        }
+        },
       ),
   })
   .superRefine((data, ctx) => validatePermissionsByRole(data, ctx));

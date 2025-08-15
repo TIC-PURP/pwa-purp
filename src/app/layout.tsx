@@ -1,5 +1,5 @@
-import InstallButton from "../components/InstallButton"
-import { Toaster } from 'sonner';
+import InstallButton from "../components/InstallButton";
+import { Toaster } from "sonner";
 import type React from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
@@ -21,9 +21,8 @@ export default function RootLayout({
           <ErrorBoundary>{children}</ErrorBoundary>
           <InstallButton />
         </Providers>
-    <Toaster richColors position="top-center" />
-</body>
+        <Toaster richColors position="top-center" />
+      </body>
     </html>
   );
 }
-
