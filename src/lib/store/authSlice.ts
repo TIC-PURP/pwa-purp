@@ -65,35 +65,38 @@ export const loginUser = createAsyncThunk<
     const now = new Date().toISOString();
     const dbUser: any = await findUserByEmail(email);
 
-    // 3) Mapear a tu tipo `User` (sin campo `type`)
+// Limpieza para evitar el campo 'type' que rompe Redux Toolkit
+const { type, ...cleanedDbUser } = dbUser || {};
     const user: User = dbUser
-      ? {
-          _id: dbUser._id ?? `user_${email}`,
-          id: dbUser.id ?? `user_${email}`,
-          name:
-            dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
-          email: dbUser.email ?? email,
-          password: dbUser.password ?? password, // ⚠️ en prod: hashear
-          role: dbUser.role ?? "user",
-          permissions: Array.isArray(dbUser.permissions)
-            ? dbUser.permissions
-            : ["read"],
-          isActive: dbUser.isActive !== false,
-          createdAt: dbUser.createdAt ?? now,
-          updatedAt: now,
-        }
-      : {
-          _id: `user_${email}`,
-          id: `user_${email}`,
-          name: email.includes("@") ? email.split("@")[0] : email,
-          email,
-          password, // ⚠️ en prod: hashear
-          role: "user",
-          permissions: ["read"],
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
+  ? {
+      _id: cleanedDbUser._id ?? `user_${email}`,
+      id: cleanedDbUser.id ?? `user_${email}`,
+      name:
+        cleanedDbUser.name ??
+        (email.includes("@") ? email.split("@")[0] : email),
+      email: cleanedDbUser.email ?? email,
+      password: cleanedDbUser.password ?? password,
+      role: cleanedDbUser.role ?? "user",
+      permissions: Array.isArray(cleanedDbUser.permissions)
+        ? cleanedDbUser.permissions
+        : ["read"],
+      isActive: cleanedDbUser.isActive !== false,
+      createdAt: cleanedDbUser.createdAt ?? now,
+      updatedAt: now,
+    }
+  : {
+      _id: `user_${email}`,
+      id: `user_${email}`,
+      name: email.includes("@") ? email.split("@")[0] : email,
+      email,
+      password,
+      role: "user",
+      permissions: ["read"],
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
 
     // 4) Guardar/actualizar en Pouch local (offline-first)
     await guardarUsuarioOffline(user);

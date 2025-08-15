@@ -38,18 +38,16 @@ import {
 } from "@/lib/database";
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
-const dispatch = useAppDispatch();
-const { user: me } = useAppSelector((s) => s.auth);
-
 export default function UsersPage() {
   const router = useRouter();
+  const dispatch = useAppDispatch(); // 👈 ahora está correctamente dentro del componente
+  const { user: me } = useAppSelector((s) => s.auth); // 👈 también aquí
+
   const [users, setUsers] = useState<User[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
-    "soft",
-  );
+  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">("soft");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -64,21 +62,14 @@ export default function UsersPage() {
   const handleCreateUser = async (data: CreateUserData) => {
     setIsLoading(true);
     try {
-      // 1) Actualiza el doc
       await updateUser({ ...editingUser, ...data });
 
-      // 2) Si el usuario que acabas de editar ES el usuario en sesión, refresca auth
-      const editedEmail = (
-        data.email ||
-        editingUser?.email ||
-        ""
-      ).toLowerCase();
+      const editedEmail = (data.email || editingUser?.email || "").toLowerCase();
       const meEmail = (me?.email || "").toLowerCase();
 
-      if (me && editedEmail && editedEmail === meEmail) {
+      if (me && editedEmail === meEmail) {
         const fresh: any = await findUserByEmail(me.email);
         if (fresh) {
-          // Mapea al tipo User de tu app
           const mapped = {
             _id: fresh._id ?? me._id,
             id: fresh.id ?? me.id,
@@ -94,18 +85,15 @@ export default function UsersPage() {
             updatedAt: fresh.updatedAt ?? new Date().toISOString(),
           };
 
-          // Guarda local y actualiza Redux + localStorage
           await guardarUsuarioOffline(mapped);
           dispatch(setUser(mapped as any));
         }
       }
 
-      // 3) Refresca la tabla y cierra el modal/edición
       await loadUsers();
       setEditingUser(null);
     } catch (error) {
       console.error(error);
-      // aquí tu manejo de errores/toast
     } finally {
       setIsLoading(false);
     }
@@ -136,9 +124,7 @@ export default function UsersPage() {
       }
       await loadUsers();
       toast.success(
-        `Usuario eliminado${
-          deleteMode === "soft" ? " (desactivado)" : " permanentemente"
-        }`,
+        `Usuario eliminado${deleteMode === "soft" ? " (desactivado)" : " permanentemente"}`
       );
       setDeletingUser(null);
     } catch (error) {
@@ -154,7 +140,7 @@ export default function UsersPage() {
       await updateUser({ ...user, isActive: !user.isActive });
       await loadUsers();
       toast.success(
-        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`,
+        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
       );
     } catch (error) {
       console.error("Error cambiando estado del usuario:", error);
@@ -199,11 +185,10 @@ export default function UsersPage() {
               <ArrowLeftCircle className="h-5 w-5 mr-2" />
               <span>Regresar</span>
             </button>
+
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">
-                  Panel de control
-                </h1>
+                <h1 className="text-3xl font-bold text-slate-900">Panel de control</h1>
                 <p className="mt-2 text-slate-600">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
@@ -225,11 +210,7 @@ export default function UsersPage() {
                         <CardDescription>{user.email}</CardDescription>
                       </div>
                       <div className="flex space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditingUser(user)}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => setEditingUser(user)}>
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
@@ -259,34 +240,24 @@ export default function UsersPage() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Rol:</span>
-                        <Badge
-                          variant={
-                            user.role === "manager" ? "default" : "secondary"
-                          }
-                        >
+                        <Badge variant={user.role === "manager" ? "default" : "secondary"}>
                           {user.role}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Estado:</span>
-                        <Badge
-                          variant={user.isActive ? "default" : "destructive"}
-                        >
+                        <Badge variant={user.isActive ? "default" : "destructive"}>
                           {user.isActive ? "Activo" : "Inactivo"}
                         </Badge>
                       </div>
                       <div>
-                        <span className="text-sm text-slate-600">
-                          Permisos:
-                        </span>
-
+                        <span className="text-sm text-slate-600">Permisos:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
                             const perms = (user.permissions || []).sort();
                             let label = "Acceso completo";
                             if (perms.length === 0) label = "Sin permisos";
-                            else if (perms.length === 1 && perms[0] === "read")
-                              label = "Solo lectura";
+                            else if (perms.length === 1 && perms[0] === "read") label = "Solo lectura";
                             return (
                               <Badge variant="outline" className="text-xs">
                                 {label}
@@ -318,25 +289,22 @@ export default function UsersPage() {
           </div>
         </main>
 
-        <AlertDialog
-          open={!!deletingUser}
-          onOpenChange={() => setDeletingUser(null)}
-        >
+        <AlertDialog open={!!deletingUser} onOpenChange={() => setDeletingUser(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteMode === "soft"
                   ? "¿Desactivar usuario?"
                   : deleteMode === "activate"
-                    ? "¿Activar usuario?"
-                    : "¿Eliminar usuario permanentemente?"}
+                  ? "¿Activar usuario?"
+                  : "¿Eliminar usuario permanentemente?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "soft"
                   ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
                   : deleteMode === "activate"
-                    ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
-                    : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
+                  ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
+                  : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -370,13 +338,13 @@ export default function UsersPage() {
                   ? deleteMode === "soft"
                     ? "Desactivando..."
                     : deleteMode === "activate"
-                      ? "Activando..."
-                      : "Eliminando..."
+                    ? "Activando..."
+                    : "Eliminando..."
                   : deleteMode === "soft"
-                    ? "Desactivar"
-                    : deleteMode === "activate"
-                      ? "Activar"
-                      : "Eliminar"}
+                  ? "Desactivar"
+                  : deleteMode === "activate"
+                  ? "Activar"
+                  : "Eliminar"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
