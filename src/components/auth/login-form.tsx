@@ -16,9 +16,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
-import { loginUser } from "@/lib/store/authSlice";
+import { loginUser, clearError } from "@/lib/store/authSlice";
 import { loginSchema } from "@/lib/validations";
-import type { LoginCredentials } from "@/lib/types";
+import type { LoginCredentials } from "@/lib/types"; // o del slice si lo prefieres
+import { toast } from "sonner";
 
 export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
@@ -37,14 +38,22 @@ export function LoginForm() {
 
   const onSubmit = async (data: LoginCredentials) => {
     try {
-      const result = await dispatch(loginUser(data));
-      if (loginUser.fulfilled.match(result)) {
-        router.push("/principal");
-      } else {
-        setError("root", { message: "Credenciales inválidas" });
-      }
-    } catch (error) {
-      setError("root", { message: "Error de conexión" });
+      // Limpia error global previo (si existiera)
+      dispatch(clearError());
+
+      // 👇 MUY IMPORTANTE: unwrap() hace que el await resuelva o lance
+      await dispatch(loginUser(data)).unwrap();
+
+      toast.success("Bienvenido");
+      router.replace("/users"); // <-- usa una ruta que exista en tu app
+    } catch (err: any) {
+      const msg =
+        err?.message === "Unauthorized" ||
+        /credencial/i.test(err?.message || "")
+          ? "Credenciales inválidas"
+          : err?.message || "Error de conexión";
+      setError("root", { message: msg });
+      toast.error(msg);
     }
   };
 
@@ -68,7 +77,8 @@ export function LoginForm() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="email"
+                  autoComplete="email"               // ✅ quita warning del navegador
+                  placeholder="usuario@empresa.com"
                   className="pl-10"
                   {...register("email")}
                 />
@@ -85,6 +95,7 @@ export function LoginForm() {
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"     // ✅ recomendado
                   placeholder="••••••••"
                   className="pl-10 pr-10"
                   {...register("password")}
