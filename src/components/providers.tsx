@@ -1,9 +1,8 @@
 "use client";
 
-import type React from "react";
-import { Provider } from "react-redux";
+import React, { useEffect, useRef } from "react";
+import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/lib/store";
-import { useEffect, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loadUserFromStorage, setUser } from "@/lib/store/authSlice";
 import {
@@ -14,10 +13,13 @@ import {
   guardarUsuarioOffline,
 } from "@/lib/database";
 
+/** Envuelve la app con lógica de auth/sync ya dentro del Redux <Provider> */
 function AuthInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
-  const cancelWatchRef = useRef<null | (() => void)>(null);
+
+  // ✅ Ref bien tipado (nada de number/null raros)
+  const cancelWatchRef = useRef<(() => void) | null>(null);
 
   // Semilla local + rehidratación de sesión
   useEffect(() => {
@@ -25,12 +27,11 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
       try {
         await initializeDefaultUsers();
       } catch {}
-      // @ts-ignore
-      dispatch(loadUserFromStorage());
+      dispatch(loadUserFromStorage() as any);
     })();
   }, [dispatch]);
 
-  // Si ya hay sesión guardada y estamos online, renovar cookie y arrancar sync
+  // Si hay sesión guardada y estamos online, renovar cookie y arrancar sync
   useEffect(() => {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
@@ -47,18 +48,19 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
     })();
   }, [user]);
 
-  // 🔊 Watcher: cuando el doc del usuario cambie (replicación), actualizamos Redux + storage
+  // Watcher de cambios del doc del usuario (replicación)
   useEffect(() => {
     (async () => {
-      // limpia watcher anterior
+      // limpia watcher anterior si existe
       if (cancelWatchRef.current) {
-        cancelWatchRef.current();
+        try {
+          cancelWatchRef.current();
+        } catch {}
         cancelWatchRef.current = null;
       }
 
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
-          // mapeamos a tu tipo User
           const updated = {
             _id: doc._id ?? user._id,
             id: doc.id ?? user.id,
@@ -73,17 +75,24 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
           } as any;
+
           try {
             await guardarUsuarioOffline(updated);
           } catch {}
           dispatch(setUser(updated));
         });
+
         cancelWatchRef.current = stop;
       }
     })();
 
     return () => {
-      if (cancelWatchRef.current) cancelWatchRef.current();
+      if (cancelWatchRef.current) {
+        try {
+          cancelWatchRef.current();
+        } catch {}
+        cancelWatchRef.current = null;
+      }
     };
   }, [isAuthenticated, user?.email, dispatch]);
 
@@ -99,10 +108,11 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export function Providers({ children }: { children: React.ReactNode }) {
+/** Export default (importa sin llaves en layout.tsx) */
+export default function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <Provider store={store}>
+    <ReduxProvider store={store}>
       <AuthInitializer>{children}</AuthInitializer>
-    </Provider>
+    </ReduxProvider>
   );
 }

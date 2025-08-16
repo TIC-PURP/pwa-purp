@@ -7,53 +7,48 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAppDispatch, useAppSelector } from "@/lib/hooks";
+import { useAppDispatch } from "@/lib/hooks";
 import { loginUser, clearError } from "@/lib/store/authSlice";
 import { loginSchema } from "@/lib/validations";
-import type { LoginCredentials } from "@/lib/types"; // o del slice si lo prefieres
+import type { LoginCredentials } from "@/lib/types";
 import { toast } from "sonner";
 
 export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false); // estado local (no dependemos de isLoading global)
   const dispatch = useAppDispatch();
   const router = useRouter();
-  const { isLoading } = useAppSelector((state) => state.auth);
 
   const {
     register,
     handleSubmit,
     formState: { errors },
     setError,
-  } = useForm<LoginCredentials>({
-    resolver: zodResolver(loginSchema),
-  });
+  } = useForm<LoginCredentials>({ resolver: zodResolver(loginSchema) });
 
   const onSubmit = async (data: LoginCredentials) => {
+    setSubmitting(true);
     try {
-      // Limpia error global previo (si existiera)
       dispatch(clearError());
-
-      // 👇 MUY IMPORTANTE: unwrap() hace que el await resuelva o lance
+      // CLAVE: unwrap() hace que el await resuelva o lance
       await dispatch(loginUser(data)).unwrap();
-
       toast.success("Bienvenido");
-      router.replace("/users"); // <-- usa una ruta que exista en tu app
+      router.replace("/users");
+      // fuerza re-render por si el guard lee auth de store en otra ruta
+      router.refresh();
     } catch (err: any) {
       const msg =
-        err?.message === "Unauthorized" ||
-        /credencial/i.test(err?.message || "")
+        err?.message?.toLowerCase?.().includes("unauthorized")
           ? "Credenciales inválidas"
           : err?.message || "Error de conexión";
       setError("root", { message: msg });
       toast.error(msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -77,7 +72,7 @@ export function LoginForm() {
                 <Input
                   id="email"
                   type="email"
-                  autoComplete="email"               // ✅ quita warning del navegador
+                  autoComplete="email"
                   placeholder="usuario@empresa.com"
                   className="pl-10"
                   {...register("email")}
@@ -95,7 +90,7 @@ export function LoginForm() {
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"     // ✅ recomendado
+                  autoComplete="current-password"
                   placeholder="••••••••"
                   className="pl-10 pr-10"
                   {...register("password")}
@@ -107,28 +102,20 @@ export function LoginForm() {
                   className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                   onClick={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
               {errors.password && (
-                <p className="text-sm text-red-600">
-                  {errors.password.message}
-                </p>
+                <p className="text-sm text-red-600">{errors.password.message}</p>
               )}
             </div>
 
             {errors.root && (
-              <p className="text-sm text-red-600 text-center">
-                {errors.root.message}
-              </p>
+              <p className="text-sm text-red-600 text-center">{errors.root.message}</p>
             )}
 
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>
           </form>
         </CardContent>
