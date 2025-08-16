@@ -3,10 +3,10 @@
 
 const isClient = typeof window !== "undefined";
 
-let PouchDB: any = null;     // clase PouchDB (se carga en cliente)
-let localDB: any = null;     // instancia local (IndexedDB)
-let remoteDB: any = null;    // instancia remota (CouchDB vía proxy /couchdb)
-let syncHandler: any = null; // handler de replicación viva
+let PouchDB: any = null;
+let localDB: any = null;
+let remoteDB: any = null;
+let syncHandler: any = null;
 
 export type CouchEnv = {
   serverBase: string;
@@ -27,11 +27,10 @@ export function getCouchEnv(): CouchEnv {
   return { serverBase, dbName };
 }
 
-/** Carga PouchDB (browser) y plugin find en cliente */
+/** Carga PouchDB y plugin find */
 async function ensurePouch() {
   if (PouchDB) return;
-  // Importamos sólo en cliente para evitar SSR issues
-  const mod = await import("pouchdb-browser");
+  const mod = await import("pouchdb");
   const find = (await import("pouchdb-find")).default;
   PouchDB = (mod as any).default || mod;
   PouchDB.plugin(find);
@@ -46,25 +45,23 @@ function slug(s: string) {
     .replace(/[^a-z0-9._-]/g, "-");
 }
 function toUserDocId(input: string) {
-  if (!input) throw new Error("toUserDocId: id vacío");
-  // Ya particionado
+  // Si ya viene con partición, respeta
   if (input.includes(":")) return input;
-  // Legacy user_<...>
+  // Si viene como user_<algo>, conviértelo
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
-  // Email/usuario suelto
+  // Si viene un email/usuario suelto
   return `user:${slug(input)}`;
 }
-
 function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
   const _id = `user:${key}`;
   const now = new Date().toISOString();
   return {
     _id,
-    id: `user_${key}`, // id lógico para la UI
+    id: `user_${key}`, // campo informativo para tu UI
     type: "user",
     name: data.name || key,
-    email: (data.email || "").toLowerCase(),
+    email: data.email || "",
     password: data.password || "",
     role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
@@ -75,6 +72,7 @@ function buildUserDocFromData(data: any) {
   };
 }
 
+/** Abre/crea las bases local y remota */
 export async function openDatabases() {
   if (!isClient) return;
   await ensurePouch();
@@ -85,16 +83,12 @@ export async function openDatabases() {
   }
 
   if (!remoteDB) {
-    // en el navegador usamos SIEMPRE el proxy same-origin
-    const remoteUrl = isClient
-      ? `/couchdb/${encodeURIComponent(dbName)}`
-      : `${serverBase}/${encodeURIComponent(dbName)}`;
-
+    const remoteUrl = `${serverBase}/${encodeURIComponent(dbName)}`;
     remoteDB = new PouchDB(remoteUrl, {
       skip_setup: true,
       fetch: (url: RequestInfo, opts: any = {}) => {
         opts = opts || {};
-        opts.credentials = "include"; // cookie AuthSession first-party
+        opts.credentials = "include"; // usar cookie AuthSession
         return (window as any).fetch(url as any, opts);
       },
       ajax: { withCredentials: true },
@@ -104,16 +98,11 @@ export async function openDatabases() {
   return { localDB, remoteDB };
 }
 
-
 /** Login online contra /_session (name = usuario o email) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
   const { serverBase } = getCouchEnv();
   const body = new URLSearchParams({ name, password }).toString();
-
-  // En cliente, pegamos al proxy same-origin para que la cookie sea de vercel.app
-  const url = isClient ? "/couchdb/_session" : `${serverBase}/_session`;
-
-  const res = await fetch(url, {
+  const res = await fetch(`${serverBase}/_session`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -132,13 +121,15 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
   const { serverBase } = getCouchEnv();
-  const url = isClient ? "/couchdb/_session" : `${serverBase}/_session`;
   try {
-    await fetch(url, { method: "DELETE", credentials: "include" });
+    await fetch(`${serverBase}/_session`, {
+      method: "DELETE",
+      credentials: "include",
+    });
   } catch {}
 }
 
-/** Arranca replicación continua (offline-first) */
+/** Arranca replicación continua */
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
@@ -146,30 +137,54 @@ export async function startSync() {
 
   if (syncHandler && syncHandler.cancel) return syncHandler;
 
+  const { serverBase } = getCouchEnv();
+  const viaCloudFront = /cloudfront\.net$/i.test(new URL(serverBase).host);
   const opts: any = { live: true, retry: true };
-  // Heartbeat/timeouts útiles detrás de CDN/proxy
-  opts.heartbeat = 25000;
-  opts.timeout = 55000;
+  if (viaCloudFront) {
+    // supervivencia detrás de CloudFront
+    opts.heartbeat = 25000;
+    opts.timeout = 55000;
+  }
 
-  syncHandler = localDB.sync(remoteDB, opts);
   syncHandler
-    .on("active", () => console.log("[sync] active"))
-    .on("paused", (e: any) => {
-      if (e) {
-        console.warn("[sync] paused", e?.status, e?.message || e);
-        // 401 aquí suele indicar cookie expirada → UI puede forzar re-login
-      } else {
-        console.log("[sync] paused");
-      }
-    })
     .on("change", (i: any) => {
-      // console.log("[sync] change", i?.direction);
+      console.log("[sync] change", i.direction);
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-sync", {
+            detail: { type: "change", direction: i.direction },
+          }),
+        );
+      } catch {}
+    })
+    .on("paused", (e: any) => {
+      console.log("[sync] paused", e?.message || "ok");
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-sync", {
+            detail: { type: "paused", error: !!e },
+          }),
+        );
+      } catch {}
+    })
+    .on("active", () => {
+      console.log("[sync] active");
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-sync", { detail: { type: "active" } }),
+        );
+      } catch {}
     })
     .on("error", (e: any) => {
-      console.error("[sync] error", e?.status, e?.message || e);
+      console.error("[sync] error", e);
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-sync", {
+            detail: { type: "error", error: String(e?.message || e) },
+          }),
+        );
+      } catch {}
     });
-
-  return syncHandler;
 }
 
 /** Detiene replicación */
@@ -190,60 +205,37 @@ export async function authenticateUser(identifier: string, password: string) {
   const candidates = [
     `user_${identifier}`,
     identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
-  ].filter(Boolean) as string[];
+  ].filter(Boolean);
 
-  // Índice por "id" para compatibilidad
+  // Buscar por "id" en docs (no por _id) para compatibilidad
   try {
     await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
   } catch {}
-  for (const cand of candidates) {
-    const r = await localDB.find({ selector: { id: cand } });
+  for (const cand of candidates as string[]) {
+    const r = await localDB.find({ selector: { id: cand as string } });
     if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
   }
   return null;
 }
 
-/** ======== Utilidades de índice ======== */
-async function ensureUserIndexes() {
-  await openDatabases();
-  if (!localDB) return;
-  try {
-    await localDB.createIndex({
-      index: { fields: ["type", "updatedAt"] },
-      name: "idx-type-updatedAt",
-      ddoc: "idx-type-updatedAt",
-    });
-  } catch {}
-  try {
-    await localDB.createIndex({
-      index: { fields: ["type", "email"] },
-      name: "idx-type-email",
-      ddoc: "idx-type-email",
-    });
-  } catch {}
-}
-
-/** Guarda/actualiza usuario en Pouch local (upsert) */
+/** Guarda/actualiza usuario en Pouch local */
 export async function guardarUsuarioOffline(user: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
 
+  // Normaliza a doc con partición user:
   const key = slug(user.email || user.name || user.id || "");
   const _id = `user:${key}`;
-
-  const now = new Date().toISOString();
   const toSave = {
     ...buildUserDocFromData(user),
     _id,
     id: `user_${key}`,
-    type: "user",
-    updatedAt: now,
+    updatedAt: new Date().toISOString(),
   };
 
   try {
     const existing = await localDB.get(_id);
     toSave._rev = existing._rev;
-    toSave.createdAt = existing.createdAt || toSave.createdAt;
     await localDB.put(toSave);
   } catch (err: any) {
     if (err?.status === 404) {
@@ -265,7 +257,7 @@ export async function initializeDefaultUsers() {
     email: "mario_acosta@purp.com.mx",
     password: "Purp_*2023@",
     role: "manager",
-    permissions: ["read", "write", "delete", "manage"],
+    permissions: ["read", "write", "delete", "manage_users"],
     createdAt: now,
   });
   try {
@@ -278,9 +270,27 @@ export async function initializeDefaultUsers() {
 /* ============================
    ==========  USERS  =========
    ============================
-   CRUD que usa la base local (offline-first); la sync replica al remoto.
+   CRUD que usa la base local (offline-first); la sync se encarga del remoto.
 */
 
+async function ensureUserIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await localDB.createIndex({
+      index: { fields: ["type", "updatedAt"] },
+      name: "idx-type-updatedAt",
+    });
+  } catch {}
+  try {
+    await localDB.createIndex({
+      index: { fields: ["email"] },
+      name: "idx-email",
+    });
+  } catch {}
+}
+
+/** Lista usuarios (activos por defecto). `opts.includeInactive=true` para traer todos */
 export async function getAllUsers(opts?: {
   includeInactive?: boolean;
   limit?: number;
@@ -290,6 +300,7 @@ export async function getAllUsers(opts?: {
   const includeInactive = Boolean(opts?.includeInactive);
   const limit = opts?.limit ?? 1000;
 
+  // Intento con Mango
   try {
     const selector: any = { type: "user" };
     if (!includeInactive) selector.isActive = { $ne: false };
@@ -299,15 +310,21 @@ export async function getAllUsers(opts?: {
       limit,
     });
     return r.docs || [];
-  } catch {
-    // Fallback por prefijo en _id
-    const res = await localDB.allDocs({
+  } catch (e: any) {
+    // Fallback por prefix en _id (dos variantes)
+    const resA = await localDB.allDocs({
       include_docs: true,
       startkey: "user:",
       endkey: "user;\ufff0",
       limit,
     });
-    const docs = (res.rows || [])
+    const resB = await localDB.allDocs({
+      include_docs: true,
+      startkey: "user_",
+      endkey: "user_\ufff0",
+      limit,
+    });
+    const docs = [...resA.rows, ...resB.rows]
       .map((r: any) => r.doc)
       .filter(Boolean)
       .filter((d: any) =>
@@ -315,6 +332,7 @@ export async function getAllUsers(opts?: {
           ? d.type === "user"
           : d.type === "user" && d.isActive !== false,
       );
+    // Orden por updatedAt desc
     docs.sort((a: any, b: any) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
     );
@@ -322,20 +340,58 @@ export async function getAllUsers(opts?: {
   }
 }
 
-/** Crea usuario (o lo upserta si ya existe) */
+/** Crea usuario (o upsert) con write-through */
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
+  return await putUserSmart(doc);
+}
+
+/** Write-through: intenta CouchDB; si falla o no hay red, guarda local y luego sync. */
+async function putUserSmart(doc: any) {
+  await openDatabases();
+  const isOnline = typeof navigator !== "undefined" && navigator.onLine;
+
+  // 1) Intento remoto primero (requiere cookie de /_session)
+  if (isOnline && remoteDB) {
+    try {
+      const res = await remoteDB.put(doc);
+      doc._rev = res.rev;
+      (doc as any).___writePath = "remote";
+      try {
+        await localDB.put(doc);
+      } catch {}
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-write", {
+            detail: { path: "remote", id: doc._id },
+          }),
+        );
+      } catch {}
+      return doc;
+    } catch (e: any) {
+      console.warn(
+        "[putUserSmart] remote put failed → fallback local:",
+        e?.message || e,
+      );
+    }
+  }
+
+  // 2) Fallback a local
+  const existing = await localDB.get(doc._id).catch(() => null);
+  if (existing) doc._rev = existing._rev;
+  const res = await localDB.put(doc);
+  doc._rev = res.rev;
+  (doc as any).___writePath = "local";
   try {
-    const existing = await localDB.get(doc._id);
-    doc._rev = existing._rev;
-    doc.createdAt = existing.createdAt || doc.createdAt;
+    window.dispatchEvent(
+      new CustomEvent("purp-write", { detail: { path: "local", id: doc._id } }),
+    );
   } catch {}
-  await localDB.put(doc);
   return doc;
 }
 
-/** Obtiene un usuario por ID (acepta user:xxx | user_xxx | email/usuario) */
+/** Obtiene un usuario por ID (acepta user:xxx o user_xxx o email/usuario) */
 export async function getUserById(idOrKey: string) {
   await openDatabases();
   const _id = toUserDocId(idOrKey);
@@ -347,7 +403,7 @@ export async function getUserById(idOrKey: string) {
   }
 }
 
-/** Actualiza un usuario (updateUser(idOrKey, patch) o updateUser(patchObject)) */
+/** Actualiza un usuario (acepta user:xxx | user_xxx | email | name | obj con _id/id/email/name) */
 export async function updateUser(idOrPatch: any, maybePatch?: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
@@ -371,92 +427,120 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
 
   delete patch._id;
 
-  const doc = await localDB.get(_id);
+  let base: any = await localDB.get(_id).catch(() => ({ _id }));
   const updated = {
-    ...doc,
+    ...base,
     ...patch,
     _id,
-    _rev: doc._rev,
+    _rev: base._rev,
     type: "user",
     updatedAt: new Date().toISOString(),
   };
-  await localDB.put(updated);
-  return updated;
+
+  return await putUserSmart(updated);
 }
 
-/** Borrado lógico (isActive:false) */
+/** Borrado lógico (isActive:false) con write-through */
 export async function softDeleteUser(idOrKey: string) {
-  await openDatabases();
   const _id = toUserDocId(idOrKey);
-  const doc = await localDB.get(_id);
-  doc.isActive = false;
-  doc.updatedAt = new Date().toISOString();
-  (doc as any).deletedAt = doc.updatedAt;
-  await localDB.put(doc);
-  return doc;
+  return await updateUser(_id, {
+    isActive: false,
+    deletedAt: new Date().toISOString(),
+  });
 }
 
-/** Restaura usuario (isActive:true) */
+/** Restaurar (isActive:true) con write-through */
 export async function restoreUser(idOrKey: string) {
-  await openDatabases();
   const _id = toUserDocId(idOrKey);
-  const doc = await localDB.get(_id);
-  doc.isActive = true;
-  doc.updatedAt = new Date().toISOString();
-  delete (doc as any).deletedAt;
-  await localDB.put(doc);
-  return doc;
+  return await updateUser(_id, { isActive: true, deletedAt: undefined });
 }
 
-/** Borrado permanente (hard delete) por id/clave. */
+/** Borrado permanente (hard delete) por id/clave.
+ *  Acepta: user:xxx | user_xxx | email | usuario
+ */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
-  await openDatabases();
-  const _id = toUserDocId(idOrKey);
-  try {
-    const doc = await localDB.get(_id);
-    await localDB.remove(doc); // elimina del local; la sync lo replica al remoto
-    return true;
-  } catch (e: any) {
-    if (e?.status === 404) return false;
-    throw e;
-  }
+  return deleteUserSmart(idOrKey);
 }
 
+/** Borrado permanente inteligente: intenta remoto si hay red; si no, borra local y se replicará. */
+export async function deleteUserSmart(idOrKey: string): Promise<boolean> {
+  await openDatabases();
+  const _id = toUserDocId(idOrKey);
+  const isOnline = typeof navigator !== "undefined" && navigator.onLine;
+
+  const localDoc = await localDB.get(_id).catch(() => null);
+
+  if (isOnline && remoteDB) {
+    try {
+      const remoteDoc = localDoc || (await remoteDB.get(_id));
+      await remoteDB.remove(remoteDoc);
+      if (localDoc) {
+        try {
+          await localDB.remove(localDoc);
+        } catch {}
+      }
+      try {
+        window.dispatchEvent(
+          new CustomEvent("purp-write", {
+            detail: { path: "remote", id: _id, op: "delete" },
+          }),
+        );
+      } catch {}
+      return true;
+    } catch (e) {
+      console.warn("[deleteUserSmart] remote remove failed → fallback local.");
+    }
+  }
+
+  if (localDoc) {
+    await localDB.remove(localDoc);
+    try {
+      window.dispatchEvent(
+        new CustomEvent("purp-write", {
+          detail: { path: "local", id: _id, op: "delete" },
+        }),
+      );
+    } catch {}
+    return true;
+  }
+  return false;
+}
+
+/** Alias por si alguna parte del código lo llama así */
 export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
   return deleteUserById(idOrKey);
 }
 
-/** Busca usuario por email (type + email) con índice Mango */
 export async function findUserByEmail(email: string) {
   await openDatabases();
-  await ensureUserIndexes();
-  const e = (email || "").trim().toLowerCase();
-  if (!e) return null;
+  // 1) intenta por el _id que usa la PWA
+  const idByEmail = `user_${email}`;
+  try {
+    const doc = await localDB.get(idByEmail);
+    return doc as any;
+  } catch {}
 
+  // 2) intenta por Mango (type + email)
   try {
     const res = await (localDB as any).find({
-      selector: { type: "user", email: e },
+      selector: { type: "user", email },
       limit: 1,
     });
     if (res.docs && res.docs[0]) return res.docs[0];
   } catch {}
 
-  // Fallback por _id particionado
+  // 3) intenta por name (user:mario_acosta)
+  const name = email.includes("@") ? email.split("@")[0] : email;
   try {
-    const doc = await localDB.get(`user:${e.split("@")[0]}`);
-    return doc as any;
-  } catch {}
-
-  // Fallback legacy user_<email>
-  try {
-    const doc = await localDB.get(`user_${e}`);
+    const doc = await localDB.get(`user:${name}`);
     return doc as any;
   } catch {}
 
   return null;
 }
 
-/** Suscripción a cambios del doc de usuario por email */
+// Escucha cambios del documento del usuario por email y llama onUpdate(doc) cuando llegue un cambio.
+// Devuelve una función para cancelar el listener.
 export async function watchUserDocByEmail(
   email: string,
   onUpdate: (doc: any) => void,
@@ -464,6 +548,7 @@ export async function watchUserDocByEmail(
   await openDatabases();
   if (!localDB) return () => {};
 
+  // IDs posibles según tu app/DB: user_email y/o user:usuario
   const ids = [
     `user_${email}`,
     email.includes("@") ? `user:${email.split("@")[0]}` : `user:${email}`,
@@ -485,6 +570,7 @@ export async function watchUserDocByEmail(
 
   return () => {
     try {
+      // @ts-ignore
       feed?.cancel?.();
     } catch {}
   };

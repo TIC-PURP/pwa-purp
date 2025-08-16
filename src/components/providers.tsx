@@ -12,16 +12,15 @@ import {
   watchUserDocByEmail,
   guardarUsuarioOffline,
 } from "@/lib/database";
+import { toast } from "sonner";
 
-/** Envuelve la app con lógica de auth/sync ya dentro del Redux <Provider> */
+/** Corre lógica de auth/sync ya dentro del Redux <Provider> */
 function AuthInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
-
-  // ✅ Ref bien tipado (nada de number/null raros)
   const cancelWatchRef = useRef<(() => void) | null>(null);
 
-  // Semilla local + rehidratación de sesión
+  // Semilla + rehidratación
   useEffect(() => {
     (async () => {
       try {
@@ -31,7 +30,7 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
     })();
   }, [dispatch]);
 
-  // Si hay sesión guardada y estamos online, renovar cookie y arrancar sync
+  // Renovar cookie y arrancar sync si ya había sesión
   useEffect(() => {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
@@ -42,23 +41,19 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             await startSync();
           }
         } catch {
-          // si falla, seguimos offline y la UI no se cae
+          // seguimos offline sin romper UI
         }
       }
     })();
   }, [user]);
 
-  // Watcher de cambios del doc del usuario (replicación)
+  // Watcher de cambios del doc de usuario
   useEffect(() => {
     (async () => {
-      // limpia watcher anterior si existe
       if (cancelWatchRef.current) {
-        try {
-          cancelWatchRef.current();
-        } catch {}
+        try { cancelWatchRef.current(); } catch {}
         cancelWatchRef.current = null;
       }
-
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
           const updated = {
@@ -75,22 +70,16 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
           } as any;
-
-          try {
-            await guardarUsuarioOffline(updated);
-          } catch {}
+          try { await guardarUsuarioOffline(updated); } catch {}
           dispatch(setUser(updated));
         });
-
         cancelWatchRef.current = stop;
       }
     })();
 
     return () => {
       if (cancelWatchRef.current) {
-        try {
-          cancelWatchRef.current();
-        } catch {}
+        try { cancelWatchRef.current(); } catch {}
         cancelWatchRef.current = null;
       }
     };
@@ -105,14 +94,34 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
 
+  // AQUÍ va el useEffect del “toast de sync”, no fuera del componente
+  useEffect(() => {
+    const onSync = (e: any) => {
+      const d = e?.detail || {};
+      if (d.type === "change" && d.direction === "push") {
+        toast.success("Cambios enviados al servidor");
+      }
+      if (d.type === "active") {
+        // toast.info("Sincronización activa");
+      }
+      if (d.type === "error") {
+        toast.error("Error de sincronización");
+      }
+    };
+    window.addEventListener("pouch-sync", onSync as EventListener);
+    return () => window.removeEventListener("pouch-sync", onSync as EventListener);
+  }, []);
+
   return <>{children}</>;
 }
-
-/** Export default (importa sin llaves en layout.tsx) */
-export default function Providers({ children }: { children: React.ReactNode }) {
+function ProvidersInner({ children }: { children: React.ReactNode }) {
   return (
     <ReduxProvider store={store}>
       <AuthInitializer>{children}</AuthInitializer>
     </ReduxProvider>
   );
 }
+
+export default ProvidersInner;
+// También exportado con nombre, para quien haga `import { Providers }`
+export { ProvidersInner as Providers };

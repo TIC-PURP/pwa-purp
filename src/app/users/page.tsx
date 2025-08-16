@@ -39,15 +39,18 @@ import {
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
 export default function UsersPage() {
-  const router = useRouter();
-  const dispatch = useAppDispatch(); // 👈 ahora está correctamente dentro del componente
-  const { user: me } = useAppSelector((s) => s.auth); // 👈 también aquí
 
+const dispatch = useAppDispatch();
+const { user: me } = useAppSelector((s) => s.auth);
+
+  const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">("soft");
+  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
+    "soft",
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -62,38 +65,37 @@ export default function UsersPage() {
   const handleCreateUser = async (data: CreateUserData) => {
     setIsLoading(true);
     try {
-      await updateUser({ ...editingUser, ...data });
+      const created: any = await createUser(data);
+      const path = created?.___writePath === "remote" ? "remote" : "local";
+      if (path === "remote")
+        toast.success("Usuario creado y guardado en la nube.");
+      else
+        toast.message(
+          "Usuario creado offline; se subirá al recuperar Internet.",
+        );
 
-      const editedEmail = (data.email || editingUser?.email || "").toLowerCase();
+      const createdEmail = (created?.email || data.email || "").toLowerCase();
       const meEmail = (me?.email || "").toLowerCase();
-
-      if (me && editedEmail === meEmail) {
-        const fresh: any = await findUserByEmail(me.email);
-        if (fresh) {
-          const mapped = {
-            _id: fresh._id ?? me._id,
-            id: fresh.id ?? me.id,
-            name: fresh.name ?? me.name,
-            email: fresh.email ?? me.email,
-            password: fresh.password ?? me.password,
-            role: fresh.role ?? me.role,
-            permissions: Array.isArray(fresh.permissions)
-              ? fresh.permissions
-              : me.permissions,
-            isActive: fresh.isActive !== false,
-            createdAt: fresh.createdAt ?? me.createdAt,
-            updatedAt: fresh.updatedAt ?? new Date().toISOString(),
-          };
-
+      if (me && createdEmail && createdEmail === meEmail) {
+        const mapped = {
+          ...me,
+          ...created,
+          isActive: created.isActive !== false,
+          createdAt: created.createdAt ?? me.createdAt,
+          updatedAt: created.updatedAt ?? new Date().toISOString(),
+        } as any;
+        try {
           await guardarUsuarioOffline(mapped);
-          dispatch(setUser(mapped as any));
-        }
+        } catch {}
+        dispatch(setUser(mapped));
       }
 
       await loadUsers();
+      setShowForm(false);
       setEditingUser(null);
     } catch (error) {
       console.error(error);
+      toast.error("No se pudo crear el usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -103,11 +105,18 @@ export default function UsersPage() {
     if (!editingUser) return;
     setIsLoading(true);
     try {
-      await updateUser({ ...editingUser, ...data });
+      const updated: any = await updateUser({ ...editingUser, ...data });
+      const path = updated?.___writePath === "remote" ? "remote" : "local";
+      if (path === "remote") toast.success("Usuario actualizado en la nube.");
+      else
+        toast.message(
+          "Usuario actualizado offline; se subirá al recuperar Internet.",
+        );
       await loadUsers();
       setEditingUser(null);
     } catch (error) {
-      console.error("Error actualizando usuario:", error);
+      console.error(error);
+      toast.error("No se pudo actualizar el usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -118,17 +127,52 @@ export default function UsersPage() {
     setIsLoading(true);
     try {
       if (deleteMode === "soft") {
-        await softDeleteUser(deletingUser._id || deletingUser.id);
+        const updated: any = await updateUser({
+          ...deletingUser,
+          isActive: false,
+          deletedAt: new Date().toISOString(),
+        });
+        const path = updated?.___writePath === "remote" ? "remote" : "local";
+        if (path === "remote")
+          toast.success("Usuario desactivado (borrado lógico) en la nube.");
+        else
+          toast.message(
+            "Usuario desactivado offline; se subirá al recuperar Internet.",
+          );
+      } else if (deleteMode === "activate") {
+        const updated: any = await updateUser({
+          ...deletingUser,
+          isActive: true,
+          deletedAt: undefined,
+        });
+        const path = updated?.___writePath === "remote" ? "remote" : "local";
+        if (path === "remote") toast.success("Usuario reactivado en la nube.");
+        else
+          toast.message(
+            "Usuario reactivado offline; se subirá al recuperar Internet.",
+          );
       } else {
-        await deleteUserById(deletingUser._id || deletingUser.id);
+        const ok = await deleteUserById(
+          deletingUser._id || deletingUser.id || deletingUser.email,
+        );
+        if (ok) {
+          if (typeof navigator !== "undefined" && navigator.onLine) {
+            toast.success("Usuario eliminado permanentemente en la nube.");
+          } else {
+            toast.message(
+              "Usuario eliminado localmente; se sincronizará al recuperar Internet.",
+            );
+          }
+        } else {
+          toast.message("El usuario ya no existe.");
+        }
       }
+
       await loadUsers();
-      toast.success(
-        `Usuario eliminado${deleteMode === "soft" ? " (desactivado)" : " permanentemente"}`
-      );
       setDeletingUser(null);
     } catch (error) {
-      console.error("Error eliminando usuario:", error);
+      console.error(error);
+      toast.error("No se pudo completar la acción.");
     } finally {
       setIsLoading(false);
     }
@@ -137,13 +181,30 @@ export default function UsersPage() {
   const handleToggleUserStatus = async (user: User) => {
     setIsLoading(true);
     try {
-      await updateUser({ ...user, isActive: !user.isActive });
+      const toggleTo = !user.isActive;
+      const updated: any = await updateUser({
+        ...user,
+        isActive: toggleTo,
+        deletedAt: toggleTo ? undefined : new Date().toISOString(),
+      });
+      const path = updated?.___writePath === "remote" ? "remote" : "local";
+      if (toggleTo) {
+        if (path === "remote") toast.success("Usuario activado en la nube.");
+        else
+          toast.message(
+            "Usuario activado offline; se subirá al recuperar Internet.",
+          );
+      } else {
+        if (path === "remote") toast.success("Usuario desactivado en la nube.");
+        else
+          toast.message(
+            "Usuario desactivado offline; se subirá al recuperar Internet.",
+          );
+      }
       await loadUsers();
-      toast.success(
-        `Usuario ${user.isActive ? "desactivado" : "activado"} correctamente`
-      );
     } catch (error) {
-      console.error("Error cambiando estado del usuario:", error);
+      console.error(error);
+      toast.error("No se pudo cambiar el estado del usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -185,10 +246,11 @@ export default function UsersPage() {
               <ArrowLeftCircle className="h-5 w-5 mr-2" />
               <span>Regresar</span>
             </button>
-
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">Panel de control</h1>
+                <h1 className="text-3xl font-bold text-slate-900">
+                  Panel de control
+                </h1>
                 <p className="mt-2 text-slate-600">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
@@ -210,7 +272,11 @@ export default function UsersPage() {
                         <CardDescription>{user.email}</CardDescription>
                       </div>
                       <div className="flex space-x-1">
-                        <Button variant="ghost" size="sm" onClick={() => setEditingUser(user)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingUser(user)}
+                        >
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
@@ -240,24 +306,34 @@ export default function UsersPage() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Rol:</span>
-                        <Badge variant={user.role === "manager" ? "default" : "secondary"}>
+                        <Badge
+                          variant={
+                            user.role === "manager" ? "default" : "secondary"
+                          }
+                        >
                           {user.role}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Estado:</span>
-                        <Badge variant={user.isActive ? "default" : "destructive"}>
+                        <Badge
+                          variant={user.isActive ? "default" : "destructive"}
+                        >
                           {user.isActive ? "Activo" : "Inactivo"}
                         </Badge>
                       </div>
                       <div>
-                        <span className="text-sm text-slate-600">Permisos:</span>
+                        <span className="text-sm text-slate-600">
+                          Permisos:
+                        </span>
+
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
                             const perms = (user.permissions || []).sort();
                             let label = "Acceso completo";
                             if (perms.length === 0) label = "Sin permisos";
-                            else if (perms.length === 1 && perms[0] === "read") label = "Solo lectura";
+                            else if (perms.length === 1 && perms[0] === "read")
+                              label = "Solo lectura";
                             return (
                               <Badge variant="outline" className="text-xs">
                                 {label}
@@ -289,22 +365,25 @@ export default function UsersPage() {
           </div>
         </main>
 
-        <AlertDialog open={!!deletingUser} onOpenChange={() => setDeletingUser(null)}>
+        <AlertDialog
+          open={!!deletingUser}
+          onOpenChange={() => setDeletingUser(null)}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteMode === "soft"
                   ? "¿Desactivar usuario?"
                   : deleteMode === "activate"
-                  ? "¿Activar usuario?"
-                  : "¿Eliminar usuario permanentemente?"}
+                    ? "¿Activar usuario?"
+                    : "¿Eliminar usuario permanentemente?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "soft"
                   ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
                   : deleteMode === "activate"
-                  ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
-                  : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
+                    ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
+                    : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -338,13 +417,13 @@ export default function UsersPage() {
                   ? deleteMode === "soft"
                     ? "Desactivando..."
                     : deleteMode === "activate"
-                    ? "Activando..."
-                    : "Eliminando..."
+                      ? "Activando..."
+                      : "Eliminando..."
                   : deleteMode === "soft"
-                  ? "Desactivar"
-                  : deleteMode === "activate"
-                  ? "Activar"
-                  : "Eliminar"}
+                    ? "Desactivar"
+                    : deleteMode === "activate"
+                      ? "Activar"
+                      : "Eliminar"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
