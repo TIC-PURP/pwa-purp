@@ -75,39 +75,45 @@ function buildUserDocFromData(data: any) {
   };
 }
 
-/** Abre/crea las bases local y remota */
 export async function openDatabases() {
   if (!isClient) return;
   await ensurePouch();
-  const { dbName } = getCouchEnv();
+  const { serverBase, dbName } = getCouchEnv();
 
-  // Local: puede llamarse igual o con sufijo; no afecta a la sync
   if (!localDB) {
     localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
   }
 
-  // Remota: SIEMPRE vía proxy de mismo origen → /couchdb/<db>
   if (!remoteDB) {
-    const remoteUrl = `/couchdb/${encodeURIComponent(dbName)}`;
+    // en el navegador usamos SIEMPRE el proxy same-origin
+    const remoteUrl = isClient
+      ? `/couchdb/${encodeURIComponent(dbName)}`
+      : `${serverBase}/${encodeURIComponent(dbName)}`;
+
     remoteDB = new PouchDB(remoteUrl, {
       skip_setup: true,
-      // Forzamos credenciales para que la cookie AuthSession viaje
       fetch: (url: RequestInfo, opts: any = {}) => {
         opts = opts || {};
-        opts.credentials = "include";
+        opts.credentials = "include"; // cookie AuthSession first-party
         return (window as any).fetch(url as any, opts);
       },
+      ajax: { withCredentials: true },
     });
   }
 
   return { localDB, remoteDB };
 }
 
-/** Login online contra /_session (name = usuario o email) en MISMO ORIGEN */
+
+/** Login online contra /_session (name = usuario o email) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  // CouchDB espera urlencoded; esto evita problemas de CORS en algunos proxies
+  const { serverBase } = getCouchEnv();
   const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetch(`/couchdb/_session`, {
+
+  // En cliente, pegamos al proxy same-origin para que la cookie sea de vercel.app
+  const url = isClient ? "/couchdb/_session" : `${serverBase}/_session`;
+
+  const res = await fetch(url, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -125,11 +131,10 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
 
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
+  const { serverBase } = getCouchEnv();
+  const url = isClient ? "/couchdb/_session" : `${serverBase}/_session`;
   try {
-    await fetch(`/couchdb/_session`, {
-      method: "DELETE",
-      credentials: "include",
-    });
+    await fetch(url, { method: "DELETE", credentials: "include" });
   } catch {}
 }
 
