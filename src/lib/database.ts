@@ -145,30 +145,20 @@ export async function stopSync() {
 
 /** Login online contra /_session (usa /couchdb en cliente) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  const base = getRemoteBase();
-  const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetchWithTimeout(`${base}/_session`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body,
-  }, 12000);
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
-  }
+  // En este proyecto no utilizamos la base `_users` de CouchDB ni el endpoint
+  // `/_session`. Asumimos que la autenticación y autorización se realizan
+  // íntegramente contra la base de aplicación (pwa‑purp). Por tanto, esta
+  // función se limita a devolver `true` y dejar que el flujo continúe sin
+  // crear una cookie de sesión. Si necesitas soporte para `_session`,
+  // restablece la lógica anterior.
   return true;
 }
 
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
-  const base = getRemoteBase();
-  try {
-    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
-  } catch {}
+  // No hay sesión a cerrar porque no utilizamos `/couchdb/_session`. Esta
+  // función se conserva por compatibilidad y no realiza ninguna operación.
+  return;
 }
 
 /** Login offline contra Pouch local */
@@ -176,10 +166,32 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) return null;
 
-  const candidates = [
-    `user_${identifier}`,
-    identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
-  ].filter(Boolean) as string[];
+  // Normalizamos el identificador para ampliar las coincidencias. Dado que
+  // buildUserDocFromData utiliza `slug()` para generar el id (reemplazando
+  // caracteres como “@” por guiones), aquí añadimos candidatos con el slug
+  // para no depender de un formato único. Así, si el usuario se guarda
+  // como `user_manager-purp-com-mx` también podremos localizarlo.
+  const candidates: string[] = [];
+  // id basado en el email tal cual (por compatibilidad con versiones anteriores)
+  candidates.push(`user_${identifier}`);
+  // id basado en la parte local del email (antes de la arroba)
+  if (identifier.includes("@")) {
+    candidates.push(`user_${identifier.split("@")[0]}`);
+  }
+  // id basado en el slug completo del identificador
+  // Añadimos un candidato usando el mismo algoritmo de slug que se emplea en
+  // buildUserDocFromData. La función slug() está definida en este módulo.
+  try {
+    const safe = slug(identifier);
+    candidates.push(`user_${safe}`);
+  } catch {
+    // fallback: sustituimos caracteres no permitidos por guiones
+    const safe = String(identifier)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, "-");
+    candidates.push(`user_${safe}`);
+  }
 
   try {
     await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
