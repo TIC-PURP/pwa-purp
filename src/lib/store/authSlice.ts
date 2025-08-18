@@ -9,6 +9,7 @@ import {
   logoutOnlineSession,
   guardarUsuarioOffline,
   findUserByEmail, // ← debe existir en ../database
+  initializeDefaultUsers,
 } from "../database";
 
 export interface AuthState {
@@ -111,13 +112,19 @@ export const loginUser = createAsyncThunk<
     return { user, token: "cookie-session" };
   } catch (onlineErr: any) {
     // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
+    // Antes de buscar en local, asegúrate de que existan usuarios predeterminados.
+    try {
+      await initializeDefaultUsers();
+    } catch {}
     const offline = await authenticateUser(email, password);
     if (offline) {
       const user = offline as User;
       persistSession(user, "offline");
       return { user, token: "offline" };
     }
-    return rejectWithValue(onlineErr?.message || "No se pudo iniciar sesión");
+    return rejectWithValue(
+      onlineErr?.message || "No se pudo iniciar sesión",
+    );
   }
 });
 

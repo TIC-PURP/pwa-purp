@@ -34,7 +34,13 @@ function getRemoteBase() {
 }
 
 /** fetch con timeout (para no colgarnos en login) */
-function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms = 12000) {
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  // Reducir el timeout por defecto de las peticiones para evitar que el login
+  // se quede colgado cuando el servidor remoto no responde. Antes era 12000 ms.
+  ms = 8000,
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   const opts = { ...init, signal: controller.signal };
