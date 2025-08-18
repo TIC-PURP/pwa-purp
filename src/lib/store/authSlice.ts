@@ -100,11 +100,12 @@ export const loginUser = createAsyncThunk<
     await guardarUsuarioOffline(user);
 
     // 5) Reiniciar sync (usará la cookie recién creada)
+    // No esperamos a que stopSync/startSync finalicen para no bloquear el login.
     try {
-      await stopSync();
+      stopSync();
     } catch {}
     try {
-      await startSync();
+      startSync();
     } catch {}
 
     // 6) Persistir sesión
