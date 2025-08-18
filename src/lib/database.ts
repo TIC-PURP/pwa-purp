@@ -220,22 +220,50 @@ export async function guardarUsuarioOffline(user: any) {
 }
 
 /** Semilla local para primer arranque offline */
+/**
+ * Crea en la base local un conjunto mínimo de usuarios por defecto. Esto permite
+ * que, al ejecutar la PWA por primera vez sin conexión o cuando el servidor
+ * remoto no está disponible, existan credenciales que permitan acceder en
+ * modo offline. Si ya existe un usuario con el mismo `_id`, no se sobrescribe.
+ *
+ * IMPORTANTE: estos usuarios sólo se guardan en PouchDB local. Para que
+ * puedan autenticarse contra CouchDB de forma online, sus documentos deben
+ * existir también en la base `_users` del servidor. Esto deberá hacerse
+ * manualmente a través de Fauxton o mediante una API de registro de usuarios.
+ */
 export async function initializeDefaultUsers() {
   await openDatabases();
   if (!localDB) return;
   const now = new Date().toISOString();
-  const def = buildUserDocFromData({
-    name: "Mario Acosta",
-    email: "mario_acosta@purp.com.mx",
-    password: "Purp_*2023@",
-    role: "manager",
-    permissions: ["read", "write", "delete", "manage_users"],
-    createdAt: now,
-  });
-  try {
-    await localDB.get(def._id);
-  } catch (e: any) {
-    if (e?.status === 404) await localDB.put(def);
+
+  // Define aquí todos los usuarios semilla que quieras que existan de forma
+  // predeterminada en la base local. Si necesitas añadir más cuentas, añade
+  // nuevos objetos a este array.
+  const defaults = [
+    {
+      name: "Manager",
+      email: "manager@purp.com.mx",
+      password: "Purp2023@",
+      role: "manager",
+      permissions: ["read", "write", "delete", "manage_users"],
+      createdAt: now,
+    },
+  ];
+
+  for (const entry of defaults) {
+    const doc = buildUserDocFromData(entry);
+    try {
+      await localDB.get(doc._id);
+      // ya existe, no hacemos nada
+    } catch (err: any) {
+      if (err?.status === 404) {
+        try {
+          await localDB.put(doc);
+        } catch (e) {
+          console.error("initializeDefaultUsers", e);
+        }
+      }
+    }
   }
 }
 
