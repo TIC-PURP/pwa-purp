@@ -1,3 +1,4 @@
+// src/components/providers.tsx
 "use client";
 
 import React, { useEffect, useRef } from "react";
@@ -12,25 +13,23 @@ import {
   watchUserDocByEmail,
   guardarUsuarioOffline,
 } from "@/lib/database";
-import { toast } from "sonner";
 
-/** Corre lógica de auth/sync ya dentro del Redux <Provider> */
-function AuthInitializer({ children }: { children: React.ReactNode }) {
+/** Bootstrap de auth/sync y watcher del usuario */
+function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
-  const cancelWatchRef = useRef<(() => void) | null>(null);
+  const cancelWatch = useRef<null | (() => void)>(null);
 
-  // Semilla + rehidratación
+  // Semilla + rehidratación de sesión
   useEffect(() => {
     (async () => {
-      try {
-        await initializeDefaultUsers();
-      } catch {}
-      dispatch(loadUserFromStorage() as any);
+      try { await initializeDefaultUsers(); } catch {}
+      // @ts-ignore
+      dispatch(loadUserFromStorage());
     })();
   }, [dispatch]);
 
-  // Renovar cookie y arrancar sync si ya había sesión
+  // Si hay sesión guardada y hay red → renovar cookie y arrancar sync
   useEffect(() => {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
@@ -41,19 +40,16 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             await startSync();
           }
         } catch {
-          // seguimos offline sin romper UI
+          // si falla, seguimos offline
         }
       }
     })();
   }, [user]);
 
-  // Watcher de cambios del doc de usuario
+  // Watcher del documento del usuario (replicación -> actualiza Redux y storage)
   useEffect(() => {
     (async () => {
-      if (cancelWatchRef.current) {
-        try { cancelWatchRef.current(); } catch {}
-        cancelWatchRef.current = null;
-      }
+      if (cancelWatch.current) { cancelWatch.current(); cancelWatch.current = null; }
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
           const updated = {
@@ -63,9 +59,7 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
             email: doc.email ?? user.email,
             password: doc.password ?? user.password,
             role: doc.role ?? user.role,
-            permissions: Array.isArray(doc.permissions)
-              ? doc.permissions
-              : user.permissions,
+            permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
             isActive: doc.isActive !== false,
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
@@ -73,55 +67,28 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
           try { await guardarUsuarioOffline(updated); } catch {}
           dispatch(setUser(updated));
         });
-        cancelWatchRef.current = stop;
+        cancelWatch.current = stop;
       }
     })();
 
-    return () => {
-      if (cancelWatchRef.current) {
-        try { cancelWatchRef.current(); } catch {}
-        cancelWatchRef.current = null;
-      }
-    };
+    return () => { try { cancelWatch.current?.(); } catch {} };
   }, [isAuthenticated, user?.email, dispatch]);
 
   // Reintentar sync al volver online
   useEffect(() => {
-    const onOnline = () => {
-      if (isAuthenticated) startSync().catch(() => {});
-    };
+    const onOnline = () => { if (isAuthenticated) startSync().catch(() => {}); };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
 
-  // AQUÍ va el useEffect del “toast de sync”, no fuera del componente
-  useEffect(() => {
-    const onSync = (e: any) => {
-      const d = e?.detail || {};
-      if (d.type === "change" && d.direction === "push") {
-        toast.success("Cambios enviados al servidor");
-      }
-      if (d.type === "active") {
-        // toast.info("Sincronización activa");
-      }
-      if (d.type === "error") {
-        toast.error("Error de sincronización");
-      }
-    };
-    window.addEventListener("pouch-sync", onSync as EventListener);
-    return () => window.removeEventListener("pouch-sync", onSync as EventListener);
-  }, []);
-
   return <>{children}</>;
 }
-function ProvidersInner({ children }: { children: React.ReactNode }) {
+
+/** Export por defecto: envolver TODO con Redux + Bootstrap */
+export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ReduxProvider store={store}>
-      <AuthInitializer>{children}</AuthInitializer>
+      <AuthBootstrap>{children}</AuthBootstrap>
     </ReduxProvider>
   );
 }
-
-export default ProvidersInner;
-// También exportado con nombre, para quien haga `import { Providers }`
-export { ProvidersInner as Providers };
