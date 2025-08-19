@@ -62,48 +62,49 @@ export const loginUser = createAsyncThunk<
     // 1) Login ONLINE (crea cookie AuthSession)
     await loginOnlineToCouchDB(email, password);
 
-    // 2) Intentar obtener el usuario REAL desde DB (por email). Si no existe
-    // en la base local/replicada, lanzamos un error para que el flujo pase
-    // al modo offline o rechace la autenticación. Anteriormente se
-    // construía un usuario "por defecto" lo que permitía iniciar sesión
-    // con cualquier combinación de credenciales. Aquí restringimos el
-    // acceso únicamente a usuarios preexistentes.
+    // 2) Intentar obtener el usuario REAL desde DB (por email)
     const now = new Date().toISOString();
     const dbUser: any = await findUserByEmail(email);
-    if (!dbUser) {
-      // Forzamos un error para que el catch maneje el fallback offline.
-      throw new Error("Usuario no encontrado");
-    }
 
     // 3) Mapear a tu tipo `User` (sin campo `type`)
-    const user: User = {
-      _id: dbUser._id ?? `user_${email}`,
-      id: dbUser.id ?? `user_${email}`,
-      name:
-        dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
-      email: dbUser.email ?? email,
-      password: dbUser.password ?? password, // ⚠️ en prod: hashear
-      role: dbUser.role ?? "user",
-      permissions: Array.isArray(dbUser.permissions)
-        ? dbUser.permissions
-        : ["read"],
-      isActive: dbUser.isActive !== false,
-      createdAt: dbUser.createdAt ?? now,
-      updatedAt: now,
-    };
+    const user: User = dbUser
+      ? {
+          _id: dbUser._id ?? `user_${email}`,
+          id: dbUser.id ?? `user_${email}`,
+          name:
+            dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
+          email: dbUser.email ?? email,
+          password: dbUser.password ?? password, // ⚠️ en prod: hashear
+          role: dbUser.role ?? "user",
+          permissions: Array.isArray(dbUser.permissions)
+            ? dbUser.permissions
+            : ["read"],
+          isActive: dbUser.isActive !== false,
+          createdAt: dbUser.createdAt ?? now,
+          updatedAt: now,
+        }
+      : {
+          _id: `user_${email}`,
+          id: `user_${email}`,
+          name: email.includes("@") ? email.split("@")[0] : email,
+          email,
+          password, // ⚠️ en prod: hashear
+          role: "user",
+          permissions: ["read"],
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        };
 
-    // 4) Guardar/actualizar en Pouch local (offline-first). No creamos
-    // usuarios nuevos aquí; simplemente aseguramos que el usuario
-    // existente está actualizado en la base local.
+    // 4) Guardar/actualizar en Pouch local (offline-first)
     await guardarUsuarioOffline(user);
 
-    // 5) Reiniciar sync (usará la cookie recién creada). No esperamos
-    // a que stopSync/startSync finalicen para no bloquear el login.
+    // 5) Reiniciar sync (usará la cookie recién creada)
     try {
-      stopSync();
+      await stopSync();
     } catch {}
     try {
-      startSync();
+      await startSync();
     } catch {}
 
     // 6) Persistir sesión

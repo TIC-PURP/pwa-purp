@@ -103,15 +103,31 @@ export async function openDatabases() {
 
   if (!remoteDB) {
     const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
-    remoteDB = new PouchDB(remoteUrl, {
-      skip_setup: true,
-      fetch: (url: RequestInfo, opts: any = {}) => {
-        opts = opts || {};
-        opts.credentials = "include"; // enviar cookie AuthSession
-        return (window as any).fetch(url as any, opts);
-      },
-      ajax: { withCredentials: true },
-    });
+    // Configure remote PouchDB options.  When explicit username and
+    // password environment variables are provided we pass them to PouchDB
+    // via the `auth` property so that it sends a Basic Auth header on
+    // every request.  Otherwise we fall back to using browser cookies
+    // with `credentials: 'include'` to support CouchDB's /_session API.
+    const user = process.env.NEXT_PUBLIC_COUCHDB_USER;
+    const pass = process.env.NEXT_PUBLIC_COUCHDB_PASS;
+    const opts: any = { skip_setup: true };
+    if (user && pass) {
+      // Use Basic Auth for all requests.  Do not rely on cookies when
+      // credentials are provided.
+      opts.auth = { username: user, password: pass };
+      // Use default fetch without credentials; Basic Auth will be
+      // handled by PouchDB.
+    } else {
+      // Fall back to cookie‑based auth.  When using /_session the
+      // browser must include credentials for each request.
+      opts.fetch = (url: RequestInfo, opts2: any = {}) => {
+        opts2 = opts2 || {};
+        opts2.credentials = "include";
+        return (window as any).fetch(url as any, opts2);
+      };
+      opts.ajax = { withCredentials: true };
+    }
+    remoteDB = new PouchDB(remoteUrl, opts);
   }
 
   return { localDB, remoteDB };
@@ -145,20 +161,30 @@ export async function stopSync() {
 
 /** Login online contra /_session (usa /couchdb en cliente) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  // En este proyecto no utilizamos la base `_users` de CouchDB ni el endpoint
-  // `/_session`. Asumimos que la autenticación y autorización se realizan
-  // íntegramente contra la base de aplicación (pwa‑purp). Por tanto, esta
-  // función se limita a devolver `true` y dejar que el flujo continúe sin
-  // crear una cookie de sesión. Si necesitas soporte para `_session`,
-  // restablece la lógica anterior.
+  const base = getRemoteBase();
+  const body = new URLSearchParams({ name, password }).toString();
+  const res = await fetchWithTimeout(`${base}/_session`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body,
+  }, 12000);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
+  }
   return true;
 }
 
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
-  // No hay sesión a cerrar porque no utilizamos `/couchdb/_session`. Esta
-  // función se conserva por compatibilidad y no realiza ninguna operación.
-  return;
+  const base = getRemoteBase();
+  try {
+    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
+  } catch {}
 }
 
 /** Login offline contra Pouch local */
@@ -166,32 +192,10 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) return null;
 
-  // Normalizamos el identificador para ampliar las coincidencias. Dado que
-  // buildUserDocFromData utiliza `slug()` para generar el id (reemplazando
-  // caracteres como “@” por guiones), aquí añadimos candidatos con el slug
-  // para no depender de un formato único. Así, si el usuario se guarda
-  // como `user_manager-purp-com-mx` también podremos localizarlo.
-  const candidates: string[] = [];
-  // id basado en el email tal cual (por compatibilidad con versiones anteriores)
-  candidates.push(`user_${identifier}`);
-  // id basado en la parte local del email (antes de la arroba)
-  if (identifier.includes("@")) {
-    candidates.push(`user_${identifier.split("@")[0]}`);
-  }
-  // id basado en el slug completo del identificador
-  // Añadimos un candidato usando el mismo algoritmo de slug que se emplea en
-  // buildUserDocFromData. La función slug() está definida en este módulo.
-  try {
-    const safe = slug(identifier);
-    candidates.push(`user_${safe}`);
-  } catch {
-    // fallback: sustituimos caracteres no permitidos por guiones
-    const safe = String(identifier)
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]/g, "-");
-    candidates.push(`user_${safe}`);
-  }
+  const candidates = [
+    `user_${identifier}`,
+    identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
+  ].filter(Boolean) as string[];
 
   try {
     await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
@@ -232,49 +236,37 @@ export async function guardarUsuarioOffline(user: any) {
 }
 
 /** Semilla local para primer arranque offline */
-/**
- * Crea en la base local un conjunto mínimo de usuarios por defecto. Esto permite
- * que, al ejecutar la PWA por primera vez sin conexión o cuando el servidor
- * remoto no está disponible, existan credenciales que permitan acceder en
- * modo offline. Si ya existe un usuario con el mismo `_id`, no se sobrescribe.
- *
- * IMPORTANTE: estos usuarios sólo se guardan en PouchDB local. Para que
- * puedan autenticarse contra CouchDB de forma online, sus documentos deben
- * existir también en la base `_users` del servidor. Esto deberá hacerse
- * manualmente a través de Fauxton o mediante una API de registro de usuarios.
- */
 export async function initializeDefaultUsers() {
   await openDatabases();
   if (!localDB) return;
   const now = new Date().toISOString();
-
-  // Define aquí todos los usuarios semilla que quieras que existan de forma
-  // predeterminada en la base local. Si necesitas añadir más cuentas, añade
-  // nuevos objetos a este array.
-  const defaults = [
+  // Crear múltiples usuarios por defecto si no existen todavía.  Esto permite iniciar
+  // sesión offline con distintos roles/credenciales sin necesidad de crear cuentas manualmente.
+  const defaultUsers = [
+    {
+      name: "Mario Acosta",
+      email: "mario_acosta@purp.com.mx",
+      password: "Purp_*2023@",
+      role: "manager",
+      permissions: ["read", "write", "delete", "manage_users"],
+    },
     {
       name: "Manager",
       email: "manager@purp.com.mx",
       password: "Purp2023@",
       role: "manager",
       permissions: ["read", "write", "delete", "manage_users"],
-      createdAt: now,
     },
   ];
-
-  for (const entry of defaults) {
-    const doc = buildUserDocFromData(entry);
+  for (const user of defaultUsers) {
+    const doc = buildUserDocFromData({
+      ...user,
+      createdAt: now,
+    });
     try {
       await localDB.get(doc._id);
-      // ya existe, no hacemos nada
-    } catch (err: any) {
-      if (err?.status === 404) {
-        try {
-          await localDB.put(doc);
-        } catch (e) {
-          console.error("initializeDefaultUsers", e);
-        }
-      }
+    } catch (e: any) {
+      if (e?.status === 404) await localDB.put(doc);
     }
   }
 }
