@@ -192,9 +192,16 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) return null;
 
+  // Possible IDs for the same identifier.  Users are stored in PouchDB
+  // using the slugified email/name (buildUserDocFromData calls slug()).
+  // To locate a user we try several patterns:
+  // - `user_${identifier}` (raw)
+  // - `user_${identifier.split('@')[0]}` (before the @)
+  // - `user_${slug(identifier)}` (slugified email or username)
   const candidates = [
     `user_${identifier}`,
     identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
+    `user_${slug(identifier)}`,
   ].filter(Boolean) as string[];
 
   try {
