@@ -8,7 +8,7 @@ const defaultUser: User = {
   email: "manager@purp.com.mx",
   password: "Purp2023@",
   role: "manager",
-  name: "Mario Acosta",
+  name: "Manager",
   permissions: [],
   isActive: true,
   createdAt: new Date().toISOString(),

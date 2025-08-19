@@ -251,13 +251,6 @@ export async function initializeDefaultUsers() {
   // sesión offline con distintos roles/credenciales sin necesidad de crear cuentas manualmente.
   const defaultUsers = [
     {
-      name: "Mario Acosta",
-      email: "mario_acosta@purp.com.mx",
-      password: "Purp_*2023@",
-      role: "manager",
-      permissions: ["read", "write", "delete", "manage_users"],
-    },
-    {
       name: "Manager",
       email: "manager@purp.com.mx",
       password: "Purp2023@",
