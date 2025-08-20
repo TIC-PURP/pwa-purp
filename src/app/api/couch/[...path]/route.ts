@@ -21,19 +21,20 @@ function filterRequestHeaders(req: NextRequest) {
 }
 
 function forwardSetCookie(res: Response, out: NextResponse) {
+  // getSetCookie existe en runtimes modernos; usamos any por compatibilidad de tipos.
   const setCookies = (res.headers as any).getSetCookie?.() ?? [];
   for (const c of setCookies) out.headers.append("set-cookie", c);
 }
 
-export async function ALL(req: NextRequest, { params }: { params: { path: string[] } }) {
+async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
   try {
-    const url = buildTargetURL(req, params.path);
+    const url = buildTargetURL(req, ctx.params.path);
 
-    // ⬇️ FIX: usar Uint8Array (BodyInit válido) en lugar de Buffer
+    // Body como Uint8Array (válido para BodyInit y Node runtime)
     let body: BodyInit | undefined = undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
       const ab = await req.arrayBuffer();
-      body = new Uint8Array(ab); // ✅ BodyInit
+      body = new Uint8Array(ab);
     }
 
     const res = await fetch(url, {
@@ -42,7 +43,6 @@ export async function ALL(req: NextRequest, { params }: { params: { path: string
       body
     });
 
-    // Devolver el cuerpo tal cual
     const buf = await res.arrayBuffer();
     const out = new NextResponse(buf, { status: res.status });
 
@@ -58,10 +58,11 @@ export async function ALL(req: NextRequest, { params }: { params: { path: string
   }
 }
 
-export const GET = ALL;
-export const POST = ALL;
-export const PUT = ALL;
-export const DELETE = ALL;
-export const HEAD = ALL;
-export const PATCH = ALL;
-export const OPTIONS = ALL;
+// Exportar handlers individuales (NO exportar ALL)
+export { handler as GET };
+export { handler as POST };
+export { handler as PUT };
+export { handler as DELETE };
+export { handler as HEAD };
+export { handler as PATCH };
+export { handler as OPTIONS };
