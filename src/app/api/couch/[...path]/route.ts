@@ -1,64 +1,49 @@
 export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 
-function buildTargetURL(req: NextRequest, pathParam: string[]) {
+function target(req: NextRequest, segs: string[]) {
   const base = process.env.COUCH_HOST;
   if (!base) throw new Error("Falta variable COUCH_HOST");
-  const path = pathParam.join("/");
-  const search = req.nextUrl.search || "";
-  return `${base}/${path}${search}`;
+  const path = segs.join("/");
+  const q = req.nextUrl.search || "";
+  return `${base}/${path}${q}`;
 }
 
-function filterRequestHeaders(req: NextRequest) {
+function fwdHeaders(req: NextRequest) {
   const h = new Headers();
   const ct = req.headers.get("content-type");
   if (ct) h.set("content-type", ct);
+  const ck = req.headers.get("cookie");
+  if (ck) h.set("cookie", ck);
   h.set("accept", "application/json, text/plain, */*");
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
   return h;
 }
 
-function forwardSetCookie(res: Response, out: NextResponse) {
-  const setCookies = (res.headers as any).getSetCookie?.() ?? [];
-  for (const c of setCookies) out.headers.append("set-cookie", c);
+function fwdSetCookie(res: Response, out: NextResponse) {
+  const set = (res.headers as any).getSetCookie?.() ?? [];
+  for (const c of set) out.headers.append("set-cookie", c);
 }
 
 async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
   try {
-    const url = buildTargetURL(req, ctx.params.path);
-
+    const url = target(req, ctx.params.path);
     let body: BodyInit | undefined = undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
       const ab = await req.arrayBuffer();
       body = new Uint8Array(ab);
     }
-
-    const res = await fetch(url, {
-      method: req.method,
-      headers: filterRequestHeaders(req),
-      body
-    });
-
-    const buf = await res.arrayBuffer();
-    const out = new NextResponse(buf, { status: res.status });
-
-    for (const [k, v] of res.headers) {
+    const r = await fetch(url, { method: req.method, headers: fwdHeaders(req), body });
+    const buf = await r.arrayBuffer();
+    const out = new NextResponse(buf, { status: r.status });
+    for (const [k, v] of r.headers) {
       const kl = k.toLowerCase();
-      if (kl === "set-cookie" || kl === "content-length") continue;
-      out.headers.set(k, v);
+      if (kl !== "set-cookie" && kl !== "content-length") out.headers.set(k, v);
     }
-    forwardSetCookie(res, out);
+    fwdSetCookie(r, out);
     return out;
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Proxy error" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "proxy" }, { status: 500 });
   }
 }
 
-export { handler as GET };
-export { handler as POST };
-export { handler as PUT };
-export { handler as DELETE };
-export { handler as HEAD };
-export { handler as PATCH };
-export { handler as OPTIONS };
+export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH, handler as OPTIONS, handler as HEAD };

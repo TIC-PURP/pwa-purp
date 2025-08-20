@@ -19,7 +19,9 @@ import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loginUser } from "@/lib/store/authSlice";
 import { loginSchema } from "@/lib/validations";
 import type { LoginCredentials } from "@/lib/types";
+import { z } from "zod";
 
+type LoginFormValues = z.infer<typeof loginSchema>;
 export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const dispatch = useAppDispatch();
@@ -31,11 +33,11 @@ export function LoginForm() {
     handleSubmit,
     formState: { errors },
     setError,
-  } = useForm<LoginCredentials>({
+  } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
   });
 
-  const onSubmit = async (data: LoginCredentials) => {
+  const onSubmit = async (data: LoginFormValues) => {
     try {
       const result = await dispatch(loginUser(data));
       if (loginUser.fulfilled.match(result)) {

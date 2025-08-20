@@ -1,16 +1,3 @@
-
-// -- AUTO PATCH: resolver ruta remota del proxy a partir de NEXT_PUBLIC_COUCHDB_URL
-function getProxyRemotePathFromEnv(): string {
-  const url = process.env.NEXT_PUBLIC_COUCHDB_URL || "";
-  try {
-    // ejemplo: http://host:5984/pwa-purp -> dbName = pwa-purp
-    const dbName = url.split("/").filter(Boolean).pop() || "pwa-purp";
-    return `/api/couchdb/${dbName}`;
-  } catch {
-    return `/api/couchdb/pwa-purp`;
-  }
-}
-
 // src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
 
@@ -29,7 +16,7 @@ export function getCouchEnv(): CouchEnv {
   const url = new URL(raw);
   const path = url.pathname.replace(/\/+$/, "");
   const parts = path.split("/").filter(Boolean);
-  const dbName = parts[parts.length - 1] || "pwa-purp";
+  const dbName = parts[parts.length - 1] || "gestion_pwa";
   const serverBase = `${url.protocol}//${url.host}`;
   return { serverBase, dbName };
 }
@@ -86,8 +73,7 @@ function buildUserDocFromData(data: any) {
     type: "user",
     name: data.name || key,
     email: data.email || "",
-    password: data.password || "",
-    role: data.role || "user",
+        role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
@@ -185,19 +171,14 @@ export async function logoutOnlineSession() {
 
 /* ===== Login offline + CRUD usuarios (igual que ya tenías) ===== */
 export async function authenticateUser(identifier: string, password: string) {
-  await openDatabases();
-  if (!localDB) return null;
-  const candidates = [
-    `user_${identifier}`,
-    identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
-    `user_${slug(identifier)}`,
-  ].filter(Boolean) as string[];
-
-  try { await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" }); } catch {}
-  for (const cand of candidates) {
-    const r = await localDB.find({ selector: { id: cand } });
-    if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
-  }
+  // Offline verify using local PBKDF2 secret
+  try {
+    const { verifyOffline } = await import("@/lib/auth/offline");
+    const ok = await verifyOffline(identifier, password);
+    if (ok.ok) {
+      return await findUserByEmail(identifier);
+    }
+  } catch {}
   return null;
 }
 

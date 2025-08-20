@@ -6,86 +6,77 @@ import {
   stopSync,
   loginOnlineToCouchDB,
   logoutOnlineSession,
-  guardarUsuarioOffline,
   findUserByEmail,
   initializeDefaultUsers,
 } from "../database";
 
 export interface AuthState {
   user: User | null;
-  token: string | null;              // "online" | "offline"
+  token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
 }
-export type LoginCredentials = { email: string; password: string };
+
+export type LoginCredentials = { email: string; password: string; };
 
 const STORAGE_KEY = "purp_auth";
 const persist = (u: User, t: string) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ user: u, token: t })); } catch {} };
-const clear   = () => { try { localStorage.removeItem(STORAGE_KEY); } catch {} };
-
-const initialState: AuthState = { user: null, token: null, isAuthenticated: false, isLoading: false, error: null };
+const clear = () => { try { localStorage.removeItem(STORAGE_KEY); } catch {} };
 
 export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
-  try { const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return { user: null, token: null };
-        const parsed = JSON.parse(raw); return { user: parsed.user as User, token: parsed.token as string };
-  } catch { return { user: null, token: null }; }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return { user: data.user as User, token: data.token as string };
+  } catch {
+    return null;
+  }
 });
 
-export const loginUser = createAsyncThunk<{ user: User; token: string }, LoginCredentials>(
+export const loginUser = createAsyncThunk(
   "auth/login",
-  async ({ email, password }, { rejectWithValue }) => {
+  async ({ email, password }: LoginCredentials, { rejectWithValue }) => {
     try {
-      console.log("[auth] login start (cookie-session)");
-      // 1) crea sesión Couch con la CUENTA TÉCNICA (admin) que ya viste en Network
+      // ONLINE: valida en CouchDB y arranca sync
       await loginOnlineToCouchDB(email, password);
-
-      // 2) resuelve usuario de la APP (doc user_*)
-      const now = new Date().toISOString();
-      const dbUser: any = await findUserByEmail(email);
-      const user: User = dbUser ? {
-        _id: dbUser._id ?? `user_${email}`,
-        id: dbUser.id ?? `user_${email}`,
-        name: dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
-        email: dbUser.email ?? email,
-        password: dbUser.password ?? password,
-        role: dbUser.role ?? "user",
-        permissions: Array.isArray(dbUser.permissions) ? dbUser.permissions : ["read"],
-        isActive: dbUser.isActive !== false,
-        createdAt: dbUser.createdAt ?? now,
-        updatedAt: now,
-      } : {
-        _id: `user_${email}`,
-        id: `user_${email}`,
-        name: email.includes("@") ? email.split("@")[0] : email,
-        email,
-        password,
-        role: "user",
-        permissions: ["read"],
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      try { await guardarUsuarioOffline(user); } catch {}
-
-      // 3) arranca sync (retorna enseguida)
-      await startSync();
-
-      // 4) persistir y devolver (ESTE return hace que el thunk se resuelva)
-      persist(user, "online");
-      console.log("[auth] login resolved -> online", user.email);
-      return { user, token: "online" };
-    } catch (err: any) {
-      // fallback OFFLINE
-      try { await initializeDefaultUsers(); } catch {}
-      const off = await authenticateUser(email, password);
-      if (off) {
-        persist(off as User, "offline");
-        console.log("[auth] login resolved -> offline", (off as User).email);
-        return { user: off as User, token: "offline" };
+      await initializeDefaultUsers(); // por si hay semillas
+      let dbUser = await findUserByEmail(email);
+      if (!dbUser) {
+        // usuario mínimo si aún no existe en tu colección de negocio
+        const now = new Date().toISOString();
+        dbUser = {
+          id: `user_${Date.now()}`,
+          name: email.includes("@") ? email.split("@")[0] : email,
+          email,
+          role: "user",
+          permissions: ["read"],
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+          type: "user_profile"
+        } as User;
       }
-      console.error("[auth] login rejected", err?.message);
+      // Guardar verificador OFFLINE (solo local, no sincroniza)
+      try {
+        const { saveOfflineVerifier } = await import("@/lib/auth/offline");
+        await saveOfflineVerifier(email, password, Array.isArray(dbUser.permissions) ? dbUser.permissions : []);
+      } catch {}
+      const token = "online";
+      persist(dbUser, token);
+      try { await startSync(); } catch {}
+      return { user: dbUser, token };
+    } catch (err: any) {
+      // OFFLINE fallback
+      try {
+        const off = await authenticateUser(email, password);
+        if (off) {
+          const token = "offline";
+          persist(off, token);
+          return { user: off as User, token };
+        }
+      } catch {}
       return rejectWithValue(err?.message || "No se pudo iniciar sesión");
     }
   }
@@ -97,31 +88,30 @@ export const logoutUser = createAsyncThunk("auth/logout", async () => {
   clear();
 });
 
+const initialState: AuthState = {
+  user: null,
+  token: null,
+  isAuthenticated: false,
+  isLoading: false,
+  error: null,
+};
+
 const slice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    clearError(s) { s.error = null; },
-    setUser(s, a: PayloadAction<User | null>) { s.user = a.payload; s.isAuthenticated = !!a.payload; },
+    clearError: (state) => { state.error = null; },
+    setUser: (state, action: PayloadAction<User | null>) => { state.user = action.payload; state.isAuthenticated = !!action.payload; }
   },
-  extraReducers: (b) => {
-    b.addCase(loadUserFromStorage.pending,   (s) => { s.isLoading = true; });
-    b.addCase(loadUserFromStorage.fulfilled, (s, a) => {
-      s.isLoading = false; s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = !!a.payload.user;
+  extraReducers: (builder) => {
+    const b = builder as any;
+    b.addCase(loadUserFromStorage.fulfilled, (s: AuthState, a: any) => {
+      if (a.payload) { s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = true; }
     });
-    b.addCase(loadUserFromStorage.rejected,  (s) => { s.isLoading = false; });
-
-    b.addCase(loginUser.pending,   (s) => { s.isLoading = true; s.error = null; });
-    b.addCase(loginUser.fulfilled, (s, a) => {
-      s.isLoading = false; s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = true;
-    });
-    b.addCase(loginUser.rejected,  (s, a) => {
-      s.isLoading = false; s.error = (a.payload as string) || "Error de autenticación";
-    });
-
-    b.addCase(logoutUser.fulfilled, (s) => {
-      s.user = null; s.token = null; s.isAuthenticated = false; s.isLoading = false; s.error = null;
-    });
+    b.addCase(loginUser.pending,    (s: AuthState) => { s.isLoading = true; s.error = null; });
+    b.addCase(loginUser.fulfilled,  (s: AuthState, a: any) => { s.isLoading = false; s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = true; });
+    b.addCase(loginUser.rejected,   (s: AuthState, a: any) => { s.isLoading = false; s.error = (a.payload as string) || "Error de autenticación"; });
+    b.addCase(logoutUser.fulfilled, (s: AuthState) => { s.user = null; s.token = null; s.isAuthenticated = false; s.isLoading = false; s.error = null; });
   },
 });
 
