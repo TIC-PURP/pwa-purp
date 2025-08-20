@@ -1,49 +1,44 @@
-export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-function target(req: NextRequest, segs: string[]) {
-  const base = process.env.COUCH_HOST;
-  if (!base) throw new Error("Falta variable COUCH_HOST");
-  const path = segs.join("/");
-  const q = req.nextUrl.search || "";
-  return `${base}/${path}${q}`;
-}
+const couchBase = process.env.COUCH_HOST!; // e.g. http://host:5984
 
-function fwdHeaders(req: NextRequest) {
-  const h = new Headers();
-  const ct = req.headers.get("content-type");
-  if (ct) h.set("content-type", ct);
-  const ck = req.headers.get("cookie");
-  if (ck) h.set("cookie", ck);
-  h.set("accept", "application/json, text/plain, */*");
-  return h;
-}
+export async function POST(req: NextRequest) {
+  // Forward body as-is (x-www-form-urlencoded)
+  const body = await req.text();
 
-function fwdSetCookie(res: Response, out: NextResponse) {
-  const set = (res.headers as any).getSetCookie?.() ?? [];
-  for (const c of set) out.headers.append("set-cookie", c);
-}
+  const couchRes = await fetch(`${couchBase}/_session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+    redirect: "manual",
+  });
 
-async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
-  try {
-    const url = target(req, ctx.params.path);
-    let body: BodyInit | undefined = undefined;
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      const ab = await req.arrayBuffer();
-      body = new Uint8Array(ab);
-    }
-    const r = await fetch(url, { method: req.method, headers: fwdHeaders(req), body });
-    const buf = await r.arrayBuffer();
-    const out = new NextResponse(buf, { status: r.status });
-    for (const [k, v] of r.headers) {
-      const kl = k.toLowerCase();
-      if (kl !== "set-cookie" && kl !== "content-length") out.headers.set(k, v);
-    }
-    fwdSetCookie(r, out);
-    return out;
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "proxy" }, { status: 500 });
+  const couchSetCookie = couchRes.headers.get("set-cookie");
+  const data = await couchRes.json().catch(() => ({}));
+
+  // Mirror status/body to the browser
+  const res = NextResponse.json(data, { status: couchRes.status });
+
+  // Re-emit CouchDB's AuthSession cookie so the browser stores it for our domain
+  if (couchSetCookie) {
+    const first = couchSetCookie.split(",")[0]; // take first cookie only
+    // Normalize Path and ensure useful defaults
+    const normalized = first.replace(/Path=\/[^;]*/i, "Path=/");
+    res.headers.set("Set-Cookie", normalized + "; SameSite=Lax; HttpOnly");
   }
+
+  return res;
 }
 
-export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH, handler as OPTIONS, handler as HEAD };
+// Allows checking current session (mirrors CouchDB /_session)
+export async function GET() {
+  const cookieHeader = cookies().toString(); // includes AuthSession if present
+
+  const couchRes = await fetch(`${couchBase}/_session`, {
+    headers: { cookie: cookieHeader },
+  });
+
+  const data = await couchRes.json().catch(() => ({}));
+  return NextResponse.json(data, { status: couchRes.status });
+}

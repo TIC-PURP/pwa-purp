@@ -1,49 +1,48 @@
-export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-function target(req: NextRequest, segs: string[]) {
-  const base = process.env.COUCH_HOST;
-  if (!base) throw new Error("Falta variable COUCH_HOST");
-  const path = segs.join("/");
-  const q = req.nextUrl.search || "";
-  return `${base}/${path}${q}`;
+const couchBase = process.env.COUCH_HOST!; // e.g. http://host:5984
+
+function buildTarget(req: NextRequest, parts: string[]) {
+  const path = parts.join("/");
+  const qs = req.nextUrl.search || "";
+  return `${couchBase}/${path}${qs}`;
 }
 
-function fwdHeaders(req: NextRequest) {
-  const h = new Headers();
+async function forward(req: NextRequest, target: string, method: string) {
+  const cookieHeader = cookies().toString();
+  const headers: Record<string, string> = { cookie: cookieHeader };
   const ct = req.headers.get("content-type");
-  if (ct) h.set("content-type", ct);
-  const ck = req.headers.get("cookie");
-  if (ck) h.set("cookie", ck);
-  h.set("accept", "application/json, text/plain, */*");
-  return h;
-}
+  if (ct) headers["Content-Type"] = ct;
 
-function fwdSetCookie(res: Response, out: NextResponse) {
-  const set = (res.headers as any).getSetCookie?.() ?? [];
-  for (const c of set) out.headers.append("set-cookie", c);
-}
+  const r = await fetch(target, {
+    method,
+    headers,
+    body: method === "GET" || method === "HEAD" ? undefined : req.body,
+    redirect: "manual",
+  });
 
-async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
-  try {
-    const url = target(req, ctx.params.path);
-    let body: BodyInit | undefined = undefined;
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      const ab = await req.arrayBuffer();
-      body = new Uint8Array(ab);
-    }
-    const r = await fetch(url, { method: req.method, headers: fwdHeaders(req), body });
-    const buf = await r.arrayBuffer();
-    const out = new NextResponse(buf, { status: r.status });
-    for (const [k, v] of r.headers) {
-      const kl = k.toLowerCase();
-      if (kl !== "set-cookie" && kl !== "content-length") out.headers.set(k, v);
-    }
-    fwdSetCookie(r, out);
-    return out;
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "proxy" }, { status: 500 });
+  // Mirror status and pass-through body; keep important headers
+  const resHeaders = new Headers();
+  const copyHeaders = ["content-type", "etag", "cache-control"];
+  for (const [k, v] of r.headers.entries()) {
+    if (copyHeaders.includes(k.toLowerCase())) resHeaders.set(k, v);
   }
+  return new NextResponse(r.body, { status: r.status, headers: resHeaders });
 }
 
-export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH, handler as OPTIONS, handler as HEAD };
+export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return forward(req, buildTarget(req, params.path), "GET");
+}
+
+export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return forward(req, buildTarget(req, params.path), "POST");
+}
+
+export async function PUT(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return forward(req, buildTarget(req, params.path), "PUT");
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return forward(req, buildTarget(req, params.path), "DELETE");
+}
