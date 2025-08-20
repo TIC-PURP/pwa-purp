@@ -1,3 +1,16 @@
+
+// -- AUTO PATCH: resolver ruta remota del proxy a partir de NEXT_PUBLIC_COUCHDB_URL
+function getProxyRemotePathFromEnv(): string {
+  const url = process.env.NEXT_PUBLIC_COUCHDB_URL || "";
+  try {
+    // ejemplo: http://host:5984/pwa-purp -> dbName = pwa-purp
+    const dbName = url.split("/").filter(Boolean).pop() || "pwa-purp";
+    return `/api/couchdb/${dbName}`;
+  } catch {
+    return `/api/couchdb/pwa-purp`;
+  }
+}
+
 // src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
 
@@ -16,7 +29,7 @@ export function getCouchEnv(): CouchEnv {
   const url = new URL(raw);
   const path = url.pathname.replace(/\/+$/, "");
   const parts = path.split("/").filter(Boolean);
-  const dbName = parts[parts.length - 1] || "gestion_pwa";
+  const dbName = parts[parts.length - 1] || "pwa-purp";
   const serverBase = `${url.protocol}//${url.host}`;
   return { serverBase, dbName };
 }

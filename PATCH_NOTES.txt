@@ -1,0 +1,17 @@
+PWA PURP - Parche aplicado
+--------------------------
+- Rutas App Router:
+  * src/app/api/users/route.ts  (GET ping, POST crear usuario en _users)  runtime=nodejs
+  * src/app/api/users/[email]/route.ts (DELETE eliminar usuario)          runtime=nodejs
+
+- Helper de login:
+  * src/lib/auth/login.ts
+
+- Ajuste de base remota:
+  * Se sustituyeron ocurrencias de '/api/couchdb/gestion_pwa' por valor dinámico basado en NEXT_PUBLIC_COUCHDB_URL.
+  * Si NEXT_PUBLIC_COUCHDB_URL no está, fallback a '/api/couchdb/pwa-purp'.
+  * También se sustituyeron tokens sueltos 'gestion_pwa' -> 'pwa-purp' en archivos 'database.ts' detectados.
+
+- Variables de entorno requeridas:
+  * NEXT_PUBLIC_COUCHDB_URL = http://<HOST>:5984/pwa-purp
+  * COUCH_HOST, COUCH_ADMIN_USER, COUCH_ADMIN_PASS (privadas del server)
