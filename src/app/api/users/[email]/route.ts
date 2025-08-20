@@ -1,5 +1,4 @@
 export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 
 function basicAuth(user: string, pass: string) {
@@ -11,7 +10,6 @@ function envOrError(name: string) {
   return v;
 }
 
-// DELETE /api/users/[email] -> borra usuario de _users
 export async function DELETE(_req: NextRequest, { params }: { params: { email: string } }) {
   try {
     const host = envOrError("COUCH_HOST");

@@ -1,5 +1,4 @@
 export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 
 function basicAuth(user: string, pass: string) {
@@ -11,12 +10,10 @@ function envOrError(name: string) {
   return v;
 }
 
-// GET /api/users -> ping
 export async function GET() {
   return NextResponse.json({ ok: true, hint: "POST para crear usuario" });
 }
 
-// POST /api/users -> crea usuario en _users (JSON o x-www-form-urlencoded)
 export async function POST(req: NextRequest) {
   try {
     const host = envOrError("COUCH_HOST");

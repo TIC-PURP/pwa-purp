@@ -1,5 +1,4 @@
 export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 
 function buildTargetURL(req: NextRequest, pathParam: string[]) {
@@ -21,7 +20,6 @@ function filterRequestHeaders(req: NextRequest) {
 }
 
 function forwardSetCookie(res: Response, out: NextResponse) {
-  // getSetCookie existe en runtimes modernos; usamos any por compatibilidad de tipos.
   const setCookies = (res.headers as any).getSetCookie?.() ?? [];
   for (const c of setCookies) out.headers.append("set-cookie", c);
 }
@@ -30,7 +28,6 @@ async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
   try {
     const url = buildTargetURL(req, ctx.params.path);
 
-    // Body como Uint8Array (válido para BodyInit y Node runtime)
     let body: BodyInit | undefined = undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
       const ab = await req.arrayBuffer();
@@ -58,7 +55,6 @@ async function handler(req: NextRequest, ctx: { params: { path: string[] } }) {
   }
 }
 
-// Exportar handlers individuales (NO exportar ALL)
 export { handler as GET };
 export { handler as POST };
 export { handler as PUT };

@@ -1,5 +1,4 @@
 export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 
 function buildTargetURL(req: NextRequest, pathParam: string[]) {
