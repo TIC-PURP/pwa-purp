@@ -24,13 +24,13 @@ export function getCouchEnv(): CouchEnv {
 // Base para endpoints de DB (/_all_docs, /_changes, etc.)
 function getRemoteDbBase() {
   const { serverBase } = getCouchEnv();
-  return isClient ? "/couchdb" : `${serverBase}`;
+  return isClient ? "/api/couchdb" : `${serverBase}`;
 }
 
 // Base para endpoints de server (/_session)
 function getRemoteServerBase() {
   const { serverBase } = getCouchEnv();
-  return isClient ? "/couch" : `${serverBase}`;
+  return isClient ? "/api/couch" : `${serverBase}`;
 }
 
 // fetch con timeout
@@ -137,7 +137,7 @@ export async function stopSync() {
 
 export async function loginOnlineToCouchDB(_name: string, _password: string) {
   // En cliente llamamos al proxy /couch
-  const base = isClient ? "/couch" : getCouchEnv().serverBase;
+  const base = isClient ? "/api/couch" : getCouchEnv().serverBase;
 
   // IMPORTANTE: leer SIEMPRE las variables públicas (visibles en navegador)
   const name =
