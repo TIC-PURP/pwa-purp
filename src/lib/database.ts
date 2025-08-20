@@ -14,7 +14,7 @@ export function getCouchEnv(): CouchEnv {
   const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
   if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no está definido");
   const url = new URL(raw);
-  const path = url.pathname.replace(/\/+$/, "");
+  const path = url.pathname.replace(/\/+\$/, "");
   const parts = path.split("/").filter(Boolean);
   const dbName = parts[parts.length - 1] || "gestion_pwa";
   const serverBase = `${url.protocol}//${url.host}`;
@@ -73,7 +73,7 @@ function buildUserDocFromData(data: any) {
     type: "user",
     name: data.name || key,
     email: data.email || "",
-        role: data.role || "user",
+    role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
@@ -94,7 +94,6 @@ export async function openDatabases() {
     const remoteBase = getRemoteDbBase();
     const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
 
-    // Cookie‑based auth para todas las requests de PouchDB
     const opts: any = {
       skip_setup: true,
       fetch: (url: RequestInfo, opts2: any = {}) => {
@@ -135,43 +134,25 @@ export async function stopSync() {
 }
 
 export async function loginOnlineToCouchDB(_name: string, _password: string) {
-  // En cliente llamamos al proxy /couch
-  const base = isClient ? "/api/couch" : getCouchEnv().serverBase;
+  const name = _name;
+  const password = _password;
 
-  // IMPORTANTE: leer SIEMPRE las variables públicas (visibles en navegador)
-  const name =
-    process.env.NEXT_PUBLIC_COUCH_SESSION_USER?.trim() || _name;
-  const password =
-    process.env.NEXT_PUBLIC_COUCH_SESSION_PASS?.trim() || _password;
-
-  const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetchWithTimeout(`${base}/_session`, {
+  const res = await fetch("/api/couch/_session", {
     method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body,
-  }, 12000);
-
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
-  }
-  return true;
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ name, password }).toString(),
+  });
+  if (!res.ok) throw new Error(`Login failed: ${res.status}`);
+  return await res.json();
 }
-
-
 
 export async function logoutOnlineSession() {
   const base = getRemoteServerBase();
   try { await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" }); } catch {}
 }
 
-/* ===== Login offline + CRUD usuarios (igual que ya tenías) ===== */
+/* ===== Login offline + CRUD usuarios ===== */
 export async function authenticateUser(identifier: string, password: string) {
-  // Offline verify using local PBKDF2 secret
   try {
     const { verifyOffline } = await import("@/lib/auth/offline");
     const ok = await verifyOffline(identifier, password);
@@ -210,10 +191,6 @@ export async function initializeDefaultUsers() {
     try { await localDB.get(doc._id); } catch (e: any) { if (e?.status === 404) await localDB.put(doc); }
   }
 }
-
-/* ============================
-   ==========  USERS  =========
-   ============================ */
 
 /** Índices para consultas */
 async function ensureUserIndexes() {
@@ -284,7 +261,7 @@ export async function createUser(data: any) {
     doc._rev = existing._rev;
     doc.createdAt = existing.createdAt || doc.createdAt;
   } catch {}
-  await localDB.put(doc); // << LOCAL ONLY. La replicación lo sube.
+  await localDB.put(doc);
   return doc;
 }
 
@@ -330,7 +307,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     type: "user",
     updatedAt: new Date().toISOString(),
   };
-  await localDB.put(updated); // << LOCAL ONLY
+  await localDB.put(updated);
   return updated;
 }
 
@@ -342,7 +319,7 @@ export async function softDeleteUser(idOrKey: string) {
   doc.isActive = false;
   doc.updatedAt = new Date().toISOString();
   doc.deletedAt = doc.updatedAt;
-  await localDB.put(doc); // << LOCAL ONLY
+  await localDB.put(doc);
   return doc;
 }
 
@@ -352,7 +329,7 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
   const _id = toUserDocId(idOrKey);
   try {
     const doc = await localDB.get(_id);
-    await localDB.remove(doc); // la sync replicará el delete
+    await localDB.remove(doc);
     return true;
   } catch (e: any) {
     if (e?.status === 404) return false;
@@ -367,17 +344,30 @@ export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
 /** Busca por email en local */
 export async function findUserByEmail(email: string) {
   await openDatabases();
+  if (!localDB) return null;
+
+  const e = String(email || "").trim().toLowerCase();
+
   try {
     const res = await (localDB as any).find({
-      selector: { type: "user", email },
+      selector: { type: "user", email: e },
       limit: 1,
     });
     if (res.docs && res.docs[0]) return res.docs[0];
   } catch {}
 
-  const name = email.includes("@") ? email.split("@")[0] : email;
-  try { return await localDB.get(`user:${name}`); } catch {}
-  try { return await localDB.get(`user_${name}`); } catch {}
+  const key = slug(e);
+  const candidates = [
+    `user:${key}`,
+    `user_${key}`,
+  ];
+
+  const localPart = slug(e.includes("@") ? e.split("@")[0] : e);
+  candidates.push(`user:${localPart}`);
+
+  for (const id of candidates) {
+    try { return await localDB.get(id); } catch {}
+  }
 
   return null;
 }

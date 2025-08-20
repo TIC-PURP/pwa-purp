@@ -22,11 +22,11 @@ async function forward(req: NextRequest, target: string, method: string) {
     redirect: "manual",
   });
 
-  // Mirror status and pass-through body; keep important headers
+  // Mirror status/body and copy important headers
   const resHeaders = new Headers();
-  const copyHeaders = ["content-type", "etag", "cache-control"];
   for (const [k, v] of r.headers.entries()) {
-    if (copyHeaders.includes(k.toLowerCase())) resHeaders.set(k, v);
+    const kl = k.toLowerCase();
+    if (kl === "content-type" || kl === "etag" || kl === "cache-control") { resHeaders.set(k, v); }
   }
   return new NextResponse(r.body, { status: r.status, headers: resHeaders });
 }
@@ -34,15 +34,12 @@ async function forward(req: NextRequest, target: string, method: string) {
 export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
   return forward(req, buildTarget(req, params.path), "GET");
 }
-
 export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
   return forward(req, buildTarget(req, params.path), "POST");
 }
-
 export async function PUT(req: NextRequest, { params }: { params: { path: string[] } }) {
   return forward(req, buildTarget(req, params.path), "PUT");
 }
-
 export async function DELETE(req: NextRequest, { params }: { params: { path: string[] } }) {
   return forward(req, buildTarget(req, params.path), "DELETE");
 }
