@@ -5,19 +5,18 @@ import { NextRequest, NextResponse } from "next/server";
 function basicAuth(user: string, pass: string) {
   return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
 }
-
 function envOrError(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Falta variable ${name}`);
   return v;
 }
 
-// GET /api/users -> ping (evita 405 y sirve para healthcheck)
+// GET /api/users -> ping
 export async function GET() {
   return NextResponse.json({ ok: true, hint: "POST para crear usuario" });
 }
 
-// POST /api/users -> crear usuario en _users (acepta JSON o x-www-form-urlencoded)
+// POST /api/users -> crea usuario en _users (JSON o x-www-form-urlencoded)
 export async function POST(req: NextRequest) {
   try {
     const host = envOrError("COUCH_HOST");

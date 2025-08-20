@@ -11,14 +11,14 @@ function envOrError(name: string) {
   return v;
 }
 
-// DELETE /api/users/[email] -> elimina usuario de _users
+// DELETE /api/users/[email] -> borra usuario de _users
 export async function DELETE(_req: NextRequest, { params }: { params: { email: string } }) {
   try {
     const host = envOrError("COUCH_HOST");
     const adminUser = envOrError("COUCH_ADMIN_USER");
     const adminPass = envOrError("COUCH_ADMIN_PASS");
-    const id = `org.couchdb.user:${params.email}`;
 
+    const id = `org.couchdb.user:${params.email}`;
     const get = await fetch(`${host}/_users/${encodeURIComponent(id)}`, {
       headers: { Authorization: basicAuth(adminUser, adminPass) },
       cache: "no-store"

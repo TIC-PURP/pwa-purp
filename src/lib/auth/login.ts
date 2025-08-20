@@ -1,4 +1,4 @@
-// Login helper contra /api/couch/_session
+// Helper para login contra CouchDB via /api/couch/_session
 export async function login(email: string, password: string) {
   const res = await fetch("/api/couch/_session", {
     method: "POST",
