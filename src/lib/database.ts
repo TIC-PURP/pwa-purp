@@ -8,56 +8,49 @@ let localDB: any = null;
 let remoteDB: any = null;
 let syncHandler: any = null;
 
-export type CouchEnv = {
-  serverBase: string;
-  dbName: string;
-};
+export type CouchEnv = { serverBase: string; dbName: string };
 
-/** Lee NEXT_PUBLIC_COUCHDB_URL y devuelve { serverBase, dbName } */
 export function getCouchEnv(): CouchEnv {
   const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
   if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no está definido");
-
   const url = new URL(raw);
   const path = url.pathname.replace(/\/+$/, "");
   const parts = path.split("/").filter(Boolean);
   const dbName = parts[parts.length - 1] || "gestion_pwa";
-
   const serverBase = `${url.protocol}//${url.host}`;
   return { serverBase, dbName };
 }
 
-/** Cuando corre en el navegador usamos el proxy /couchdb (same-origin con cookie); en SSR va directo */
-function getRemoteBase() {
+// Base para endpoints de DB (/_all_docs, /_changes, etc.)
+function getRemoteDbBase() {
   const { serverBase } = getCouchEnv();
-  return isClient ? "/couchdb" : serverBase;
+  return isClient ? "/couchdb" : `${serverBase}`;
 }
 
-/** fetch con timeout (para no colgarnos en login) */
-function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-  // Reducir el timeout por defecto de las peticiones para evitar que el login
-  // se quede colgado cuando el servidor remoto no responde. Antes era 12000 ms.
-  ms = 8000,
-) {
+// Base para endpoints de server (/_session)
+function getRemoteServerBase() {
+  const { serverBase } = getCouchEnv();
+  return isClient ? "/couch" : `${serverBase}`;
+}
+
+// fetch con timeout
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms = 12000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   const opts = { ...init, signal: controller.signal };
   return fetch(input, opts).finally(() => clearTimeout(timer));
 }
 
-/** Carga PouchDB y plugin find (solo en cliente) */
+// Carga PouchDB + find
 async function ensurePouch() {
   if (PouchDB) return;
-  // Usamos 'pouchdb' para evitar problemas de tipos en build
   const mod = await import("pouchdb");
   const find = (await import("pouchdb-find")).default;
   PouchDB = (mod as any).default || mod;
   PouchDB.plugin(find);
 }
 
-/** Helpers de IDs / normalización */
+/* ===== Helpers ===== */
 function slug(s: string) {
   return (s || "")
     .trim()
@@ -66,9 +59,9 @@ function slug(s: string) {
     .replace(/[^a-z0-9._-]/g, "-");
 }
 function toUserDocId(input: string) {
-  if (input.includes(":")) return input;           // user:xxx
+  if (input.includes(":")) return input;
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
-  return `user:${slug(input)}`;                    // email o username
+  return `user:${slug(input)}`;
 }
 function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
@@ -90,55 +83,41 @@ function buildUserDocFromData(data: any) {
   };
 }
 
-/** Abre/crea las bases local y remota */
+/* ===== Bases ===== */
 export async function openDatabases() {
   if (!isClient) return;
   await ensurePouch();
   const { dbName } = getCouchEnv();
-  const remoteBase = getRemoteBase();
 
-  if (!localDB) {
-    localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
-  }
+  if (!localDB) localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
 
   if (!remoteDB) {
+    const remoteBase = getRemoteDbBase();
     const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
-    // Configure remote PouchDB options.  When explicit username and
-    // password environment variables are provided we pass them to PouchDB
-    // via the `auth` property so that it sends a Basic Auth header on
-    // every request.  Otherwise we fall back to using browser cookies
-    // with `credentials: 'include'` to support CouchDB's /_session API.
-    const user = process.env.NEXT_PUBLIC_COUCHDB_USER;
-    const pass = process.env.NEXT_PUBLIC_COUCHDB_PASS;
-    const opts: any = { skip_setup: true };
-    if (user && pass) {
-      // Use Basic Auth for all requests.  Do not rely on cookies when
-      // credentials are provided.
-      opts.auth = { username: user, password: pass };
-      // Use default fetch without credentials; Basic Auth will be
-      // handled by PouchDB.
-    } else {
-      // Fall back to cookie‑based auth.  When using /_session the
-      // browser must include credentials for each request.
-      opts.fetch = (url: RequestInfo, opts2: any = {}) => {
+
+    // Cookie‑based auth para todas las requests de PouchDB
+    const opts: any = {
+      skip_setup: true,
+      fetch: (url: RequestInfo, opts2: any = {}) => {
         opts2 = opts2 || {};
         opts2.credentials = "include";
         return (window as any).fetch(url as any, opts2);
-      };
-      opts.ajax = { withCredentials: true };
-    }
+      },
+      ajax: { withCredentials: true },
+    };
+
+    console.log("[couch] remote =", remoteUrl, "| mode = session-cookie");
     remoteDB = new PouchDB(remoteUrl, opts);
   }
 
   return { localDB, remoteDB };
 }
 
-/** Arranca replicación continua (local <-> remote) */
+/* ===== Sync ===== */
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
   if (!localDB || !remoteDB) return;
-
   if (syncHandler?.cancel) return syncHandler;
 
   const opts: any = { live: true, retry: true, heartbeat: 25000, timeout: 55000 };
@@ -151,17 +130,21 @@ export async function startSync() {
   return syncHandler;
 }
 
-/** Detiene replicación */
 export async function stopSync() {
-  if (syncHandler?.cancel) {
-    try { await syncHandler.cancel(); } catch {}
-  }
+  if (syncHandler?.cancel) { try { await syncHandler.cancel(); } catch {} }
   syncHandler = null;
 }
 
-/** Login online contra /_session (usa /couchdb en cliente) */
-export async function loginOnlineToCouchDB(name: string, password: string) {
-  const base = getRemoteBase();
+export async function loginOnlineToCouchDB(_name: string, _password: string) {
+  // En cliente llamamos al proxy /couch
+  const base = isClient ? "/couch" : getCouchEnv().serverBase;
+
+  // IMPORTANTE: leer SIEMPRE las variables públicas (visibles en navegador)
+  const name =
+    process.env.NEXT_PUBLIC_COUCH_SESSION_USER?.trim() || _name;
+  const password =
+    process.env.NEXT_PUBLIC_COUCH_SESSION_PASS?.trim() || _password;
+
   const body = new URLSearchParams({ name, password }).toString();
   const res = await fetchWithTimeout(`${base}/_session`, {
     method: "POST",
@@ -172,6 +155,7 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
     },
     body,
   }, 12000);
+
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
@@ -179,34 +163,24 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
   return true;
 }
 
-/** Cierra la sesión del servidor */
+
+
 export async function logoutOnlineSession() {
-  const base = getRemoteBase();
-  try {
-    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
-  } catch {}
+  const base = getRemoteServerBase();
+  try { await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" }); } catch {}
 }
 
-/** Login offline contra Pouch local */
+/* ===== Login offline + CRUD usuarios (igual que ya tenías) ===== */
 export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) return null;
-
-  // Possible IDs for the same identifier.  Users are stored in PouchDB
-  // using the slugified email/name (buildUserDocFromData calls slug()).
-  // To locate a user we try several patterns:
-  // - `user_${identifier}` (raw)
-  // - `user_${identifier.split('@')[0]}` (before the @)
-  // - `user_${slug(identifier)}` (slugified email or username)
   const candidates = [
     `user_${identifier}`,
     identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
     `user_${slug(identifier)}`,
   ].filter(Boolean) as string[];
 
-  try {
-    await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
-  } catch {}
+  try { await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" }); } catch {}
   for (const cand of candidates) {
     const r = await localDB.find({ selector: { id: cand } });
     if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
@@ -214,60 +188,32 @@ export async function authenticateUser(identifier: string, password: string) {
   return null;
 }
 
-/** Guarda/actualiza usuario en Pouch local */
 export async function guardarUsuarioOffline(user: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
-
   const key = slug(user.email || user.name || user.id || "");
   const _id = `user:${key}`;
-  const toSave = {
-    ...buildUserDocFromData(user),
-    _id,
-    id: `user_${key}`,
-    updatedAt: new Date().toISOString(),
-  };
-
+  const toSave = { ...buildUserDocFromData(user), _id, id: `user_${key}`, updatedAt: new Date().toISOString() };
   try {
     const existing = await localDB.get(_id);
     toSave._rev = existing._rev;
     await localDB.put(toSave);
   } catch (err: any) {
-    if (err?.status === 404) {
-      await localDB.put(toSave);
-    } else {
-      console.error("guardarUsuarioOffline", err);
-      throw err;
-    }
+    if (err?.status === 404) await localDB.put(toSave);
+    else { console.error("guardarUsuarioOffline", err); throw err; }
   }
 }
 
-/** Semilla local para primer arranque offline */
 export async function initializeDefaultUsers() {
   await openDatabases();
   if (!localDB) return;
   const now = new Date().toISOString();
-  // Crear múltiples usuarios por defecto si no existen todavía.  Esto permite iniciar
-  // sesión offline con distintos roles/credenciales sin necesidad de crear cuentas manualmente.
   const defaultUsers = [
-    {
-      name: "Manager",
-      email: "manager@purp.com.mx",
-      password: "Purp2023@",
-      role: "manager",
-      permissions: ["read", "write", "delete", "manage_users"],
-    },
+    { name: "Manager", email: "manager@purp.com.mx", password: "Purp2023@", role: "manager", permissions: ["read","write","delete","manage_users"] },
   ];
   for (const user of defaultUsers) {
-    const doc = buildUserDocFromData({
-      ...user,
-      createdAt: now,
-    });
-    try {
-      await localDB.get(doc._id);
-    } catch (e: any) {
-      if (e?.status === 404) await localDB.put(doc);
-    }
+    const doc = buildUserDocFromData({ ...user, createdAt: now });
+    try { await localDB.get(doc._id); } catch (e: any) { if (e?.status === 404) await localDB.put(doc); }
   }
 }
 

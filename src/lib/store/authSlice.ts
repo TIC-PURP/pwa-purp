@@ -1,4 +1,3 @@
-// src/lib/store/authSlice.ts
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import type { User } from "../types";
 import {
@@ -8,205 +7,123 @@ import {
   loginOnlineToCouchDB,
   logoutOnlineSession,
   guardarUsuarioOffline,
-  findUserByEmail, // ← debe existir en ../database
+  findUserByEmail,
   initializeDefaultUsers,
 } from "../database";
 
 export interface AuthState {
   user: User | null;
-  token: string | null;
+  token: string | null;              // "online" | "offline"
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
 }
+export type LoginCredentials = { email: string; password: string };
 
-const initialState: AuthState = {
-  user: null,
-  token: null,
-  isAuthenticated: false,
-  isLoading: true, // esperamos la rehidratación al arrancar
-  error: null,
-};
+const STORAGE_KEY = "purp_auth";
+const persist = (u: User, t: string) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ user: u, token: t })); } catch {} };
+const clear   = () => { try { localStorage.removeItem(STORAGE_KEY); } catch {} };
 
-export interface LoginCredentials {
-  email: string; // puede ser email o usuario
-  password: string;
-}
-
-function persistSession(user: User | null, token: string | null) {
-  if (typeof window === "undefined") return;
-  if (user && token) {
-    window.localStorage.setItem("auth", JSON.stringify({ user, token }));
-  } else {
-    window.localStorage.removeItem("auth");
-  }
-}
+const initialState: AuthState = { user: null, token: null, isAuthenticated: false, isLoading: false, error: null };
 
 export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
-  if (typeof window === "undefined") return { user: null, token: null };
-  try {
-    const raw = window.localStorage.getItem("auth");
-    if (!raw) return { user: null, token: null };
-    const parsed = JSON.parse(raw);
-    return { user: parsed.user as User, token: parsed.token as string };
-  } catch {
-    return { user: null, token: null };
-  }
+  try { const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return { user: null, token: null };
+        const parsed = JSON.parse(raw); return { user: parsed.user as User, token: parsed.token as string };
+  } catch { return { user: null, token: null }; }
 });
 
-export const loginUser = createAsyncThunk<
-  { user: User; token: string }, // ← payload de éxito tipado
-  LoginCredentials
->("auth/login", async ({ email, password }, { rejectWithValue }) => {
-  try {
-    // 1) Login ONLINE (crea cookie AuthSession)
-    await loginOnlineToCouchDB(email, password);
-
-    // 2) Intentar obtener el usuario REAL desde DB (por email)
-    const now = new Date().toISOString();
-    const dbUser: any = await findUserByEmail(email);
-
-    // 3) Mapear a tu tipo `User` (sin campo `type`)
-    const user: User = dbUser
-      ? {
-          _id: dbUser._id ?? `user_${email}`,
-          id: dbUser.id ?? `user_${email}`,
-          name:
-            dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
-          email: dbUser.email ?? email,
-          password: dbUser.password ?? password, // ⚠️ en prod: hashear
-          role: dbUser.role ?? "user",
-          permissions: Array.isArray(dbUser.permissions)
-            ? dbUser.permissions
-            : ["read"],
-          isActive: dbUser.isActive !== false,
-          createdAt: dbUser.createdAt ?? now,
-          updatedAt: now,
-        }
-      : {
-          _id: `user_${email}`,
-          id: `user_${email}`,
-          name: email.includes("@") ? email.split("@")[0] : email,
-          email,
-          password, // ⚠️ en prod: hashear
-          role: "user",
-          permissions: ["read"],
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-    // 4) Guardar/actualizar en Pouch local (offline-first)
-    await guardarUsuarioOffline(user);
-
-    // 5) Reiniciar sync (usará la cookie recién creada)
+export const loginUser = createAsyncThunk<{ user: User; token: string }, LoginCredentials>(
+  "auth/login",
+  async ({ email, password }, { rejectWithValue }) => {
     try {
-      await stopSync();
-    } catch {}
-    try {
+      console.log("[auth] login start (cookie-session)");
+      // 1) crea sesión Couch con la CUENTA TÉCNICA (admin) que ya viste en Network
+      await loginOnlineToCouchDB(email, password);
+
+      // 2) resuelve usuario de la APP (doc user_*)
+      const now = new Date().toISOString();
+      const dbUser: any = await findUserByEmail(email);
+      const user: User = dbUser ? {
+        _id: dbUser._id ?? `user_${email}`,
+        id: dbUser.id ?? `user_${email}`,
+        name: dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
+        email: dbUser.email ?? email,
+        password: dbUser.password ?? password,
+        role: dbUser.role ?? "user",
+        permissions: Array.isArray(dbUser.permissions) ? dbUser.permissions : ["read"],
+        isActive: dbUser.isActive !== false,
+        createdAt: dbUser.createdAt ?? now,
+        updatedAt: now,
+      } : {
+        _id: `user_${email}`,
+        id: `user_${email}`,
+        name: email.includes("@") ? email.split("@")[0] : email,
+        email,
+        password,
+        role: "user",
+        permissions: ["read"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      try { await guardarUsuarioOffline(user); } catch {}
+
+      // 3) arranca sync (retorna enseguida)
       await startSync();
-    } catch {}
 
-    // 6) Persistir sesión
-    persistSession(user, "cookie-session");
-    return { user, token: "cookie-session" };
-  } catch (onlineErr: any) {
-    // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
-    // Antes de buscar en local, asegúrate de que existan usuarios predeterminados.
-    try {
-      await initializeDefaultUsers();
-    } catch {}
-    const offline = await authenticateUser(email, password);
-    if (offline) {
-      const user = offline as User;
-      persistSession(user, "offline");
-      return { user, token: "offline" };
+      // 4) persistir y devolver (ESTE return hace que el thunk se resuelva)
+      persist(user, "online");
+      console.log("[auth] login resolved -> online", user.email);
+      return { user, token: "online" };
+    } catch (err: any) {
+      // fallback OFFLINE
+      try { await initializeDefaultUsers(); } catch {}
+      const off = await authenticateUser(email, password);
+      if (off) {
+        persist(off as User, "offline");
+        console.log("[auth] login resolved -> offline", (off as User).email);
+        return { user: off as User, token: "offline" };
+      }
+      console.error("[auth] login rejected", err?.message);
+      return rejectWithValue(err?.message || "No se pudo iniciar sesión");
     }
-    return rejectWithValue(
-      onlineErr?.message || "No se pudo iniciar sesión",
-    );
   }
-});
+);
 
 export const logoutUser = createAsyncThunk("auth/logout", async () => {
-  try {
-    await stopSync();
-  } catch {}
-  try {
-    await logoutOnlineSession();
-  } catch {}
-  persistSession(null, null);
-  return true;
+  try { await stopSync(); } catch {}
+  try { await logoutOnlineSession(); } catch {}
+  clear();
 });
 
-const authSlice = createSlice({
+const slice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    setUser(state, action: PayloadAction<User>) {
-      state.user = action.payload;
-      state.isAuthenticated = true;
-      // Persistimos también en localStorage con el token actual (si existe)
-      if (typeof window !== "undefined") {
-        const token = state.token ?? "cookie-session";
-        window.localStorage.setItem(
-          "auth",
-          JSON.stringify({ user: action.payload, token }),
-        );
-      }
-    },
-
-    clearError(state) {
-      state.error = null;
-    },
+    clearError(s) { s.error = null; },
+    setUser(s, a: PayloadAction<User | null>) { s.user = a.payload; s.isAuthenticated = !!a.payload; },
   },
-  extraReducers: (builder) => {
-    builder
-      // Rehidratación al cargar
-      .addCase(loadUserFromStorage.pending, (state) => {
-        state.isLoading = true;
-      })
-      .addCase(loadUserFromStorage.fulfilled, (state, action) => {
-        const { user, token } = action.payload as any;
-        state.user = user;
-        state.token = token;
-        state.isAuthenticated = Boolean(user && token);
-        state.isLoading = false;
-      })
-      .addCase(loadUserFromStorage.rejected, (state) => {
-        state.isLoading = false;
-      })
-      // Login
-      .addCase(
-        loginUser.fulfilled,
-        (state, action: PayloadAction<{ user: User; token: string }>) => {
-          state.isLoading = false;
-          state.isAuthenticated = true;
-          state.user = action.payload.user;
-          state.token = action.payload.token;
-        },
-      )
-      .addCase(loginUser.pending, (state) => {
-        state.isLoading = true;
-        state.error = null;
-      })
-      .addCase(loginUser.rejected, (state, action) => {
-        state.isLoading = false;
-        state.error =
-          (action.payload as string) ||
-          action.error.message ||
-          "Error de login";
-      })
-      // Logout
-      .addCase(logoutUser.fulfilled, (state) => {
-        state.user = null;
-        state.token = null;
-        state.isAuthenticated = false;
-        state.isLoading = false;
-        state.error = null;
-      });
+  extraReducers: (b) => {
+    b.addCase(loadUserFromStorage.pending,   (s) => { s.isLoading = true; });
+    b.addCase(loadUserFromStorage.fulfilled, (s, a) => {
+      s.isLoading = false; s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = !!a.payload.user;
+    });
+    b.addCase(loadUserFromStorage.rejected,  (s) => { s.isLoading = false; });
+
+    b.addCase(loginUser.pending,   (s) => { s.isLoading = true; s.error = null; });
+    b.addCase(loginUser.fulfilled, (s, a) => {
+      s.isLoading = false; s.user = a.payload.user; s.token = a.payload.token; s.isAuthenticated = true;
+    });
+    b.addCase(loginUser.rejected,  (s, a) => {
+      s.isLoading = false; s.error = (a.payload as string) || "Error de autenticación";
+    });
+
+    b.addCase(logoutUser.fulfilled, (s) => {
+      s.user = null; s.token = null; s.isAuthenticated = false; s.isLoading = false; s.error = null;
+    });
   },
 });
 
-export const { clearError, setUser } = authSlice.actions;
-export default authSlice.reducer;
+export const { clearError, setUser } = slice.actions;
+export default slice.reducer;
