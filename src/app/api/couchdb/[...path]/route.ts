@@ -1,4 +1,4 @@
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 function getTargets() {
   const raw = process.env.NEXT_PUBLIC_COUCHDB_URL;
@@ -15,10 +15,15 @@ async function proxy(req: Request, path: string[]) {
   const url = `${server}/${dbName}/${path.join('/')}`.replace(/\/+$/, '');
   const headers = new Headers(req.headers);
   headers.delete('host');
-  const res = await fetch(url, {
+  let body: any = undefined;
+if (req.method !== 'GET' && req.method !== 'HEAD') {
+  const ab = await req.arrayBuffer();
+  body = Buffer.from(ab);
+}
+const res = await fetch(url, {
     method: req.method,
     headers,
-    body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req.body,
+    body,
     redirect: 'manual',
   });
   const outHeaders = new Headers(res.headers);
