@@ -350,7 +350,7 @@ export async function findUserByEmail(email: string) {
 
   try {
     const res = await (localDB as any).find({
-      selector: { type: "user", email: e },
+      selector: { type: { $in: ["user","user_profile"] }, email: e },
       limit: 1,
     });
     if (res.docs && res.docs[0]) return res.docs[0];
