@@ -253,6 +253,7 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
 }
 
 /** Crea (o upserta) usuario — LOCAL FIRST */
+
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
@@ -262,8 +263,20 @@ export async function createUser(data: any) {
     doc.createdAt = existing.createdAt || doc.createdAt;
   } catch {}
   await localDB.put(doc);
+
+  // Sincroniza _users via API (o cola offline)
+  try {
+    const payload = { email: doc.email, password: (data && data.password) || "changeme", role: doc.role, name: doc.name, isActive: doc.isActive, permissions: doc.permissions };
+    if (typeof window !== "undefined" && window.navigator.onLine) {
+      await fetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), credentials: "include" });
+    } else {
+      await queueUserOp({ op: "create", email: doc.email, payload });
+    }
+  } catch (e) { console.warn("warning createUser sync _users:", (e as any)?.message); }
+
   return doc;
 }
+
 
 /** Get por id/email/username */
 export async function getUserById(idOrKey: string) {
@@ -278,6 +291,7 @@ export async function getUserById(idOrKey: string) {
 }
 
 /** Actualiza usuario — LOCAL FIRST */
+
 export async function updateUser(idOrPatch: any, maybePatch?: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
@@ -296,10 +310,8 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     patch = { ...maybePatch };
   }
 
-  delete patch._id;
-
   const doc = await localDB.get(_id);
-  const updated = {
+  const updated: any = {
     ...doc,
     ...patch,
     _id,
@@ -308,8 +320,26 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     updatedAt: new Date().toISOString(),
   };
   await localDB.put(updated);
+
+  // Sync a _users (o cola)
+  try {
+    const email = updated.email || updated.name;
+    const payload: any = {};
+    if (typeof updated.role !== "undefined") payload.role = updated.role;
+    if (typeof updated.name === "string") payload.name = updated.name;
+    if (typeof updated.isActive === "boolean") payload.isActive = updated.isActive;
+    if (patch && patch.password) payload.password = patch.password;
+
+    if (typeof window !== "undefined" && window.navigator.onLine) {
+      await fetch(`/api/users/${encodeURIComponent(email)}`, { method: "PATCH", headers: { "Content-Type":"application/json" }, body: JSON.stringify(payload), credentials: "include" });
+    } else {
+      await queueUserOp({ op: "update", email, payload });
+    }
+  } catch (e) { console.warn("warning updateUser sync _users:", (e as any)?.message); }
+
   return updated;
 }
+
 
 /** Borrado lógico — LOCAL FIRST */
 export async function softDeleteUser(idOrKey: string) {
@@ -324,18 +354,29 @@ export async function softDeleteUser(idOrKey: string) {
 }
 
 /** Borrado permanente — LOCAL FIRST */
+
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
   await openDatabases();
   const _id = toUserDocId(idOrKey);
   try {
     const doc = await localDB.get(_id);
     await localDB.remove(doc);
+
+    try {
+      if (typeof window !== "undefined" && window.navigator.onLine) {
+        await fetch(`/api/users/${encodeURIComponent(String(idOrKey))}`, { method: "DELETE", credentials: "include" });
+      } else {
+        await queueUserOp({ op: "delete", email: String(idOrKey) });
+      }
+    } catch (e) { console.warn("warning deleteUser sync _users:", (e as any)?.message); }
+
     return true;
   } catch (e: any) {
     if (e?.status === 404) return false;
     throw e;
   }
 }
+
 
 export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
   return deleteUserById(idOrKey);
@@ -405,3 +446,46 @@ export async function watchUserDocByEmail(
 }
 
 export { localDB, remoteDB };
+
+
+// ==== Cola offline para operaciones del panel ====
+type UserOp = {
+  _id: string;
+  type: "user_op";
+  op: "create"|"update"|"delete";
+  email: string;
+  payload?: any;
+  status: "pending"|"applied";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function queueUserOp(op: Omit<UserOp,"_id"|"status"|"createdAt"|"updatedAt">) {
+  await openDatabases();
+  const now = new Date().toISOString();
+  const id = (globalThis.crypto && "randomUUID" in crypto) ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  const doc: UserOp = { _id: `user_op:${id}`, type: "user_op", status: "pending", createdAt: now, updatedAt: now, ...op };
+  await localDB.put(doc);
+  return doc;
+}
+
+export async function replayPendingUserOps() {
+  try {
+    await openDatabases();
+    const res = await localDB.find({ selector: { type: "user_op", status: "pending" }, limit: 100 });
+    const ops: UserOp[] = res.docs || [];
+    for (const op of ops) {
+      try {
+        if (op.op === "create") {
+          await fetch("/api/users", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(op.payload), credentials:"include" });
+        } else if (op.op === "update") {
+          await fetch(`/api/users/${encodeURIComponent(op.email)}`, { method:"PATCH", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(op.payload), credentials:"include" });
+        } else if (op.op === "delete") {
+          await fetch(`/api/users/${encodeURIComponent(op.email)}`, { method:"DELETE", credentials:"include" });
+        }
+        op.status = "applied"; op.updatedAt = new Date().toISOString();
+        await localDB.put(op);
+      } catch { /* sigue pendiente */ }
+    }
+  } catch {}
+}
