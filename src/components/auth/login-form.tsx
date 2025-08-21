@@ -39,14 +39,11 @@ export function LoginForm() {
 
   const onSubmit = async (data: LoginFormValues) => {
     try {
-      const result = await dispatch(loginUser(data));
-      if (loginUser.fulfilled.match(result)) {
-        router.push("/principal");
-      } else {
-        setError("root", { message: "Credenciales inválidas" });
-      }
+      // Use unwrap so any rejection throws and we can handle it
+      await (dispatch as any)(loginUser(data)).unwrap();
+      router.push("/principal");
     } catch (error) {
-      setError("root", { message: "Error de conexión" });
+      setError("root", { message: (error as any)?.toString?.() || "Error de conexión" });
     }
   };
 

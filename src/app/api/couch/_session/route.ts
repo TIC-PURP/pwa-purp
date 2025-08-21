@@ -22,7 +22,12 @@ export async function POST(req: NextRequest) {
   if (couchSetCookie) {
     const first = couchSetCookie.split(",")[0];
     const normalized = first.replace(/Path=\/[^;]*/i, "Path=/");
-    res.headers.set("Set-Cookie", normalized + "; SameSite=Lax; HttpOnly");
+      const addSecure = process.env.VERCEL_URL ? "; Secure" : "";
+  // Ensure cookie is valid across ALL /api routes (couch + couchdb)
+  res.headers.set(
+    "Set-Cookie",
+    normalized + "; Path=/; SameSite=Lax; HttpOnly" + addSecure,
+  );
   }
   return res;
 }

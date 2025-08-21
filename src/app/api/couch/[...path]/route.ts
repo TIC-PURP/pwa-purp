@@ -25,7 +25,11 @@ export async function POST(req: NextRequest) {
     const first = couchSetCookie.split(",")[0]; // take first cookie only
     // Normalize Path and ensure useful defaults
     const normalized = first.replace(/Path=\/[^;]*/i, "Path=/");
-    res.headers.set("Set-Cookie", normalized + "; SameSite=Lax; HttpOnly");
+      const addSecure = process.env.VERCEL_URL ? "; Secure" : "";
+  res.headers.set(
+    "Set-Cookie",
+    normalized + "; Path=/; SameSite=Lax; HttpOnly" + addSecure,
+  );
   }
 
   return res;
