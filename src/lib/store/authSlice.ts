@@ -1,7 +1,7 @@
 // src/lib/store/authSlice.ts
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { localdb } from "../pouch/localdb";
-import { RootState } from "./index";
+import type { RootState } from "./index";
 
 interface AuthState {
   user: any | null;

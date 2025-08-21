@@ -6,12 +6,10 @@ import { loginSuccess } from "@/lib/store/authSlice";
 
 export default function UsersPage() {
   const dispatch = useDispatch();
-
   const addUser = () => {
     const dummyUser = { user: { email: "nuevo@purp.com" }, token: "demo", role: "user" };
     dispatch(loginSuccess(dummyUser));
   };
-
   return (
     <div className="p-4">
       <h2>Gestión de usuarios</h2>

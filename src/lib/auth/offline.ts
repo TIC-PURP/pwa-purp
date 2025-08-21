@@ -9,14 +9,9 @@ interface UserDoc {
 }
 
 export async function loginOffline(data: { email: string; password: string }) {
-  try {
-    const result = await localdb.get<UserDoc>(`user:${data.email}`);
-    if (result && result.password === data.password) {
-      return { user: result, token: "offline-token", role: result.role || "user" };
-    }
-    throw new Error("Credenciales inválidas");
-  } catch (err) {
-    console.error("Error loginOffline:", err);
-    throw err;
+  const result = await localdb.get<UserDoc>(`user:${data.email}`);
+  if (result && result.password === data.password) {
+    return { user: result, token: "offline-token", role: result.role || "user" };
   }
+  throw new Error("Credenciales inválidas");
 }

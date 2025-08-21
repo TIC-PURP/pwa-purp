@@ -7,10 +7,6 @@ import LoginForm from "@/components/auth/login-form";
 
 export default function RouteGuard({ children }: { children: React.ReactNode }) {
   const auth = useSelector(selectAuth);
-
-  if (!auth.user) {
-    return <LoginForm />;
-  }
-
+  if (!auth.user) return <LoginForm />;
   return <>{children}</>;
 }

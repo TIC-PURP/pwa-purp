@@ -1,3 +1,4 @@
+// src/lib/pouch/localdb.ts
 import PouchDB from "pouchdb-browser";
 
 export const localdb = new PouchDB("purp-localdb");
@@ -10,10 +11,11 @@ export function syncWithCouch(remoteUrl: string) {
     },
   });
 
-  return localdb.sync(remoteDb, {
-    live: true,
-    retry: true,
-  })
+  return localdb
+    .sync(remoteDb, {
+      live: true,
+      retry: true,
+    })
     .on("change", (info) => {
       console.log("Sync cambio detectado:", info);
     })
