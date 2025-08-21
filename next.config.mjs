@@ -1,30 +1,26 @@
-// Minimal Next config: CSP headers only, no rewrites (we use /api/* proxies)
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import withPWA from "next-pwa";
+
+const nextConfig = withPWA({
+  dest: "public",
+  register: true,
+  skipWaiting: true,
+})({
   reactStrictMode: true,
-  images: { unoptimized: true },
+  swcMinify: true,
   async headers() {
-    const csp = [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "connect-src 'self'",
-      "font-src 'self' data:",
-      "frame-ancestors 'self'"
-    ].join('; ');
     return [
       {
-        source: "/:path*",
+        source: "/(.*)",
         headers: [
-          { key: "Content-Security-Policy", value: csp },
-          { key: "Referrer-Policy", value: "no-referrer" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" }
-        ]
-      }
+          {
+            key: "Content-Security-Policy",
+            value:
+              "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src *; frame-src 'self';",
+          },
+        ],
+      },
     ];
-  }
-};
+  },
+});
 
 export default nextConfig;
