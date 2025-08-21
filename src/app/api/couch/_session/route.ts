@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 const couchBase = process.env.COUCH_HOST!; // e.g. http://host:5984
 
@@ -22,22 +21,34 @@ export async function POST(req: NextRequest) {
   if (couchSetCookie) {
     const first = couchSetCookie.split(",")[0];
     const normalized = first.replace(/Path=\/[^;]*/i, "Path=/");
-      const addSecure = process.env.VERCEL_URL ? "; Secure" : "";
-  // Ensure cookie is valid across ALL /api routes (couch + couchdb)
-  res.headers.set(
-    "Set-Cookie",
-    normalized + "; Path=/; SameSite=Lax; HttpOnly" + addSecure,
-  );
+    const addSecure = process.env.VERCEL_URL ? "; Secure" : "";
+    res.headers.set(
+      "Set-Cookie",
+      normalized + "; Path=/; SameSite=Lax; HttpOnly" + addSecure
+    );
   }
   return res;
 }
 
 export async function GET() {
-  const cookieHeader = cookies().toString();
-  const couchRes = await fetch(`${couchBase}/_session`, {
-    headers: { cookie: cookieHeader },
+  const res = await fetch(`${couchBase}/_session`, {
+    headers: {},
+    credentials: "include" as any,
   });
   let data: any = {};
-  try { data = await couchRes.json(); } catch {}
-  return NextResponse.json(data, { status: couchRes.status });
+  try { data = await res.json(); } catch {}
+  return NextResponse.json(data, { status: res.status });
+}
+
+export async function DELETE(req: NextRequest) {
+  const cookie = req.headers.get("cookie") || "";
+  await fetch(`${couchBase}/_session`, {
+    method: "DELETE",
+    headers: { cookie },
+  }).catch(() => {});
+
+  const res = NextResponse.json({ ok: true });
+  const secure = process.env.VERCEL_URL ? "; Secure" : "";
+  res.headers.set("Set-Cookie", `AuthSession=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure}`);
+  return res;
 }

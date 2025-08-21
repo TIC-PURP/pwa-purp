@@ -1,4 +1,4 @@
-export type Role = "manager" | "administrador" | "user";
+export type Role = "manager" | "admin" | "user";
 export type Permission = "read" | "write" | "delete" | "manage_users";
 
 export interface User {

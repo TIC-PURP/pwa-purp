@@ -9,22 +9,19 @@ export default function HomePage() {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth);
 
-  // Inicia/para el sync según el estado de autenticación
+  // Arranca/Detiene sync según autenticación
   useEffect(() => {
     if (isAuthenticated) {
-      startSync().catch(() => {});
+      startSync();
     } else {
-      stopSync().catch(() => {});
+      stopSync();
     }
   }, [isAuthenticated]);
 
+  // Redirección basada en estado de auth
   useEffect(() => {
     if (!isLoading) {
-      if (isAuthenticated) {
-        router.push("/principal");
-      } else {
-        router.push("/auth/login");
-      }
+      router.push(isAuthenticated ? "/principal" : "/auth/login");
     }
   }, [isAuthenticated, isLoading, router]);
 

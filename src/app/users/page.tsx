@@ -8,7 +8,8 @@ import { Navbar } from "@/components/layout/navbar";
 import { UserForm } from "@/components/users/user-form";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { setUser } from "@/lib/store/authSlice";
-import { findUserByEmail, guardarUsuarioOffline } from "@/lib/database";
+// quitamos findUserByEmail para evitar warn de import no usado
+import { guardarUsuarioOffline } from "@/lib/database";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,7 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { User, CreateUserData } from "@/lib/types";
+import type { User, CreateUserData, Role, Permission } from "@/lib/types";
 import {
   getAllUsers,
   createUser,
@@ -38,28 +39,71 @@ import {
 } from "@/lib/database";
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
-export default function UsersPage() {
+// ===== Helpers de normalización (UIUser/any -> User) =====
+const ALL_PERMISSIONS: Permission[] = [
+  "read",
+  "write",
+  "delete",
+  "manage_users",
+];
 
-const dispatch = useAppDispatch();
-const { user: me } = useAppSelector((s) => s.auth);
+function isPermission(x: unknown): x is Permission {
+  return typeof x === "string" && (ALL_PERMISSIONS as string[]).includes(x);
+}
+
+function normalizePermissions(input: unknown, role: Role): Permission[] {
+  if (Array.isArray(input)) {
+    const p = input.filter(isPermission);
+    if (p.length > 0) return p;
+  }
+  if (role === "manager") return ["read", "write", "delete", "manage_users"];
+  if (role === "admin") return ["read", "write", "delete"];
+  return ["read"];
+}
+
+function toUser(u: any): User {
+  const now = new Date().toISOString();
+  const role: Role =
+    u?.role === "manager" || u?.role === "admin" || u?.role === "user"
+      ? u.role
+      : "user";
+
+  return {
+    id: String(u?.id ?? u?._id ?? `user:${u?.email ?? crypto.randomUUID?.() ?? Math.random()}`),
+    name: String(u?.name ?? (u?.email ? String(u.email).split("@")[0] : "Usuario")),
+    email: String(u?.email ?? ""),
+    role,
+    permissions: normalizePermissions(u?.permissions, role),
+    isActive: typeof u?.isActive === "boolean" ? u.isActive : true,
+    createdAt: String(u?.createdAt ?? now),
+    updatedAt: String(u?.updatedAt ?? now),
+    type: "user_profile", // requerido por tu interfaz User
+    _id: u?._id,
+    _rev: u?._rev,
+  };
+}
+
+export default function UsersPage() {
+  const dispatch = useAppDispatch();
+  const { user: me } = useAppSelector((s) => s.auth);
 
   const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
-    "soft",
-  );
+  const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">("soft");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadUsers = async () => {
-    const allUsers = await getAllUsers();
-    setUsers(allUsers);
+    const allUsers = await getAllUsers();          // puede ser UIUser[]
+    const normalized = (allUsers ?? []).map(toUser); // lo llevamos a User[]
+    setUsers(normalized);
   };
 
   const handleCreateUser = async (data: CreateUserData) => {
@@ -67,23 +111,19 @@ const { user: me } = useAppSelector((s) => s.auth);
     try {
       const created: any = await createUser(data);
       const path = created?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote")
-        toast.success("Usuario creado y guardado en la nube.");
-      else
-        toast.message(
-          "Usuario creado offline; se subirá al recuperar Internet.",
-        );
+      if (path === "remote") toast.success("Usuario creado y guardado en la nube.");
+      else toast.message("Usuario creado offline; se subirá al recuperar Internet.");
 
+      // si el usuario creado soy yo, actualiza mi cache local
       const createdEmail = (created?.email || data.email || "").toLowerCase();
       const meEmail = (me?.email || "").toLowerCase();
       if (me && createdEmail && createdEmail === meEmail) {
         const mapped = {
-          ...me,
-          ...created,
-          isActive: created.isActive !== false,
+          ...toUser(created), // garantizamos shape User
+          // preserva algunos campos de 'me' si tuvieran prioridad
           createdAt: created.createdAt ?? me.createdAt,
           updatedAt: created.updatedAt ?? new Date().toISOString(),
-        } as any;
+        } as User;
         try {
           await guardarUsuarioOffline(mapped);
         } catch {}
@@ -108,10 +148,7 @@ const { user: me } = useAppSelector((s) => s.auth);
       const updated: any = await updateUser({ ...editingUser, ...data });
       const path = updated?.___writePath === "remote" ? "remote" : "local";
       if (path === "remote") toast.success("Usuario actualizado en la nube.");
-      else
-        toast.message(
-          "Usuario actualizado offline; se subirá al recuperar Internet.",
-        );
+      else toast.message("Usuario actualizado offline; se subirá al recuperar Internet.");
       await loadUsers();
       setEditingUser(null);
     } catch (error) {
@@ -133,12 +170,8 @@ const { user: me } = useAppSelector((s) => s.auth);
           deletedAt: new Date().toISOString(),
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
-        if (path === "remote")
-          toast.success("Usuario desactivado (borrado lógico) en la nube.");
-        else
-          toast.message(
-            "Usuario desactivado offline; se subirá al recuperar Internet.",
-          );
+        if (path === "remote") toast.success("Usuario desactivado (borrado lógico) en la nube.");
+        else toast.message("Usuario desactivado offline; se subirá al recuperar Internet.");
       } else if (deleteMode === "activate") {
         const updated: any = await updateUser({
           ...deletingUser,
@@ -147,21 +180,14 @@ const { user: me } = useAppSelector((s) => s.auth);
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
         if (path === "remote") toast.success("Usuario reactivado en la nube.");
-        else
-          toast.message(
-            "Usuario reactivado offline; se subirá al recuperar Internet.",
-          );
+        else toast.message("Usuario reactivado offline; se subirá al recuperar Internet.");
       } else {
-        const ok = await deleteUserById(
-          deletingUser._id || deletingUser.id || deletingUser.email,
-        );
+        const ok = await deleteUserById(deletingUser._id || deletingUser.id || deletingUser.email);
         if (ok) {
           if (typeof navigator !== "undefined" && navigator.onLine) {
             toast.success("Usuario eliminado permanentemente en la nube.");
           } else {
-            toast.message(
-              "Usuario eliminado localmente; se sincronizará al recuperar Internet.",
-            );
+            toast.message("Usuario eliminado localmente; se sincronizará al recuperar Internet.");
           }
         } else {
           toast.message("El usuario ya no existe.");
@@ -190,16 +216,10 @@ const { user: me } = useAppSelector((s) => s.auth);
       const path = updated?.___writePath === "remote" ? "remote" : "local";
       if (toggleTo) {
         if (path === "remote") toast.success("Usuario activado en la nube.");
-        else
-          toast.message(
-            "Usuario activado offline; se subirá al recuperar Internet.",
-          );
+        else toast.message("Usuario activado offline; se subirá al recuperar Internet.");
       } else {
         if (path === "remote") toast.success("Usuario desactivado en la nube.");
-        else
-          toast.message(
-            "Usuario desactivado offline; se subirá al recuperar Internet.",
-          );
+        else toast.message("Usuario desactivado offline; se subirá al recuperar Internet.");
       }
       await loadUsers();
     } catch (error) {
@@ -248,9 +268,7 @@ const { user: me } = useAppSelector((s) => s.auth);
             </button>
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">
-                  Panel de control
-                </h1>
+                <h1 className="text-3xl font-bold text-slate-900">Panel de control</h1>
                 <p className="mt-2 text-slate-600">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
@@ -261,10 +279,7 @@ const { user: me } = useAppSelector((s) => s.auth);
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {users.map((user) => (
-                <Card
-                  key={user.id}
-                  className={`${!user.isActive ? "opacity-60" : ""}`}
-                >
+                <Card key={user.id} className={`${!user.isActive ? "opacity-60" : ""}`}>
                   <CardHeader>
                     <div className="flex justify-between items-start">
                       <div>
@@ -272,11 +287,7 @@ const { user: me } = useAppSelector((s) => s.auth);
                         <CardDescription>{user.email}</CardDescription>
                       </div>
                       <div className="flex space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditingUser(user)}
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => setEditingUser(user)}>
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
@@ -306,34 +317,24 @@ const { user: me } = useAppSelector((s) => s.auth);
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Rol:</span>
-                        <Badge
-                          variant={
-                            user.role === "manager" ? "default" : "secondary"
-                          }
-                        >
+                        <Badge variant={user.role === "manager" ? "default" : "secondary"}>
                           {user.role}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Estado:</span>
-                        <Badge
-                          variant={user.isActive ? "default" : "destructive"}
-                        >
+                        <Badge variant={user.isActive ? "default" : "destructive"}>
                           {user.isActive ? "Activo" : "Inactivo"}
                         </Badge>
                       </div>
                       <div>
-                        <span className="text-sm text-slate-600">
-                          Permisos:
-                        </span>
-
+                        <span className="text-sm text-slate-600">Permisos:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
-                            const perms = (user.permissions || []).sort();
+                            const perms = (user.permissions || []).slice().sort();
                             let label = "Acceso completo";
                             if (perms.length === 0) label = "Sin permisos";
-                            else if (perms.length === 1 && perms[0] === "read")
-                              label = "Solo lectura";
+                            else if (perms.length === 1 && perms[0] === "read") label = "Solo lectura";
                             return (
                               <Badge variant="outline" className="text-xs">
                                 {label}
@@ -365,25 +366,22 @@ const { user: me } = useAppSelector((s) => s.auth);
           </div>
         </main>
 
-        <AlertDialog
-          open={!!deletingUser}
-          onOpenChange={() => setDeletingUser(null)}
-        >
+        <AlertDialog open={!!deletingUser} onOpenChange={() => setDeletingUser(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteMode === "soft"
                   ? "¿Desactivar usuario?"
                   : deleteMode === "activate"
-                    ? "¿Activar usuario?"
-                    : "¿Eliminar usuario permanentemente?"}
+                  ? "¿Activar usuario?"
+                  : "¿Eliminar usuario permanentemente?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "soft"
                   ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
                   : deleteMode === "activate"
-                    ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
-                    : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
+                  ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
+                  : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -417,13 +415,13 @@ const { user: me } = useAppSelector((s) => s.auth);
                   ? deleteMode === "soft"
                     ? "Desactivando..."
                     : deleteMode === "activate"
-                      ? "Activando..."
-                      : "Eliminando..."
+                    ? "Activando..."
+                    : "Eliminando..."
                   : deleteMode === "soft"
-                    ? "Desactivar"
-                    : deleteMode === "activate"
-                      ? "Activar"
-                      : "Eliminar"}
+                  ? "Desactivar"
+                  : deleteMode === "activate"
+                  ? "Activar"
+                  : "Eliminar"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

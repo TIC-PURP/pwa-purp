@@ -208,7 +208,7 @@ export function UserForm({
 
                 // Si cambio desde manager a otro rol, no imponemos permisos,
                 // pero si quedan permisos "no válidos" para admin, los recortamos.
-                if (next === "administrador") {
+                if (next === "admin") {
                   const current = new Set<Permission>(
                     (getValues("permissions") ?? []) as Permission[],
                   );

@@ -19,7 +19,7 @@ export async function createDefaultUser(): Promise<User> {
     _id: id,
     name: "Administrador",
     email: "admin@purp.com.mx",
-    role: "administrador",
+    role: "admin",
     permissions: ["read", "write", "manage_users"],
     isActive: true,
     createdAt: now,
