@@ -1,122 +1,136 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { useForm, Controller } from "react-hook-form";
+import { toast } from "sonner";
+import { useAppDispatch } from "@/lib/hooks";
+import { loginUser } from "@/lib/store/authSlice";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAppDispatch, useAppSelector } from "@/lib/hooks";
-import { loginUser } from "@/lib/store/authSlice";
-import { loginSchema } from "@/lib/validations";
-import type { LoginCredentials } from "@/lib/types";
-import { z } from "zod";
+import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 
-type LoginFormValues = z.infer<typeof loginSchema>;
-export function LoginForm() {
-  const [showPassword, setShowPassword] = useState(false);
-  const dispatch = useAppDispatch();
+type LoginFormValues = {
+  email: string;
+  password: string;
+};
+
+export default function LoginForm() {
   const router = useRouter();
-  const { isLoading } = useAppSelector((state) => state.auth);
+  const dispatch = useAppDispatch();
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
-    register,
+    control,
     handleSubmit,
-    formState: { errors },
-    setError,
+    formState: { errors, isSubmitting },
   } = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+    mode: "onSubmit",
   });
 
   const onSubmit = async (data: LoginFormValues) => {
-    try {
-      // Use unwrap so any rejection throws and we can handle it
-      await (dispatch as any)(loginUser(data)).unwrap();
+    const res = await dispatch(loginUser(data));
+    // @reduxjs/toolkit matcher
+    // @ts-ignore – el matcher existe en tiempo de ejecución
+    if (loginUser.fulfilled.match(res)) {
+      toast.success("¡Bienvenido!");
       router.push("/principal");
-    } catch (error) {
-      setError("root", { message: (error as any)?.toString?.() || "Error de conexión" });
+    } else {
+      toast.error((res?.payload as any) ?? "Credenciales inválidas");
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            Iniciar Sesión
-          </CardTitle>
-          <CardDescription className="text-center">
-            Ingresa tus credenciales para acceder
-          </CardDescription>
+    <div className="w-full max-w-md mx-auto">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-center">Iniciar Sesión</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+            {/* Email */}
             <div className="space-y-2">
               <Label htmlFor="email">Correo Electrónico</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="email"
-                  className="pl-10"
-                  {...register("email")}
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className="h-4 w-4 text-slate-400" />
+                </div>
+                <Controller
+                  name="email"
+                  control={control}
+                  rules={{
+                    required: "email es requerido",
+                    pattern: { value: /\S+@\S+\.\S+/, message: "email inválido" },
+                  }}
+                  render={({ field }) => (
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      className="pl-9"
+                      value={field.value ?? ""}
+                      onChange={(e) => field.onChange(e.target.value)}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      disabled={isSubmitting}
+                      placeholder="tucorreo@purp.com.mx"
+                    />
+                  )}
                 />
               </div>
               {errors.email && (
-                <p className="text-sm text-red-600">{errors.email.message}</p>
+                <p className="text-xs text-red-600">{errors.email.message}</p>
               )}
             </div>
 
+            {/* Password */}
             <div className="space-y-2">
               <Label htmlFor="password">Contraseña</Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
-                  className="pl-10 pr-10"
-                  {...register("password")}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-4 w-4 text-slate-400" />
+                </div>
+                <Controller
+                  name="password"
+                  control={control}
+                  rules={{ required: "password es requerido" }}
+                  render={({ field }) => (
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"         // <- clave para autocompletar
+                      className="pl-9 pr-10"
+                      value={field.value ?? ""}                // <- controlado
+                      onChange={(e) => field.onChange(e.target.value)} // <- RHF recibe cambios
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      disabled={isSubmitting}
+                      placeholder="••••••••"
+                    />
                   )}
-                </Button>
+                />
+                <button
+                  type="button"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-700"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
               {errors.password && (
-                <p className="text-sm text-red-600">
-                  {errors.password.message}
-                </p>
+                <p className="text-xs text-red-600">{errors.password.message}</p>
               )}
             </div>
 
-            {errors.root && (
-              <p className="text-sm text-red-600 text-center">
-                {errors.root.message}
-              </p>
-            )}
-
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Ingresando..." : "Iniciar Sesión"}
             </Button>
           </form>
         </CardContent>
