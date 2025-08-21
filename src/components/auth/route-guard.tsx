@@ -1,71 +1,45 @@
 "use client";
 
-import type React from "react";
-import { useEffect, useMemo } from "react";
+import React from "react";
 import { useRouter } from "next/navigation";
 import { useAppSelector } from "@/lib/hooks";
-import { LoginForm } from "@/components/auth/login-form";
+
+type Role = "user" | "admin" | "manager";
 
 interface RouteGuardProps {
   children: React.ReactNode;
-  requiredRole?: "manager" | "administrador" | "user";
-  redirectTo?: string;
+  /** Rol mínimo requerido para ver la ruta (manager > admin > user). */
+  requiredRole?: Role;
 }
 
-export function RouteGuard({
-  children,
-  requiredRole,
-  redirectTo = "/auth/login",
-}: RouteGuardProps) {
+/** Orden de jerarquía: manager (máximo) > admin > user */
+function roleAllows(userRole: Role, required: Role) {
+  if (userRole === "manager") return true;                // manager ve todo
+  if (userRole === "admin") return required !== "manager"; // admin no puede ver rutas solo manager
+  return required === "user";                               // user solo rutas de user
+}
+
+export function RouteGuard({ children, requiredRole = "user" }: RouteGuardProps) {
   const router = useRouter();
-  const { isAuthenticated, isLoading, user } = useAppSelector((s) => s.auth);
+  const { isAuthenticated, user } = useAppSelector((s) => s.auth);
 
-  const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
-
-  const lacksAuthOrRole = useMemo(
-    () => !isAuthenticated || (requiredRole && user?.role !== requiredRole),
-    [isAuthenticated, requiredRole, user?.role],
-  );
-
-  // Solo redirige cuando HAY red. En offline NO navegamos (renderizamos login inline).
-  useEffect(() => {
-    if (isLoading) return;
-    if (!offline && lacksAuthOrRole) {
-      router.replace(redirectTo);
+  React.useEffect(() => {
+    // Si no está autenticado, redirige a login.
+    if (!isAuthenticated) {
+      router.replace("/auth/login");
+      return;
     }
-  }, [isLoading, offline, lacksAuthOrRole, redirectTo, router]);
+    // Si está autenticado pero no tiene el rol suficiente, redirige a principal.
+    if (user && !roleAllows(user.role as Role, requiredRole)) {
+      router.replace("/principal");
+    }
+  }, [isAuthenticated, user, requiredRole, router]);
 
-  // Cargando estado auth
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-900" />
-      </div>
-    );
-  }
+  // Evita parpadeo de contenido: no renderiza hasta confirmar auth/rol.
+  if (!isAuthenticated) return null;
+  if (user && !roleAllows(user.role as Role, requiredRole)) return null;
 
-  // En offline SIN sesión -> mostrar LoginForm inline (sin navegar)
-  if (offline && lacksAuthOrRole) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-3">
-          <div>
-            <h1 className="text-lg font-semibold">Modo sin conexión</h1>
-            <p className="text-sm text-slate-600">
-              Inicia sesión con tus credenciales guardadas para continuar.
-            </p>
-          </div>
-          <LoginForm />
-        </div>
-      </div>
-    );
-  }
-
-  // En online SIN sesión -> dejamos que el useEffect redirija (y retornamos vacío)
-  if (!offline && lacksAuthOrRole) {
-    return null;
-  }
-
-  // Autorizado
   return <>{children}</>;
 }
+
+export default RouteGuard;
