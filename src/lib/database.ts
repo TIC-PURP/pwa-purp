@@ -232,15 +232,7 @@ export async function initializeDefaultUsers() {
       role: "manager",
       permissions: ["read", "write", "delete", "manage_users"],
       createdAt: now,
-    },
-    {
-      name: "Maria Acosta",
-      email: "maria_acosta@purp.com.mx",
-      password: "Purp_*2023@",
-      role: "manager",
-      permissions: ["read", "write", "delete", "manage_users"],
-      createdAt: now,
-    },
+    }
   ];
   for (const data of seeds) {
     const def = buildUserDocFromData(data);
