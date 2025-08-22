@@ -41,6 +41,14 @@ function persistSession(user: User | null, token: string | null) {
   }
 }
 
+function getCookie(name: string) {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${name}=([^;]*)`),
+  );
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
   if (typeof window === "undefined") return { user: null, token: null };
   try {
@@ -106,9 +114,10 @@ export const loginUser = createAsyncThunk<
       await startSync();
     } catch {}
 
-    // 6) Persistir sesión
-    persistSession(user, "cookie-session");
-    return { user, token: "cookie-session" };
+    // 6) Persistir sesión leyendo token de la cookie AuthSession
+    const token = getCookie("AuthSession") || "";
+    persistSession(user, token);
+    return { user, token };
   } catch (onlineErr: any) {
     const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
     // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
@@ -129,6 +138,9 @@ export const logoutUser = createAsyncThunk("auth/logout", async () => {
   try {
     await logoutOnlineSession();
   } catch {}
+  if (typeof document !== "undefined") {
+    document.cookie = "AuthSession=; Max-Age=0; path=/;";
+  }
   persistSession(null, null);
   return true;
 });
