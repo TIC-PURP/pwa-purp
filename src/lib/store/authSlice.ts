@@ -110,6 +110,7 @@ export const loginUser = createAsyncThunk<
     persistSession(user, "cookie-session");
     return { user, token: "cookie-session" };
   } catch (onlineErr: any) {
+    const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
     // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
     const offline = await authenticateUser(email, password);
     if (offline) {
@@ -117,7 +118,7 @@ export const loginUser = createAsyncThunk<
       persistSession(user, "offline");
       return { user, token: "offline" };
     }
-    return rejectWithValue(onlineErr?.message || "No se pudo iniciar sesión");
+    return rejectWithValue(errorMessage);
   }
 });
 
