@@ -35,8 +35,9 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
         try {
           const id = user.email || user.name;
-          if (id && user.password) {
-            await loginOnlineToCouchDB(id, user.password);
+          const pwd = (user as any)?.password;
+          if (id && pwd) {
+            await loginOnlineToCouchDB(id, pwd);
             await startSync();
           }
         } catch {
@@ -57,7 +58,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             id: doc.id ?? user.id,
             name: doc.name ?? user.name,
             email: doc.email ?? user.email,
-            password: doc.password ?? user.password,
+            password: doc.password,
             role: doc.role ?? user.role,
             permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
             isActive: doc.isActive !== false,

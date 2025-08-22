@@ -1,6 +1,8 @@
 // src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
 
+import bcrypt from "bcryptjs";
+
 const isClient = typeof window !== "undefined";
 
 let PouchDB: any = null;
@@ -180,7 +182,10 @@ export async function authenticateUser(identifier: string, password: string) {
   } catch {}
   for (const cand of candidates) {
     const r = await localDB.find({ selector: { id: cand } });
-    if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
+    const doc = r.docs?.[0];
+    if (doc?.password && (await bcrypt.compare(password, doc.password))) {
+      return doc;
+    }
   }
   return null;
 }
@@ -199,6 +204,11 @@ export async function guardarUsuarioOffline(user: any) {
     updatedAt: new Date().toISOString(),
   };
 
+  if (toSave.password && !toSave.password.startsWith("$2")) {
+    const salt = await bcrypt.genSalt(10);
+    toSave.password = await bcrypt.hash(toSave.password, salt);
+  }
+
   try {
     const existing = await localDB.get(_id);
     toSave._rev = existing._rev;
@@ -211,6 +221,8 @@ export async function guardarUsuarioOffline(user: any) {
       throw err;
     }
   }
+
+  return toSave;
 }
 
 /** Semilla local para primer arranque offline */
@@ -241,7 +253,7 @@ export async function initializeDefaultUsers() {
     try {
       await localDB.get(def._id);
     } catch (e: any) {
-      if (e?.status === 404) await localDB.put(def);
+      if (e?.status === 404) await guardarUsuarioOffline(data);
     }
   }
 }
@@ -313,13 +325,7 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
 /** Crea (o upserta) usuario — LOCAL FIRST */
 export async function createUser(data: any) {
   await openDatabases();
-  const doc = buildUserDocFromData(data);
-  try {
-    const existing = await localDB.get(doc._id);
-    doc._rev = existing._rev;
-    doc.createdAt = existing.createdAt || doc.createdAt;
-  } catch {}
-  await localDB.put(doc); // << LOCAL ONLY. La replicación lo sube.
+  const doc = await guardarUsuarioOffline(data);
   return doc;
 }
 

@@ -16,7 +16,7 @@ export interface User {
 }
 
 export interface AuthState {
-  user: User | null;
+  user: Omit<User, "password"> | null;
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;

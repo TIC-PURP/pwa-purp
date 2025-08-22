@@ -11,8 +11,10 @@ import {
   findUserByEmail, // ← debe existir en ../database
 } from "../database";
 
+export type SafeUser = Omit<User, "password">;
+
 export interface AuthState {
-  user: User | null;
+  user: SafeUser | null;
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -32,7 +34,7 @@ export interface LoginCredentials {
   password: string;
 }
 
-function persistSession(user: User | null, token: string | null) {
+function persistSession(user: SafeUser | null, token: string | null) {
   if (typeof window === "undefined") return;
   if (user && token) {
     window.localStorage.setItem("auth", JSON.stringify({ user, token }));
@@ -47,14 +49,14 @@ export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
     const raw = window.localStorage.getItem("auth");
     if (!raw) return { user: null, token: null };
     const parsed = JSON.parse(raw);
-    return { user: parsed.user as User, token: parsed.token as string };
+    return { user: parsed.user as SafeUser, token: parsed.token as string };
   } catch {
     return { user: null, token: null };
   }
 });
 
 export const loginUser = createAsyncThunk<
-  { user: User; token: string }, // ← payload de éxito tipado
+  { user: SafeUser; token: string }, // ← payload de éxito tipado
   LoginCredentials
 >("auth/login", async ({ email, password }, { rejectWithValue }) => {
   try {
@@ -107,16 +109,17 @@ export const loginUser = createAsyncThunk<
     } catch {}
 
     // 6) Persistir sesión
-    persistSession(user, "cookie-session");
-    return { user, token: "cookie-session" };
+    const { password: _pw, ...safeUser } = user;
+    persistSession(safeUser, "cookie-session");
+    return { user: safeUser, token: "cookie-session" };
   } catch (onlineErr: any) {
     const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
     // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
     const offline = await authenticateUser(email, password);
     if (offline) {
-      const user = offline as User;
-      persistSession(user, "offline");
-      return { user, token: "offline" };
+      const { password: _pw, ...safeUser } = offline as User;
+      persistSession(safeUser, "offline");
+      return { user: safeUser, token: "offline" };
     }
     return rejectWithValue(errorMessage);
   }
@@ -138,14 +141,15 @@ const authSlice = createSlice({
   initialState,
   reducers: {
     setUser(state, action: PayloadAction<User>) {
-      state.user = action.payload;
+      const { password, ...safeUser } = action.payload;
+      state.user = safeUser;
       state.isAuthenticated = true;
       // Persistimos también en localStorage con el token actual (si existe)
       if (typeof window !== "undefined") {
         const token = state.token ?? "cookie-session";
         window.localStorage.setItem(
           "auth",
-          JSON.stringify({ user: action.payload, token }),
+          JSON.stringify({ user: safeUser, token }),
         );
       }
     },
@@ -173,7 +177,7 @@ const authSlice = createSlice({
       // Login
       .addCase(
         loginUser.fulfilled,
-        (state, action: PayloadAction<{ user: User; token: string }>) => {
+        (state, action: PayloadAction<{ user: SafeUser; token: string }>) => {
           state.isLoading = false;
           state.isAuthenticated = true;
           state.user = action.payload.user;
