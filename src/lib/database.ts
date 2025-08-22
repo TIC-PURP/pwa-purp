@@ -137,22 +137,28 @@ export async function stopSync() {
   syncHandler = null;
 }
 
-/** Login online contra /_session (usa /couchdb en cliente) */
+/** Login online contra /api/auth/login */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  const base = getRemoteBase();
-  const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetchWithTimeout(`${base}/_session`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
+  const body = JSON.stringify({ name, password });
+  const res = await fetchWithTimeout(
+    `/api/auth/login`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body,
     },
-    body,
-  }, 12000);
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
+    12000,
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!data?.ok) {
+    throw new Error(data?.login?.message || "login failed");
+  }
+  if (typeof document !== "undefined" && !document.cookie.includes("AuthSession=")) {
+    throw new Error("cookie de sesión no establecida");
   }
   return true;
 }
