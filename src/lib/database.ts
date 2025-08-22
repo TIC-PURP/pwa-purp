@@ -218,18 +218,31 @@ export async function initializeDefaultUsers() {
   await openDatabases();
   if (!localDB) return;
   const now = new Date().toISOString();
-  const def = buildUserDocFromData({
-    name: "Mario Acosta",
-    email: "mario_acosta@purp.com.mx",
-    password: "Purp_*2023@",
-    role: "manager",
-    permissions: ["read", "write", "delete", "manage_users"],
-    createdAt: now,
-  });
-  try {
-    await localDB.get(def._id);
-  } catch (e: any) {
-    if (e?.status === 404) await localDB.put(def);
+  const seeds = [
+    {
+      name: "Mario Acosta",
+      email: "mario_acosta@purp.com.mx",
+      password: "Purp_*2023@",
+      role: "manager",
+      permissions: ["read", "write", "delete", "manage_users"],
+      createdAt: now,
+    },
+    {
+      name: "Maria Acosta",
+      email: "maria_acosta@purp.com.mx",
+      password: "Purp_*2023@",
+      role: "manager",
+      permissions: ["read", "write", "delete", "manage_users"],
+      createdAt: now,
+    },
+  ];
+  for (const data of seeds) {
+    const def = buildUserDocFromData(data);
+    try {
+      await localDB.get(def._id);
+    } catch (e: any) {
+      if (e?.status === 404) await localDB.put(def);
+    }
   }
 }
 
