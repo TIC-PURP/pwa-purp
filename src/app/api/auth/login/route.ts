@@ -3,53 +3,46 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const targetBase = process.env.COUCH_HOST;
-  if (!targetBase) {
-    return NextResponse.json({ ok:false, error:"Missing COUCH_HOST" }, { status:500 });
-  }
-  let payload: any;
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    payload = await req.json();
-  } else {
-    const txt = await req.text();
-    payload = Object.fromEntries(new URLSearchParams(txt));
-  }
-
-  const body = new URLSearchParams();
-  if (payload.name) body.set("name", payload.name);
-  if (payload.password) body.set("password", payload.password);
-
-  // 1) login -> get Set-Cookie (AuthSession)
-  const loginRes = await fetch(`${targetBase}/_session`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-    redirect: "manual",
-  });
-
-  const setCookie = loginRes.headers.get("set-cookie");
-  const loginJSON = await loginRes.json().catch(() => ({} as any));
-
-  // Bubble cookie to browser
-  const initHeaders: Record<string, string> = { "Cache-Control": "no-store" };
-  if (setCookie) initHeaders["set-cookie"] = setCookie;
-
-  // If login failed, return as-is
-  if (!loginRes.ok) {
-    return new NextResponse(JSON.stringify(loginJSON || { ok:false }), {
-      status: loginRes.status,
-      headers: initHeaders,
-    });
-  }
-
-  // 2) fetch session using same cookie to get name/roles
-  let sessionData: any = null;
   try {
-    const who = await fetch(`${targetBase}/_session`, { headers: setCookie ? { cookie: setCookie } : undefined });
-    sessionData = await who.json();
-  } catch {}
+    const base = process.env.COUCH_HOST;
+    if (!base) return NextResponse.json({ ok:false, error:"Missing COUCH_HOST" }, { status:500 });
 
-  const responseBody = JSON.stringify({ ok: true, login: loginJSON, session: sessionData });
-  return new NextResponse(responseBody, { status: 200, headers: initHeaders });
+    const ct = req.headers.get("content-type") || "";
+    let bodyText = "";
+    if (ct.includes("application/x-www-form-urlencoded")) {
+      bodyText = await req.text();
+    } else if (ct.includes("application/json")) {
+      const j = await req.json();
+      const p = new URLSearchParams(j as any);
+      bodyText = p.toString();
+    } else {
+      bodyText = await req.text();
+    }
+
+    const loginRes = await fetch(`${base}/_session`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: bodyText,
+      redirect: "manual",
+    });
+
+    const setCookie = loginRes.headers.get("set-cookie") ?? undefined;
+    const loginJson = await loginRes.json().catch(() => ({} as any));
+
+    const sessionRes = await fetch(`${base}/_session`, {
+      method: "GET",
+      headers: setCookie ? { cookie: setCookie } : undefined,
+    });
+    const sessionJson = await sessionRes.json().catch(() => ({} as any));
+
+    const resp = NextResponse.json(
+      { ok: loginRes.ok && sessionRes.ok, login: loginJson, session: sessionJson },
+      { status: loginRes.ok ? 200 : loginRes.status }
+    );
+    if (setCookie) resp.headers.set("set-cookie", setCookie);
+    resp.headers.set("Cache-Control", "no-store");
+    return resp;
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error:"auth-login-failed", message: String(e?.message ?? e) }, { status:500 });
+  }
 }

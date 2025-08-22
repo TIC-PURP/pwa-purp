@@ -139,34 +139,32 @@ export async function stopSync() {
 
 /** Login online contra /_session (usa /couchdb en cliente) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  // Login through Next.js API to ensure cookie forwarding
-  const res = await fetch("/api/auth/login", {
+  const base = getRemoteBase();
+  const body = new URLSearchParams({ name, password }).toString();
+  const res = await fetchWithTimeout(`${base}/_session`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ name, password }),
-  });
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body,
+  }, 12000);
   if (!res.ok) {
-    let err:any = null;
-    try { err = await res.json(); } catch {}
-    throw new Error(err?.reason || "Login failed");
+    const txt = await res.text().catch(() => "");
+    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
   }
-  const data = await res.json().catch(() => ({} as any));
-  // Consider success if session shows a name or the login endpoint returned ok
-  const session = data?.session || {};
-  if (!session?.userCtx?.name && !data?.login?.ok) {
-    throw new Error("Login failed (no session)");
-  }
-  return { ok: true, name: session?.userCtx?.name ?? data?.login?.name, roles: session?.userCtx?.roles ?? data?.login?.roles ?? [] };
+  return true;
 }
 
-export async function logoutOnlineSession(): Promise<void> {
-  const base = getRemoteBase(); // ya devuelve "/api/couch" en cliente
-  await fetch(`${base}/_session`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+/** Cierra la sesión del servidor */
+export async function logoutOnlineSession() {
+  const base = getRemoteBase();
+  try {
+    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
+  } catch {}
 }
+
 /** Login offline contra Pouch local */
 export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
