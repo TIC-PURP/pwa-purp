@@ -160,6 +160,13 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
   return { ok: true, name: session?.userCtx?.name ?? data?.login?.name, roles: session?.userCtx?.roles ?? data?.login?.roles ?? [] };
 }
 
+export async function logoutOnlineSession(): Promise<void> {
+  const base = getRemoteBase(); // ya devuelve "/api/couch" en cliente
+  await fetch(`${base}/_session`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+}
 /** Login offline contra Pouch local */
 export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
