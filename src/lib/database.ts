@@ -139,30 +139,25 @@ export async function stopSync() {
 
 /** Login online contra /_session (usa /couchdb en cliente) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  const base = getRemoteBase();
-  const body = new URLSearchParams({ name, password }).toString();
-  const res = await fetchWithTimeout(`${base}/_session`, {
+  // Login through Next.js API to ensure cookie forwarding
+  const res = await fetch("/api/auth/login", {
     method: "POST",
+    headers: { "content-type": "application/json" },
     credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body,
-  }, 12000);
+    body: JSON.stringify({ name, password }),
+  });
   if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
+    let err:any = null;
+    try { err = await res.json(); } catch {}
+    throw new Error(err?.reason || "Login failed");
   }
-  return true;
-}
-
-/** Cierra la sesión del servidor */
-export async function logoutOnlineSession() {
-  const base = getRemoteBase();
-  try {
-    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
-  } catch {}
+  const data = await res.json().catch(() => ({} as any));
+  // Consider success if session shows a name or the login endpoint returned ok
+  const session = data?.session || {};
+  if (!session?.userCtx?.name && !data?.login?.ok) {
+    throw new Error("Login failed (no session)");
+  }
+  return { ok: true, name: session?.userCtx?.name ?? data?.login?.name, roles: session?.userCtx?.roles ?? data?.login?.roles ?? [] };
 }
 
 /** Login offline contra Pouch local */
