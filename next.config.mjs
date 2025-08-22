@@ -1,28 +1,30 @@
-// next.config.mjs
-import withPWA from "next-pwa";
-
-const nextConfig = withPWA({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-})({
+// Minimal Next config: CSP headers only, no rewrites (we use /api/* proxies)
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
+  images: { unoptimized: true },
   async headers() {
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "connect-src 'self'",
+      "font-src 'self' data:",
+      "frame-ancestors 'self'"
+    ].join('; ');
     return [
       {
-        source: "/(.*)",
+        source: "/:path*",
         headers: [
-          {
-            key: "Content-Security-Policy",
-            // Nota: ajusta connect-src según tus dominios CouchDB en prod.
-            value:
-              "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src *; frame-src 'self';",
-          },
-        ],
-      },
+          { key: "Content-Security-Policy", value: csp },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" }
+        ]
+      }
     ];
-  },
-});
+  }
+};
 
 export default nextConfig;

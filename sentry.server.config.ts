@@ -4,16 +4,8 @@
 
 import * as Sentry from "@sentry/nextjs";
 
-/*
- * Configure Sentry on the server.  Pulling the DSN from environment variables
- * ensures you aren’t committing credentials to source control.  You can define
- * SENTRY_DSN or NEXT_PUBLIC_SENTRY_DSN in your deployment environment.
- */
-const SENTRY_DSN =
-  process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN || "";
-
 Sentry.init({
-  dsn: SENTRY_DSN || undefined,
+  dsn: "https://212a921d236eb4b36831f918e6cc7b5f@o4509788384788480.ingest.us.sentry.io/4509788385837056",
 
   // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
   tracesSampleRate: 1,

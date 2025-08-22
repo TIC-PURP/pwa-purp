@@ -230,7 +230,7 @@ export function UserForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="user">Usuario</SelectItem>
-                <SelectItem value="administrador">Administrador</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="manager">Manager</SelectItem>
               </SelectContent>
             </Select>

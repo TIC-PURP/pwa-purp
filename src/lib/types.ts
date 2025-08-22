@@ -5,13 +5,12 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  password?: string;
+  password: string;
   role: Role;
   permissions: Permission[];
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  type: "user_profile" | "offline_verifier";
   _id?: string;
   _rev?: string;
 }
@@ -25,13 +24,13 @@ export interface AuthState {
 
 export interface LoginCredentials {
   email: string;
-  password?: string;
+  password: string;
 }
 
 export interface CreateUserData {
   name: string;
   email: string;
-  password?: string;
+  password: string;
   role: Role;
   permissions: Permission[];
 }

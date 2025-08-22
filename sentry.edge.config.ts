@@ -5,16 +5,8 @@
 
 import * as Sentry from "@sentry/nextjs";
 
-/*
- * Configure Sentry for edge environments.  The DSN is read from the environment so
- * sensitive connection details aren’t hard‑coded in the repository.  You can set
- * either NEXT_PUBLIC_SENTRY_DSN (for public env exposure) or SENTRY_DSN (for server only).
- */
-const SENTRY_DSN =
-  process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN || "";
-
 Sentry.init({
-  dsn: SENTRY_DSN || undefined,
+  dsn: "https://212a921d236eb4b36831f918e6cc7b5f@o4509788384788480.ingest.us.sentry.io/4509788385837056",
 
   // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
   tracesSampleRate: 1,

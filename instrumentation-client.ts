@@ -4,15 +4,8 @@
 
 import * as Sentry from "@sentry/nextjs";
 
-/*
- * Configure Sentry on the client side.  The DSN is pulled from environment
- * variables so that sensitive connection details are not committed to the repo.
- */
-const SENTRY_DSN =
-  process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN || "";
-
 Sentry.init({
-  dsn: SENTRY_DSN || undefined,
+  dsn: "https://212a921d236eb4b36831f918e6cc7b5f@o4509788384788480.ingest.us.sentry.io/4509788385837056",
 
   // Add optional integrations for additional features
   integrations: [Sentry.replayIntegration()],

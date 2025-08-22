@@ -1,31 +1,42 @@
-import PouchDBCore from "pouchdb";
+import PouchDB from "pouchdb";
 import type { User } from "@/lib/types";
-type ExistingDoc<T> = T & { _id: string; _rev: string };
 
-const DB_NAME = "pwa-purp";
-const db = new PouchDBCore(DB_NAME);
+const localDB = new PouchDB("gestion_pwa_local");
 
-export async function createDefaultUser(): Promise<User> {
-  const id = "user_default_admin";
+const defaultUser: User = {
+  id: "user_manager_purp",
+  email: "manager@purp.com.mx",
+  password: "Purp2023@",
+  role: "manager",
+  name: "Mario Acosta",
+  permissions: [],
+  isActive: true,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+
+export async function createUserIfNotExists() {
   try {
-    const existing: ExistingDoc<User> = await db.get<User>(id);
-    return { ...existing, id: existing.id ?? id } as User;
-  } catch (err: any) {
-    if (err?.status !== 404) throw err;
+    const result = await localDB.find({
+      selector: { email: defaultUser.email },
+      limit: 1,
+    });
+
+    if (result.docs.length > 0) {
+      console.log("✅ El usuario ya existe:", (result.docs[0] as User).email);
+      return;
+    }
+
+    await localDB.put({
+      _id: defaultUser.id,
+      ...defaultUser,
+    });
+
+    console.log("✅ Usuario creado exitosamente.");
+  } catch (error) {
+    console.error("❌ Error al crear el usuario:", error);
   }
-  const now = new Date().toISOString();
-  const user: User = {
-    id,
-    _id: id,
-    name: "Administrador",
-    email: "admin@purp.com.mx",
-    role: "admin",
-    permissions: ["read", "write", "manage_users"],
-    isActive: true,
-    createdAt: now,
-    updatedAt: now,
-    type: "user_profile",
-  };
-  await db.put({ _id: id, ...user });
-  return user;
 }
+
+// ❌ No ejecutar automáticamente. Solo ejecutar manualmente si es necesario.
+// createUserIfNotExists()

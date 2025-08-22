@@ -1,577 +1,439 @@
 // src/lib/database.ts
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import PouchDBCore from "pouchdb";
-import PouchFind from "pouchdb-find";
+// CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
 
-PouchDBCore.plugin(PouchFind);
+const isClient = typeof window !== "undefined";
 
-// ===== Tipos =====
-type AppRole = "manager" | "admin" | "user";
+let PouchDB: any = null;
+let localDB: any = null;
+let remoteDB: any = null;
+let syncHandler: any = null;
 
-export type UserProfileDoc = {
-  _id?: string;
-  _rev?: string;
-  type: "user_profile";
-  email: string;
-  name: string;
-  role: AppRole;
-  isActive: boolean;
-  permissions?: string[];
-  createdAt: string;
-  updatedAt: string;
-  deletedAt?: string; // soporta borrado lógico con fecha
+export type CouchEnv = {
+  serverBase: string;
+  dbName: string;
 };
 
-type UserOp = {
-  _id: string;
-  type: "user_op";
-  op: "create" | "update" | "delete";
-  email: string;
-  payload?: any;
-  status: "pending" | "applied";
-  createdAt: string;
-  updatedAt: string;
-};
+/** Lee NEXT_PUBLIC_COUCHDB_URL y devuelve { serverBase, dbName } */
+export function getCouchEnv(): CouchEnv {
+  const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
+  if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no está definido");
 
-type PendingUserOpInput = { op: UserOp["op"]; email: string; payload?: any };
-
-// ===== Utils =====
-const isBrowser = typeof window !== "undefined";
-
-function assertEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Falta variable de entorno ${name}`);
-  return v;
-}
-
-function getRemoteDbUrl(): string {
-  // Debe incluir la DB: p. ej. http://host:5984/pwa-purp
-  const raw = assertEnv("NEXT_PUBLIC_COUCHDB_URL");
   const url = new URL(raw);
-  return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+  const path = url.pathname.replace(/\/+$/, "");
+  const parts = path.split("/").filter(Boolean);
+  const dbName = parts[parts.length - 1] || "gestion_pwa";
+
+  const serverBase = `${url.protocol}//${url.host}`;
+  return { serverBase, dbName };
 }
 
-function getLocalDbName(): string {
-  try {
-    const u = new URL(getRemoteDbUrl());
-    const db = u.pathname.split("/").filter(Boolean).pop() || "pwa-purp";
-    return `local-${db}`;
-  } catch {
-    return "local-pwa";
+/** Cuando corre en el navegador usamos el proxy /couchdb (same-origin con cookie); en SSR va directo */
+function getRemoteBase() {
+  const { serverBase } = getCouchEnv();
+  return isClient ? "/couchdb" : serverBase;
+}
+
+/** fetch con timeout (para no colgarnos en login) */
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  const opts = { ...init, signal: controller.signal };
+  return fetch(input, opts).finally(() => clearTimeout(timer));
+}
+
+/** Carga PouchDB y plugin find (solo en cliente) */
+async function ensurePouch() {
+  if (PouchDB) return;
+  // Usamos 'pouchdb' para evitar problemas de tipos en build
+  const mod = await import("pouchdb");
+  const find = (await import("pouchdb-find")).default;
+  PouchDB = (mod as any).default || mod;
+  PouchDB.plugin(find);
+}
+
+/** Helpers de IDs / normalización */
+function slug(s: string) {
+  return (s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "-");
+}
+function toUserDocId(input: string) {
+  if (input.includes(":")) return input;           // user:xxx
+  if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
+  return `user:${slug(input)}`;                    // email o username
+}
+function buildUserDocFromData(data: any) {
+  const key = slug(data.email || data.name || data.id || Date.now().toString());
+  const _id = `user:${key}`;
+  const now = new Date().toISOString();
+  return {
+    _id,
+    id: `user_${key}`,
+    type: "user",
+    name: data.name || key,
+    email: data.email || "",
+    password: data.password || "",
+    role: data.role || "user",
+    permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
+    isActive: data.isActive !== false,
+    createdAt: data.createdAt || now,
+    updatedAt: now,
+    ...data.extra,
+  };
+}
+
+/** Abre/crea las bases local y remota */
+export async function openDatabases() {
+  if (!isClient) return;
+  await ensurePouch();
+  const { dbName } = getCouchEnv();
+  const remoteBase = getRemoteBase();
+
+  if (!localDB) {
+    localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
   }
-}
 
-// ===== Singletons Pouch =====
-let _localDb: PouchDB.Database | null = null;
-let _syncHandler: PouchDB.Replication.Sync<{}> | null = null;
-
-export function getPouch(): PouchDB.Database {
-  if (!_localDb) {
-    const name = getLocalDbName();
-    const db = new PouchDBCore(name, { auto_compaction: true }); // no-null
-    _localDb = db;
-    ensureIndexes(db).catch(() => {});
+  if (!remoteDB) {
+    const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
+    remoteDB = new PouchDB(remoteUrl, {
+      skip_setup: true,
+      fetch: (url: RequestInfo, opts: any = {}) => {
+        opts = opts || {};
+        opts.credentials = "include"; // enviar cookie AuthSession
+        return (window as any).fetch(url as any, opts);
+      },
+      ajax: { withCredentials: true },
+    });
   }
-  return _localDb!;
+
+  return { localDB, remoteDB };
 }
 
-function getRemoteDb(): { url: string } {
-  const url = getRemoteDbUrl();
-  return { url };
-}
+/** Arranca replicación continua (local <-> remote) */
+export async function startSync() {
+  if (!isClient) return;
+  await openDatabases();
+  if (!localDB || !remoteDB) return;
 
-async function ensureIndexes(db: PouchDB.Database) {
-  try {
-    await (db as any).createIndex?.({ index: { fields: ["type"] } });
-  } catch {}
-  try {
-    await (db as any).createIndex?.({ index: { fields: ["type", "email"] } });
-  } catch {}
-}
+  if (syncHandler?.cancel) return syncHandler;
 
-// ===== Sync =====
-export function startSync(): void {
-  if (!isBrowser) return;
-  const db = getPouch();
-  const { url } = getRemoteDb();
-  if (_syncHandler) return;
-
-  const syncFn: any = (db as any).sync;
-  _syncHandler = syncFn(url, {
-    live: true,
-    retry: true,
-    back_off_function: (delay: number) => Math.min((delay || 1000) * 2, 30000),
-    fetch: (input: RequestInfo, init?: RequestInit) =>
-      fetch(input as any, { ...(init || {}), credentials: "include" }),
-  })
-    .on("change", (info: any) => console.log("[sync] change", info?.direction ?? ""))
-    .on("paused", (err: any) => console.log("[sync] paused", err ? "err" : "ok"))
+  const opts: any = { live: true, retry: true, heartbeat: 25000, timeout: 55000 };
+  syncHandler = localDB.sync(remoteDB, opts);
+  syncHandler
+    .on("change", (i: any) => console.log("[sync] change", i.direction))
+    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
     .on("active", () => console.log("[sync] active"))
-    .on("error", (err: any) => console.warn("[sync] error", (err as any)?.message || err));
+    .on("error", (e: any) => console.error("[sync] error", e));
+  return syncHandler;
 }
 
-export function stopSync(): void {
-  if (_syncHandler) {
-    _syncHandler.cancel();
-    _syncHandler = null;
+/** Detiene replicación */
+export async function stopSync() {
+  if (syncHandler?.cancel) {
+    try { await syncHandler.cancel(); } catch {}
   }
+  syncHandler = null;
 }
 
-// ===== Auth a Couch (_session) =====
+/** Login online contra /_session (usa /couchdb en cliente) */
 export async function loginOnlineToCouchDB(name: string, password: string) {
-  const body = new URLSearchParams();
-  body.set("name", name);
-  body.set("password", password);
-
-  const res = await fetch("/api/couch/_session", {
+  const base = getRemoteBase();
+  const body = new URLSearchParams({ name, password }).toString();
+  const res = await fetchWithTimeout(`${base}/_session`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body,
-    credentials: "include",
-  });
+  }, 12000);
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`No se pudo iniciar sesión Couch: ${t}`);
+    const txt = await res.text().catch(() => "");
+    throw new Error(`/_session ${res.status} ${res.statusText} ${txt}`);
   }
-  return res.json();
-}
-
-export async function logoutOnlineSession() {
-  await fetch("/api/couch/_session", {
-    method: "DELETE",
-    credentials: "include",
-  }).catch(() => {});
-}
-
-export async function getCouchSession(): Promise<any> {
-  const res = await fetch("/api/couch/_session", {
-    method: "GET",
-    credentials: "include",
-  });
-  if (!res.ok) throw new Error("No se pudo leer la sesión");
-  return res.json();
-}
-
-// ===== Perfil (DB de la app: Pouch/Couch) =====
-export async function findUserByEmail(email: string): Promise<UserProfileDoc | null> {
-  const db = getPouch();
-  const q = await (db as any).find({
-    selector: { type: "user_profile", email },
-    limit: 1,
-  });
-  return (q.docs?.[0] as UserProfileDoc) || null;
-}
-
-// Creador/actualizador de perfil local (NO confundir con el wrapper de UI)
-export async function createUserProfile(input: Partial<UserProfileDoc>): Promise<UserProfileDoc> {
-  const db = getPouch();
-  const now = new Date().toISOString();
-
-  const doc: UserProfileDoc = {
-    _id: input._id,
-    type: "user_profile",
-    email: String(input.email || "").toLowerCase(),
-    name: input.name || (input.email ? String(input.email).split("@")[0] : "usuario"),
-    role: (input.role as AppRole) || "user",
-    isActive: input.isActive !== false,
-    permissions: input.permissions || ["read"],
-    createdAt: input.createdAt || now,
-    updatedAt: now,
-    ...(input.deletedAt ? { deletedAt: input.deletedAt } : {}),
-  };
-
-  if (!doc._id) doc._id = `user_profile:${doc.email}`;
-
-  const existing = await findUserByEmail(doc.email);
-  if (existing) {
-    const merged: UserProfileDoc = {
-      ...existing,
-      ...doc,
-      _id: existing._id,
-      _rev: existing._rev,
-      updatedAt: now,
-    };
-    const r = await (db as any).put(merged);
-    merged._rev = r.rev;
-    return merged;
-  }
-
-  const r = await (db as any).put(doc as any);
-  doc._rev = r.rev;
-  return doc;
-}
-
-export async function updateUserByEmail(email: string, patch: Partial<UserProfileDoc>): Promise<UserProfileDoc | null> {
-  const db = getPouch();
-  const ex = await findUserByEmail(email);
-  if (!ex) return null;
-  const updated: UserProfileDoc = {
-    ...ex,
-    ...patch, // incluye deletedAt si viene
-    _id: ex._id,
-    _rev: ex._rev,
-    updatedAt: new Date().toISOString(),
-  };
-  const r = await (db as any).put(updated as any);
-  updated._rev = r.rev;
-  return updated;
-}
-
-export async function deleteUserByEmail(email: string): Promise<boolean> {
-  const db = getPouch();
-  const ex = await findUserByEmail(email);
-  if (!ex) return false;
-  const now = new Date().toISOString();
-  const updated = { ...ex, isActive: false, deletedAt: now, updatedAt: now };
-  const r = await (db as any).put(updated as any);
-  return !!r.ok;
-}
-
-// ===== Cola OFFLINE (para reflejar /_users cuando vuelva la red) =====
-export async function queueUserOp(op: PendingUserOpInput) {
-  const db = getPouch();
-  const now = new Date().toISOString();
-  const uuid =
-    (globalThis as any).crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
-  const doc: UserOp = {
-    _id: `user_op:${uuid}`,
-    type: "user_op",
-    status: "pending",
-    createdAt: now,
-    updatedAt: now,
-    ...op,
-  };
-  await (db as any).put(doc as any);
-  return doc;
-}
-
-export async function replayPendingUserOps() {
-  const db = getPouch();
-  const all = await (db as any).find({ selector: { type: "user_op", status: "pending" }, limit: 200 });
-  const docs: UserOp[] = (all.docs ?? []).map((d: any) => d as unknown as UserOp);
-
-  for (const op of docs) {
-    try {
-      if (op.op === "create") {
-        await createAppUserOnline(op.payload);
-      } else if (op.op === "update") {
-        await updateAppUserOnline(op.email, op.payload);
-      } else if (op.op === "delete") {
-        await deleteAppUserOnline(op.email);
-      }
-      op.status = "applied";
-      op.updatedAt = new Date().toISOString();
-      await (db as any).put(op as any);
-    } catch (e) {
-      console.warn("[replayPendingUserOps] pendiente", (e as any)?.message || e);
-    }
-  }
-}
-
-// ===== APIs server del panel (/_users + perfil remoto) =====
-export async function createAppUserOnline(payload: {
-  email: string;
-  password: string;
-  role: AppRole | string;
-  name?: string;
-  isActive?: boolean;
-  permissions?: string[];
-}) {
-  const res = await fetch("/api/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-export async function updateAppUserOnline(
-  email: string,
-  patch: Partial<{ password: string; role: AppRole | string; name: string; isActive: boolean }>
-) {
-  const res = await fetch(`/api/users/${encodeURIComponent(email)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-    credentials: "include",
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-export async function deleteAppUserOnline(email: string) {
-  const res = await fetch(`/api/users/${encodeURIComponent(email)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-// ===== Inicialización =====
-export async function initializeDefaultUsers() {
-  const db = getPouch();
-  await ensureIndexes(db);
   return true;
 }
 
-export async function guardarUsuarioOffline(payload: { email: string; name?: string; role?: AppRole }) {
+/** Cierra la sesión del servidor */
+export async function logoutOnlineSession() {
+  const base = getRemoteBase();
   try {
-    if (isBrowser) {
-      window.localStorage.setItem("offline_user_info", JSON.stringify(payload));
+    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
+  } catch {}
+}
+
+/** Login offline contra Pouch local */
+export async function authenticateUser(identifier: string, password: string) {
+  await openDatabases();
+  if (!localDB) return null;
+
+  const candidates = [
+    `user_${identifier}`,
+    identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
+  ].filter(Boolean) as string[];
+
+  try {
+    await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
+  } catch {}
+  for (const cand of candidates) {
+    const r = await localDB.find({ selector: { id: cand } });
+    if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
+  }
+  return null;
+}
+
+/** Guarda/actualiza usuario en Pouch local */
+export async function guardarUsuarioOffline(user: any) {
+  await openDatabases();
+  if (!localDB) throw new Error("localDB no inicializado");
+
+  const key = slug(user.email || user.name || user.id || "");
+  const _id = `user:${key}`;
+  const toSave = {
+    ...buildUserDocFromData(user),
+    _id,
+    id: `user_${key}`,
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const existing = await localDB.get(_id);
+    toSave._rev = existing._rev;
+    await localDB.put(toSave);
+  } catch (err: any) {
+    if (err?.status === 404) {
+      await localDB.put(toSave);
     } else {
-      const db = getPouch();
-      const id = `offline_user:${payload.email}`;
-      let existing: any = null;
-      try {
-        existing = await (db as any).get(id);
-      } catch {}
-      const now = new Date().toISOString();
-      const doc = {
-        _id: id,
-        type: "offline_user",
-        ...existing,
-        ...payload,
-        updatedAt: now,
-        createdAt: existing?.createdAt || now,
-      };
-      await (db as any).put(doc);
+      console.error("guardarUsuarioOffline", err);
+      throw err;
     }
-  } catch (e) {
-    console.warn("guardarUsuarioOffline warn:", (e as any)?.message || e);
   }
 }
 
-// ===== Funciones de alto nivel para el Panel (local + server + offline) =====
-export async function createUserFromPanel(input: {
-  email: string;
-  password: string;
-  role: AppRole | string;
-  name?: string;
-  isActive?: boolean;
-  permissions?: string[];
-}) {
-  // 1) Guarda/actualiza perfil local (fuente de UI)
-  const doc = await createUserProfile({
-    email: input.email,
-    name: input.name || input.email.split("@")[0],
-    role: (String(input.role).toLowerCase() as AppRole) || "user",
-    isActive: input.isActive !== false,
-    permissions: input.permissions || ["read"],
+/** Semilla local para primer arranque offline */
+export async function initializeDefaultUsers() {
+  await openDatabases();
+  if (!localDB) return;
+  const now = new Date().toISOString();
+  const def = buildUserDocFromData({
+    name: "Mario Acosta",
+    email: "mario_acosta@purp.com.mx",
+    password: "Purp_*2023@",
+    role: "manager",
+    permissions: ["read", "write", "delete", "manage_users"],
+    createdAt: now,
   });
-
-  // 2) Intenta reflejar en /_users + perfil remoto
   try {
-    await createAppUserOnline({
-      email: input.email,
-      password: input.password,
-      role: (String(input.role).toLowerCase() as AppRole) || "user",
-      name: input.name,
-      isActive: input.isActive !== false,
-      permissions: input.permissions || ["read"],
-    });
-  } catch {
-    await queueUserOp({
-      op: "create",
-      email: doc.email,
-      payload: {
-        email: input.email,
-        password: input.password,
-        role: input.role,
-        name: input.name,
-        isActive: input.isActive !== false,
-        permissions: input.permissions || ["read"],
-      },
-    });
+    await localDB.get(def._id);
+  } catch (e: any) {
+    if (e?.status === 404) await localDB.put(def);
   }
+}
 
+/* ============================
+   ==========  USERS  =========
+   ============================ */
+
+/** Índices para consultas */
+async function ensureUserIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await localDB.createIndex({
+      index: { fields: ["type", "updatedAt"] },
+      name: "idx-type-updatedAt",
+    });
+  } catch {}
+  try {
+    await localDB.createIndex({
+      index: { fields: ["email"] },
+      name: "idx-email",
+    });
+  } catch {}
+}
+
+/** Lista usuarios (activos por defecto) */
+export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: number; }) {
+  await openDatabases();
+  await ensureUserIndexes();
+  const includeInactive = Boolean(opts?.includeInactive);
+  const limit = opts?.limit ?? 1000;
+
+  try {
+    const selector: any = { type: "user" };
+    if (!includeInactive) selector.isActive = { $ne: false };
+    const r = await localDB.find({
+      selector,
+      sort: [{ updatedAt: "desc" }],
+      limit,
+    });
+    return r.docs || [];
+  } catch {
+    const resA = await localDB.allDocs({
+      include_docs: true,
+      startkey: "user:",
+      endkey: "user;\ufff0",
+      limit,
+    });
+    const resB = await localDB.allDocs({
+      include_docs: true,
+      startkey: "user_",
+      endkey: "user_\ufff0",
+      limit,
+    });
+    const docs = [...resA.rows, ...resB.rows]
+      .map((r: any) => r.doc)
+      .filter(Boolean)
+      .filter((d: any) =>
+        includeInactive ? d.type === "user" : d.type === "user" && d.isActive !== false,
+      );
+    docs.sort((a: any, b: any) =>
+      String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
+    );
+    return docs;
+  }
+}
+
+/** Crea (o upserta) usuario — LOCAL FIRST */
+export async function createUser(data: any) {
+  await openDatabases();
+  const doc = buildUserDocFromData(data);
+  try {
+    const existing = await localDB.get(doc._id);
+    doc._rev = existing._rev;
+    doc.createdAt = existing.createdAt || doc.createdAt;
+  } catch {}
+  await localDB.put(doc); // << LOCAL ONLY. La replicación lo sube.
   return doc;
 }
 
-export async function updateUserFromPanel(
-  email: string,
-  patch: Partial<{ password: string; role: AppRole | string; name: string; isActive: boolean; deletedAt: string }>
-) {
-  // 1) Actualiza perfil local
-  const updated = await updateUserByEmail(email, {
-    ...(patch.name ? { name: patch.name } : {}),
-    ...(patch.role ? { role: (String(patch.role).toLowerCase() as AppRole) } : {}),
-    ...(typeof patch.isActive === "boolean" ? { isActive: patch.isActive } : {}),
-    ...(patch.deletedAt ? { deletedAt: patch.deletedAt } : {}),
-  });
-
-  // 2) Refleja en /_users (password/role/name/isActive), deletedAt es sólo de UI/perfil
+/** Get por id/email/username */
+export async function getUserById(idOrKey: string) {
+  await openDatabases();
+  const _id = toUserDocId(idOrKey);
   try {
-    await updateAppUserOnline(email, {
-      ...(patch.name ? { name: patch.name } : {}),
-      ...(patch.role ? { role: String(patch.role) } : {}),
-      ...(typeof patch.isActive === "boolean" ? { isActive: patch.isActive } : {}),
-      ...(patch.password ? { password: patch.password } : {}),
-    });
-  } catch {
-    await queueUserOp({ op: "update", email, payload: patch });
+    return await localDB.get(_id);
+  } catch (e: any) {
+    if (e?.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Actualiza usuario — LOCAL FIRST */
+export async function updateUser(idOrPatch: any, maybePatch?: any) {
+  await openDatabases();
+  if (!localDB) throw new Error("localDB no inicializado");
+
+  let _id: string;
+  let patch: any;
+
+  if (typeof maybePatch === "undefined") {
+    const obj = idOrPatch || {};
+    const key = obj._id || obj.id || obj.email || obj.name;
+    if (!key) throw new Error("updateUser: falta identificador (_id | id | email | name)");
+    _id = toUserDocId(typeof key === "string" ? key : String(key));
+    patch = { ...obj };
+  } else {
+    _id = toUserDocId(idOrPatch);
+    patch = { ...maybePatch };
   }
 
+  delete patch._id;
+
+  const doc = await localDB.get(_id);
+  const updated = {
+    ...doc,
+    ...patch,
+    _id,
+    _rev: doc._rev,
+    type: "user",
+    updatedAt: new Date().toISOString(),
+  };
+  await localDB.put(updated); // << LOCAL ONLY
   return updated;
 }
 
-export async function deleteUserFromPanel(email: string) {
-  // 1) Borrado lógico local (isActive=false, deletedAt)
-  const ok = await deleteUserByEmail(email);
-
-  // 2) Refleja en Couch _users (DELETE); si falla, cola
-  try {
-    await deleteAppUserOnline(email);
-  } catch {
-    await queueUserOp({ op: "delete", email });
-  }
-  return ok;
+/** Borrado lógico — LOCAL FIRST */
+export async function softDeleteUser(idOrKey: string) {
+  await openDatabases();
+  const _id = toUserDocId(idOrKey);
+  const doc = await localDB.get(_id);
+  doc.isActive = false;
+  doc.updatedAt = new Date().toISOString();
+  doc.deletedAt = doc.updatedAt;
+  await localDB.put(doc); // << LOCAL ONLY
+  return doc;
 }
 
-// ====== WRAPPERS compatibles con src/app/users/page.tsx ======
+/** Borrado permanente — LOCAL FIRST */
+export async function deleteUserById(idOrKey: string): Promise<boolean> {
+  await openDatabases();
+  const _id = toUserDocId(idOrKey);
+  try {
+    const doc = await localDB.get(_id);
+    await localDB.remove(doc); // la sync replicará el delete
+    return true;
+  } catch (e: any) {
+    if (e?.status === 404) return false;
+    throw e;
+  }
+}
 
-// Tipo de usuario que espera la UI (estructuralmente compatible)
-type UIUser = {
-  id: string;
-  email: string;
-  name: string;
-  role: "manager" | "admin" | "user" | string; // tu UI puede usar "administrador", si lo mapeas en la vista
-  isActive: boolean;
-  permissions?: string[];
-  createdAt?: string;
-  updatedAt?: string;
-  deletedAt?: string;
-};
+export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
+  return deleteUserById(idOrKey);
+}
 
-function mapProfileToUI(u: UserProfileDoc): UIUser {
-  return {
-    id: u._id || `user_profile:${u.email}`,
-    email: u.email,
-    name: u.name,
-    role: u.role,
-    isActive: u.isActive,
-    permissions: u.permissions,
-    createdAt: u.createdAt,
-    updatedAt: u.updatedAt,
-    deletedAt: u.deletedAt,
+/** Busca por email en local */
+export async function findUserByEmail(email: string) {
+  await openDatabases();
+  try {
+    const res = await (localDB as any).find({
+      selector: { type: "user", email },
+      limit: 1,
+    });
+    if (res.docs && res.docs[0]) return res.docs[0];
+  } catch {}
+
+  const name = email.includes("@") ? email.split("@")[0] : email;
+  try { return await localDB.get(`user:${name}`); } catch {}
+  try { return await localDB.get(`user_${name}`); } catch {}
+
+  return null;
+}
+
+/** Watch de cambios del doc de usuario (replicación) */
+export async function watchUserDocByEmail(
+  email: string,
+  onUpdate: (doc: any) => void,
+): Promise<() => void> {
+  await openDatabases();
+  if (!localDB) return () => {};
+
+  const ids = [
+    `user_${email}`,
+    email.includes("@") ? `user:${email.split("@")[0]}` : `user:${email}`,
+  ];
+
+  const feed = localDB
+    .changes({
+      live: true,
+      since: "now",
+      include_docs: true,
+      doc_ids: ids,
+    })
+    .on("change", (ch: any) => {
+      if (ch?.doc) onUpdate(ch.doc);
+    })
+    .on("error", (err: any) => {
+      console.warn("[watchUserDocByEmail] error", err?.message || err);
+    });
+
+  return () => {
+    try { /* @ts-ignore */ feed?.cancel?.(); } catch {}
   };
 }
 
-/** Lista usuarios para la tabla de la UI */
-export async function getAllUsers(): Promise<UIUser[]> {
-  const db = getPouch();
-  const res = await (db as any).find({
-    selector: { type: "user_profile" },
-    limit: 5000,
-  });
-  const docs = (res.docs as unknown as UserProfileDoc[]) ?? [];
-  return docs.map(mapProfileToUI);
-}
-
-/** CREATE (wrapper para la página) — valida password y usa createUserFromPanel */
-export async function createUser(data: {
-  email: string;
-  password?: string; // tu CreateUserData la trae opcional; validamos aquí
-  role: string;
-  name?: string;
-  isActive?: boolean;
-  permissions?: string[];
-}): Promise<UIUser> {
-  const { email, password, role, name, isActive, permissions } = data;
-  if (!email) throw new Error("email es requerido");
-  if (!password) throw new Error("password es requerido");
-
-  const profile = await createUserFromPanel({
-    email,
-    password,
-    role,
-    name,
-    isActive,
-    permissions,
-  });
-
-  return mapProfileToUI(profile);
-}
-
-/** UPDATE (wrapper) — acepta 1 o 2 argumentos */
-export async function updateUser(
-  a:
-    | string
-    | {
-        id?: string;
-        email: string;
-        name?: string;
-        role?: string;
-        isActive?: boolean;
-        password?: string;
-        deletedAt?: string;
-      },
-  b?: Partial<{ name: string; role: string; isActive: boolean; password: string; deletedAt: string }>
-): Promise<UIUser | null> {
-  let email: string;
-  let patch: Partial<{ name: string; role: string; isActive: boolean; password: string; deletedAt: string }>;
-
-  if (typeof a === "string") {
-    email = a;
-    patch = b ?? {};
-  } else {
-    email = a.email;
-    patch = {
-      ...(a.name ? { name: a.name } : {}),
-      ...(a.role ? { role: a.role } : {}),
-      ...(typeof a.isActive === "boolean" ? { isActive: a.isActive } : {}),
-      ...(a.password ? { password: a.password } : {}),
-      ...(a.deletedAt ? { deletedAt: a.deletedAt } : {}),
-    };
-  }
-
-  const updatedProfile = await updateUserFromPanel(email, patch);
-  return updatedProfile ? mapProfileToUI(updatedProfile) : null;
-}
-
-/** SOFT DELETE (wrapper) — tu UI puede pasar email o id */
-export async function softDeleteUser(idOrEmail: string): Promise<boolean> {
-  const email = await resolveEmailFromIdOrEmail(idOrEmail);
-  if (!email) return false;
-  return deleteUserFromPanel(email);
-}
-
-/** DELETE by id (wrapper) — igual que softDeleteUser pero nombre distinto */
-export async function deleteUserById(idOrEmail: string): Promise<boolean> {
-  const email = await resolveEmailFromIdOrEmail(idOrEmail);
-  if (!email) return false;
-  return deleteUserFromPanel(email);
-}
-
-async function resolveEmailFromIdOrEmail(idOrEmail: string): Promise<string | null> {
-  if (!idOrEmail) return null;
-  // Si viene como 'user_profile:correo@dominio'
-  if (idOrEmail.startsWith("user_profile:")) {
-    return idOrEmail.slice("user_profile:".length);
-  }
-  // Si ya parece correo
-  if (idOrEmail.includes("@")) return idOrEmail;
-
-  // Si es un _id, intenta obtener el doc
-  try {
-    const db = getPouch();
-    const doc = (await (db as any).get(idOrEmail)) as any;
-    return doc?.email || null;
-  } catch {
-    return null;
-  }
-}
-
-// src/lib/database.ts
-export async function updateUserProfileRole(email: string, role: AppRole) {
-  const db = getPouch();
-  const q = await (db as any).find({ selector: { type: "user_profile", email }, limit: 1 });
-  const doc = q.docs?.[0];
-  if (!doc) throw new Error("Perfil no encontrado");
-  doc.role = role;
-  doc.updatedAt = new Date().toISOString();
-  const put = await (db as any).put(doc);
-  return { ...doc, _rev: put.rev };
-}
+export { localDB, remoteDB };
