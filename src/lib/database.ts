@@ -30,7 +30,7 @@ export function getCouchEnv(): CouchEnv {
 /** Cuando corre en el navegador usamos el proxy /couchdb (same-origin con cookie); en SSR va directo */
 function getRemoteBase() {
   const { serverBase } = getCouchEnv();
-  return isClient ? "/couchdb" : serverBase;
+  return isClient ? "/api/couch" : serverBase;
 }
 
 /** fetch con timeout (para no colgarnos en login) */
