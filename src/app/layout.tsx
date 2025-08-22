@@ -1,5 +1,5 @@
 import InstallButton from "../components/InstallButton";
-import { Toaster } from "sonner";
+import dynamic from "next/dynamic";
 import type React from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
@@ -8,6 +8,11 @@ import Providers from "@/components/providers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const inter = Inter({ subsets: ["latin"] });
+
+const Toaster = dynamic(
+  () => import("sonner").then((mod) => mod.Toaster),
+  { ssr: false }
+);
 
 export default function RootLayout({
   children,
