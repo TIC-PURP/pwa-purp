@@ -40,11 +40,18 @@ export function LoginForm() {
       const result = await dispatch(loginUser(data));
       if (loginUser.fulfilled.match(result)) {
         router.push("/principal");
-      } else {
-        setError("root", { message: "Credenciales inválidas" });
+      } else if (loginUser.rejected.match(result)) {
+        const message =
+          (result.payload as string) ||
+          result.error.message ||
+          "Credenciales inválidas";
+        setError("root", { message });
+        console.error("Error de login:", message);
       }
-    } catch (error) {
-      setError("root", { message: "Error de conexión" });
+    } catch (error: any) {
+      const message = error?.message || "Error de conexión";
+      setError("root", { message });
+      console.error("Error de login:", message);
     }
   };
 
