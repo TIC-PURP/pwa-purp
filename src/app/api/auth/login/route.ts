@@ -5,7 +5,10 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   try {
     const base = process.env.COUCH_HOST;
-    if (!base) return NextResponse.json({ ok:false, error:"Missing COUCH_HOST" }, { status:500 });
+    if (!base) {
+      console.error("[api/auth/login] missing COUCH_HOST");
+      return NextResponse.json({ ok:false, error:"Missing COUCH_HOST" }, { status:500 });
+    }
 
     const ct = req.headers.get("content-type") || "";
     let bodyText = "";
@@ -19,12 +22,16 @@ export async function POST(req: NextRequest) {
       bodyText = await req.text();
     }
 
+    const params = new URLSearchParams(bodyText);
+    console.log("[api/auth/login] attempting", params.get("name"));
+
     const loginRes = await fetch(`${base}/_session`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: bodyText,
       redirect: "manual",
     });
+    console.log("[api/auth/login] _session POST", loginRes.status);
 
     let setCookie = loginRes.headers.get("set-cookie") ?? undefined;
     if (setCookie) {
@@ -33,12 +40,15 @@ export async function POST(req: NextRequest) {
         .replace(/Path=[^;]+;?\s*/i, "Path=/; ");
     }
     const loginJson = await loginRes.json().catch(() => ({} as any));
+    console.log("[api/auth/login] loginJson", loginJson);
 
     const sessionRes = await fetch(`${base}/_session`, {
       method: "GET",
       headers: setCookie ? { cookie: setCookie } : undefined,
     });
+    console.log("[api/auth/login] _session GET", sessionRes.status);
     const sessionJson = await sessionRes.json().catch(() => ({} as any));
+    console.log("[api/auth/login] sessionJson", sessionJson);
 
     const resp = NextResponse.json(
       { ok: loginRes.ok && sessionRes.ok, login: loginJson, session: sessionJson },
@@ -48,6 +58,7 @@ export async function POST(req: NextRequest) {
     resp.headers.set("Cache-Control", "no-store");
     return resp;
   } catch (e:any) {
+    console.error("[api/auth/login] error", e);
     return NextResponse.json({ ok:false, error:"auth-login-failed", message: String(e?.message ?? e) }, { status:500 });
   }
 }
