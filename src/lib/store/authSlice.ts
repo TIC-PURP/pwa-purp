@@ -115,7 +115,8 @@ export const loginUser = createAsyncThunk<
     } catch {}
 
     // 6) Persistir sesión leyendo token de la cookie AuthSession
-    const token = getCookie("AuthSession") || "";
+    // Si la cookie no es accesible (HttpOnly), usamos un token simbólico
+    const token = getCookie("AuthSession") || "cookie-session";
     persistSession(user, token);
     return { user, token };
   } catch (onlineErr: any) {

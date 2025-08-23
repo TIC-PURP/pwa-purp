@@ -157,9 +157,6 @@ export async function loginOnlineToCouchDB(name: string, password: string) {
   if (!data?.ok) {
     throw new Error(data?.login?.message || "login failed");
   }
-  if (typeof document !== "undefined" && !document.cookie.includes("AuthSession=")) {
-    throw new Error("cookie de sesión no establecida");
-  }
   return true;
 }
 
