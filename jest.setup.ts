@@ -1,2 +1,3 @@
 // jest.setup.ts
-import "@testing-library/jest-dom/extend-expect";
+// La importación correcta para jest-dom en v6+
+import "@testing-library/jest-dom";

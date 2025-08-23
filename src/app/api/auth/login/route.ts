@@ -26,7 +26,12 @@ export async function POST(req: NextRequest) {
       redirect: "manual",
     });
 
-    const setCookie = loginRes.headers.get("set-cookie") ?? undefined;
+    let setCookie = loginRes.headers.get("set-cookie") ?? undefined;
+    if (setCookie) {
+      setCookie = setCookie
+        .replace(/Domain=[^;]+;?\s*/i, "")
+        .replace(/Path=[^;]+;?\s*/i, "Path=/; ");
+    }
     const loginJson = await loginRes.json().catch(() => ({} as any));
 
     const sessionRes = await fetch(`${base}/_session`, {
