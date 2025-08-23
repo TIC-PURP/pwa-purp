@@ -139,26 +139,31 @@ export async function stopSync() {
 
 /** Login online contra /api/auth/login */
 export async function loginOnlineToCouchDB(name: string, password: string) {
+  console.log("[db] loginOnlineToCouchDB start", { name });
   const body = JSON.stringify({ name, password });
-  const res = await fetchWithTimeout(
-    `/api/auth/login`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `/api/auth/login`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body,
       },
-      body,
-    },
-    12000,
-  );
+      12000,
+    );
+  } catch (err) {
+    console.error("[db] loginOnlineToCouchDB fetch error", err);
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
+  console.log("[db] loginOnlineToCouchDB response", res.status, data);
   if (!data?.ok) {
     throw new Error(data?.login?.message || "login failed");
-  }
-  if (typeof document !== "undefined" && !document.cookie.includes("AuthSession=")) {
-    throw new Error("cookie de sesión no establecida");
   }
   return true;
 }

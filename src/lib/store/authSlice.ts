@@ -66,12 +66,14 @@ export const loginUser = createAsyncThunk<
   LoginCredentials
 >("auth/login", async ({ email, password }, { rejectWithValue }) => {
   try {
+    console.log("[authSlice] loginUser start", email);
     // 1) Login ONLINE (crea cookie AuthSession)
     await loginOnlineToCouchDB(email, password);
 
     // 2) Intentar obtener el usuario REAL desde DB (por email)
     const now = new Date().toISOString();
     const dbUser: any = await findUserByEmail(email);
+    console.log("[authSlice] findUserByEmail", dbUser ? "found" : "null");
 
     // 3) Mapear a tu tipo `User` (sin campo `type`)
     const user: User = dbUser
@@ -105,6 +107,7 @@ export const loginUser = createAsyncThunk<
 
     // 4) Guardar/actualizar en Pouch local (offline-first)
     await guardarUsuarioOffline(user);
+    console.log("[authSlice] saved user offline", user._id);
 
     // 5) Reiniciar sync (usará la cookie recién creada)
     try {
@@ -115,13 +118,17 @@ export const loginUser = createAsyncThunk<
     } catch {}
 
     // 6) Persistir sesión leyendo token de la cookie AuthSession
-    const token = getCookie("AuthSession") || "";
+    // Si la cookie no es accesible (HttpOnly), usamos un token simbólico
+    const token = getCookie("AuthSession") || "cookie-session";
     persistSession(user, token);
+    console.log("[authSlice] login success", { user: user.email, token });
     return { user, token };
   } catch (onlineErr: any) {
+    console.error("[authSlice] loginUser error", onlineErr);
     const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
     // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
     const offline = await authenticateUser(email, password);
+    console.log("[authSlice] offline fallback", offline ? "success" : "fail");
     if (offline) {
       const user = offline as User;
       persistSession(user, "offline");
