@@ -59,7 +59,7 @@ export function LoginForm() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold text-center">
-            Iniciar Sesión
+            Iniiciar Sesión
           </CardTitle>
           <CardDescription className="text-center">
             Ingresa tus credenciales para acceder
