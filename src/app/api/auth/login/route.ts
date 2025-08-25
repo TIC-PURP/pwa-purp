@@ -10,21 +10,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok:false, error:"Missing COUCH_HOST" }, { status:500 });
     }
 
+    // 1) Leer body como JSON o form-urlencoded y convertir SIEMPRE a x-www-form-urlencoded para CouchDB
     const ct = req.headers.get("content-type") || "";
-    let bodyText = "";
-    if (ct.includes("application/x-www-form-urlencoded")) {
-      bodyText = await req.text();
-    } else if (ct.includes("application/json")) {
-      const j = await req.json();
-      const p = new URLSearchParams(j as any);
-      bodyText = p.toString();
+    let name = "", password = "";
+    if (ct.includes("application/json")) {
+      const j = await req.json().catch(() => ({}));
+      name = j?.name || j?.username || "";
+      password = j?.password || "";
+    } else if (ct.includes("application/x-www-form-urlencoded")) {
+      const txt = await req.text();
+      const p = new URLSearchParams(txt);
+      name = p.get("name") || p.get("username") || "";
+      password = p.get("password") || "";
     } else {
-      bodyText = await req.text();
+      // fallback: intenta ambas
+      const txt = await req.text();
+      try {
+        const j = JSON.parse(txt);
+        name = j?.name || j?.username || "";
+        password = j?.password || "";
+      } catch {
+        const p = new URLSearchParams(txt);
+        name = p.get("name") || p.get("username") || "";
+        password = p.get("password") || "";
+      }
     }
+    const bodyText = new URLSearchParams({ name, password }).toString();
+    console.log("[api/auth/login] attempting", name);
 
-    const params = new URLSearchParams(bodyText);
-    console.log("[api/auth/login] attempting", params.get("name"));
-
+    // 2) POST /_session (server->CouchDB)
     const loginRes = await fetch(`${base}/_session`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -33,6 +47,7 @@ export async function POST(req: NextRequest) {
     });
     console.log("[api/auth/login] _session POST", loginRes.status);
 
+    // 3) Normaliza Set-Cookie (quita Domain y fuerza Path=/)
     let setCookie = loginRes.headers.get("set-cookie") ?? undefined;
     if (setCookie) {
       setCookie = setCookie
@@ -40,8 +55,8 @@ export async function POST(req: NextRequest) {
         .replace(/Path=[^;]+;?\s*/i, "Path=/; ");
     }
     const loginJson = await loginRes.json().catch(() => ({} as any));
-    console.log("[api/auth/login] loginJson", loginJson);
 
+    // 4) GET /_session con la cookie (server->CouchDB) para devolver estado
     const sessionRes = await fetch(`${base}/_session`, {
       method: "GET",
       headers: setCookie ? { cookie: setCookie } : undefined,
@@ -50,6 +65,7 @@ export async function POST(req: NextRequest) {
     const sessionJson = await sessionRes.json().catch(() => ({} as any));
     console.log("[api/auth/login] sessionJson", sessionJson);
 
+    // 5) Responder al navegador y **propagar** el Set-Cookie
     const resp = NextResponse.json(
       { ok: loginRes.ok && sessionRes.ok, login: loginJson, session: sessionJson },
       { status: loginRes.ok ? 200 : loginRes.status }
