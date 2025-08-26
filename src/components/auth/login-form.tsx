@@ -1,5 +1,8 @@
 "use client";
 
+// Formulario de inicio de sesión. Maneja la captura de credenciales del
+// usuario, la validación mediante Zod y el dispatch de la acción de login.
+
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,11 +23,13 @@ import { loginUser } from "@/lib/store/authSlice";
 import { loginSchema, type LoginSchema } from "@/lib/validations";
 
 export function LoginForm() {
+  // Controla si se muestra la contraseña en texto plano o no
   const [showPassword, setShowPassword] = useState(false);
   const dispatch = useAppDispatch();
   const router = useRouter();
   const { isLoading } = useAppSelector((state) => state.auth);
 
+  // Configuramos React Hook Form con Zod para validar los campos
   const {
     register,
     handleSubmit,
@@ -34,12 +39,15 @@ export function LoginForm() {
     resolver: zodResolver(loginSchema),
   });
 
+  // Función que se ejecuta cuando el usuario envía el formulario
   const onSubmit = async (data: LoginSchema) => {
     try {
       const result = await dispatch(loginUser(data));
       if (loginUser.fulfilled.match(result)) {
+        // Autenticación exitosa → redirigimos al panel principal
         router.push("/principal");
       } else if (loginUser.rejected.match(result)) {
+        // Error controlado desde el thunk
         const message =
           (result.payload as string) ||
           result.error.message ||
@@ -48,6 +56,7 @@ export function LoginForm() {
         console.error("Error de login:", message);
       }
     } catch (error: any) {
+      // Error inesperado (por ejemplo, fallo de red)
       const message = error?.message || "Error de conexión";
       setError("root", { message });
       console.error("Error de login:", message);
@@ -66,7 +75,9 @@ export function LoginForm() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Formulario controlado por React Hook Form */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {/* Campo de correo electrónico */}
             <div className="space-y-2">
               <Label htmlFor="email">Correo Electrónico</Label>
               <div className="relative">
@@ -84,6 +95,7 @@ export function LoginForm() {
               )}
             </div>
 
+            {/* Campo de contraseña con botón para mostrar/ocultar */}
             <div className="space-y-2">
               <Label htmlFor="password">Contraseña</Label>
               <div className="relative">
@@ -116,12 +128,14 @@ export function LoginForm() {
               )}
             </div>
 
+            {/* Mensaje de error general */}
             {errors.root && (
               <p className="text-sm text-red-600 text-center">
                 {errors.root.message}
               </p>
             )}
 
+            {/* Botón de envío del formulario */}
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>

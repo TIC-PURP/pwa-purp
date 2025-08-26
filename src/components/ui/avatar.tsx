@@ -1,3 +1,4 @@
+// Componente UI avatar.tsx reutilizable
 "use client";
 
 import * as React from "react";

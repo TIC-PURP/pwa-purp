@@ -1,3 +1,4 @@
+// Esquemas de validación para formularios y datos de usuario
 import { z } from "zod";
 
 export const loginSchema = z.object({

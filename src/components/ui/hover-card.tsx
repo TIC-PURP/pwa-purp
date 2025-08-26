@@ -1,3 +1,4 @@
+// Componente UI hover-card.tsx reutilizable
 "use client";
 
 import * as React from "react";

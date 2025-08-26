@@ -1,3 +1,4 @@
+// Componente UI skeleton.tsx reutilizable
 import { cn } from "@/lib/utils";
 
 function Skeleton({

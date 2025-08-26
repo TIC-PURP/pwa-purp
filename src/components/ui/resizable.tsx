@@ -1,3 +1,4 @@
+// Componente UI resizable.tsx reutilizable
 "use client";
 
 import { GripVertical } from "lucide-react";

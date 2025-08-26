@@ -1,3 +1,4 @@
+// Página de administración de usuarios protegida por autenticación
 "use client";
 
 import { useState, useEffect } from "react";
@@ -39,29 +40,39 @@ import {
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
 export default function UsersPage() {
-
-const dispatch = useAppDispatch();
-const { user: me } = useAppSelector((s) => s.auth);
+  // Hook de Redux para despachar acciones
+  const dispatch = useAppDispatch();
+  // Usuario autenticado almacenado globalmente
+  const { user: me } = useAppSelector((s) => s.auth);
 
   const router = useRouter();
+  // Lista de usuarios recuperados
   const [users, setUsers] = useState<User[]>([]);
+  // Controla la visualización del formulario
   const [showForm, setShowForm] = useState(false);
+  // Usuario seleccionado para edición
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  // Usuario objetivo de eliminación
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
+  // Tipo de eliminación a aplicar
   const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
     "soft",
   );
+  // Indicador de operación en curso
   const [isLoading, setIsLoading] = useState(false);
 
+  // Cargar usuarios al montar el componente
   useEffect(() => {
     loadUsers();
   }, []);
 
+  // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
     const allUsers = await getAllUsers();
     setUsers(allUsers);
   };
 
+  // Crea un nuevo usuario y sincroniza según la conexión
   const handleCreateUser = async (data: CreateUserData) => {
     setIsLoading(true);
     try {
@@ -101,6 +112,7 @@ const { user: me } = useAppSelector((s) => s.auth);
     }
   };
 
+  // Actualiza los datos de un usuario existente
   const handleEditUser = async (data: CreateUserData) => {
     if (!editingUser) return;
     setIsLoading(true);
@@ -122,6 +134,7 @@ const { user: me } = useAppSelector((s) => s.auth);
     }
   };
 
+  // Elimina, desactiva o activa un usuario según el modo seleccionado
   const handleDeleteUser = async () => {
     if (!deletingUser) return;
     setIsLoading(true);
@@ -178,6 +191,7 @@ const { user: me } = useAppSelector((s) => s.auth);
     }
   };
 
+  // Cambia rápidamente el estado activo de un usuario
   const handleToggleUserStatus = async (user: User) => {
     setIsLoading(true);
     try {

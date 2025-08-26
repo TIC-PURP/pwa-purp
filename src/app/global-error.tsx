@@ -1,3 +1,4 @@
+// Maneja los errores globales y los reporta a Sentry
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
@@ -9,6 +10,7 @@ export default function GlobalError({
 }: {
   error: Error & { digest?: string };
 }) {
+  // Reporta el error a Sentry cuando el componente se monta
   useEffect(() => {
     Sentry.captureException(error);
   }, [error]);

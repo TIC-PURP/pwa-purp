@@ -1,3 +1,4 @@
+// Componente UI chart.tsx reutilizable
 "use client";
 import * as React from "react";
 import * as RechartsPrimitive from "recharts";

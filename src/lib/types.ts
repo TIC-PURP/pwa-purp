@@ -1,38 +1,41 @@
+// Roles disponibles en el sistema
 export type Role = "manager" | "admin" | "user";
+// Permisos específicos que puede tener un usuario
 export type Permission = "read" | "write" | "delete" | "manage_users";
 
 export interface User {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  role: Role;
-  permissions: Permission[];
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-  _id?: string;
+  id: string; // Identificador interno
+  name: string; // Nombre completo
+  email: string; // Correo electrónico
+  password: string; // Contraseña en texto plano (solo para demos)
+  role: Role; // Rol asignado
+  permissions: Permission[]; // Lista de permisos
+  isActive: boolean; // Estado del usuario
+  createdAt: string; // Fecha de creación
+  updatedAt: string; // Fecha de última actualización
+  _id?: string; // Campos internos de CouchDB
   _rev?: string;
 }
 
 export interface AuthState {
-  user: User | null;
-  token: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
+  user: User | null; // Usuario autenticado
+  token: string | null; // Token de sesión
+  isAuthenticated: boolean; // Bandera de autenticación
+  isLoading: boolean; // Estado de carga
 }
 
 export interface LoginCredentials {
-  email: string;
-  password: string;
+  email: string; // Correo de acceso
+  password: string; // Contraseña
 }
 
 export interface CreateUserData {
-  name: string;
-  email: string;
-  password: string;
-  role: Role;
-  permissions: Permission[];
+  name: string; // Nombre del usuario
+  email: string; // Correo electrónico
+  password: string; // Contraseña
+  role: Role; // Rol asignado
+  permissions: Permission[]; // Permisos asociados
 }
 
+// Niveles de acceso derivados de los permisos
 export type AccessType = "none" | "read_only" | "full";

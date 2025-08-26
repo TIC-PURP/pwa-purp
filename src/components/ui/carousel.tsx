@@ -1,3 +1,4 @@
+// Componente UI carousel.tsx reutilizable
 "use client";
 
 import * as React from "react";

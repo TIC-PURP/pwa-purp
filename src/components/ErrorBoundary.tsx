@@ -1,3 +1,4 @@
+// Componente de límite de errores para capturar fallos en el árbol de React
 "use client";
 
 import React from "react";
@@ -14,9 +15,11 @@ type State = {
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
+    // Estado inicial sin errores
     this.state = { hasError: false };
   }
 
+  // Actualiza el estado cuando ocurre un error en un hijo
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }

@@ -1,3 +1,4 @@
+// Pruebas unitarias para las acciones y reducer de autenticación
 import { configureStore } from '@reduxjs/toolkit';
 import authReducer, {
   loginUser,
@@ -6,6 +7,7 @@ import authReducer, {
 } from '@/lib/store/authSlice';
 import * as db from '@/lib/database';
 
+// Se mockean las funciones de base de datos para evitar llamadas reales
 jest.mock('@/lib/database', () => ({
   authenticateUser: jest.fn(),
   startSync: jest.fn(),
@@ -17,6 +19,7 @@ jest.mock('@/lib/database', () => ({
 }));
 
 describe('authSlice', () => {
+  // Usuario ficticio utilizado en las pruebas
   const sampleUser = {
     _id: 'user_test',
     id: 'user_test',
@@ -30,11 +33,13 @@ describe('authSlice', () => {
     updatedAt: 'now',
   } as any;
 
+  // Limpia mocks y almacenamiento local antes de cada caso
   beforeEach(() => {
     jest.clearAllMocks();
     window.localStorage.clear();
   });
 
+  // Debe autenticar con la base local cuando falla el login online
   it('login offline falls back to local authentication', async () => {
     (db.loginOnlineToCouchDB as jest.Mock).mockRejectedValue(new Error('offline'));
     (db.authenticateUser as jest.Mock).mockResolvedValue(sampleUser);
@@ -49,6 +54,7 @@ describe('authSlice', () => {
     expect(window.localStorage.getItem('auth')).toBeTruthy();
   });
 
+  // Al cerrar sesión se limpia el estado y se llama al logout del backend
   it('logout clears session and calls database logout', async () => {
     (db.stopSync as jest.Mock).mockResolvedValue(undefined);
     (db.logoutOnlineSession as jest.Mock).mockResolvedValue(undefined);
@@ -77,6 +83,7 @@ describe('authSlice', () => {
     expect(db.logoutOnlineSession).toHaveBeenCalled();
   });
 
+  // Cargar usuario desde localStorage debe hidratar el estado inicial
   it('loadUserFromStorage hydrates state', async () => {
     window.localStorage.setItem('auth', JSON.stringify({ user: sampleUser, token: 'abc123' }));
     const store = configureStore({ reducer: { auth: authReducer } });

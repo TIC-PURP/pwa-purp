@@ -1,3 +1,4 @@
+// Barra de navegación superior con información del usuario y logout
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ export function Navbar() {
   const router = useRouter();
   const { user } = useAppSelector((state) => state.auth);
 
+  // Cierra la sesión y redirige al formulario de login
   const handleLogout = async () => {
     await dispatch(logoutUser());
     router.push("/auth/login");

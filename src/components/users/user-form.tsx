@@ -1,3 +1,4 @@
+// Formulario para crear o editar usuarios con validaciones
 "use client";
 
 import { useEffect, useState } from "react";
@@ -26,6 +27,7 @@ import { createUserSchema, editUserSchema } from "@/lib/validations";
 import type { CreateUserData, User, Permission } from "@/lib/types";
 import { Eye, EyeOff } from "lucide-react";
 
+// Determina el nivel de acceso según los permisos otorgados
 function deriveAccessType(
   perms: Permission[] | undefined,
 ): "none" | "read_only" | "full" {
@@ -48,8 +50,8 @@ export function UserForm({
   onCancel,
   isLoading,
 }: UserFormProps) {
-  const [showPassword, setShowPassword] = useState(false);
-  const isEditing = !!user;
+  const [showPassword, setShowPassword] = useState(false); // Control de visibilidad de contraseña
+  const isEditing = !!user; // Indica si se está editando o creando
 
   const {
     register,

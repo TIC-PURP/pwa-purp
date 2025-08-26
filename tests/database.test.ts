@@ -1,4 +1,5 @@
-// Mock PouchDB and pouchdb-find before importing the module under test
+// Pruebas para las utilidades de base de datos basadas en PouchDB
+// Se mockean PouchDB y pouchdb-find antes de importar el módulo real
 jest.mock('pouchdb', () => {
   const PouchDBMock = jest.fn();
   (PouchDBMock as any).plugin = jest.fn();
@@ -7,14 +8,16 @@ jest.mock('pouchdb', () => {
 jest.mock('pouchdb-find', () => ({ __esModule: true, default: jest.fn() }));
 
 describe('database', () => {
+  // Restablece mocks y variables de entorno antes de cada prueba
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
     process.env.NEXT_PUBLIC_COUCHDB_URL = 'http://localhost:5984/gestion_pwa';
-    // stub global fetch to avoid network calls
+    // Stub de fetch global para evitar peticiones reales
     (global as any).fetch = jest.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
   });
 
+  // startSync debe iniciar la replicación solo una vez
   it('startSync starts replication only once', async () => {
     const PouchDBMock = require('pouchdb').default as jest.Mock;
     const syncHandler = { on: jest.fn().mockReturnThis(), cancel: jest.fn() };
@@ -32,6 +35,7 @@ describe('database', () => {
     expect(second).toBe(syncHandler);
   });
 
+  // updateUser debe modificar un documento existente
   it('updateUser updates existing user document', async () => {
     const PouchDBMock = require('pouchdb').default as jest.Mock;
     const existing = {
@@ -67,6 +71,7 @@ describe('database', () => {
     expect(store[existing._id].name).toBe('Alice B');
   });
 
+  // updateUser debe lanzar error si falta el identificador
   it('updateUser throws if identifier is missing', async () => {
     const PouchDBMock = require('pouchdb').default as jest.Mock;
     const localDB = { get: jest.fn(), put: jest.fn(), sync: jest.fn() };

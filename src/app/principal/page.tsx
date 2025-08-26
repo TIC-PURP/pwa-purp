@@ -1,3 +1,4 @@
+// Página principal del panel accesible tras autenticación
 "use client";
 
 import { RouteGuard } from "@/components/auth/route-guard";
@@ -14,6 +15,7 @@ import { BarChart3, Users, Shield, Activity } from "lucide-react";
 import Link from "next/link";
 
 export default function Principal() {
+  // Obtiene el usuario autenticado desde el store global
   const { user } = useAppSelector((state) => state.auth);
 
   return (
@@ -28,6 +30,7 @@ export default function Principal() {
                 Bienvenido, {user?.name}
               </h1>
             </div>
+            {/* Solo los usuarios con rol manager ven el acceso al panel */}
             {user?.role === "manager" && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <Link href="/users" className="block">

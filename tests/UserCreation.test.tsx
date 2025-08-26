@@ -1,6 +1,7 @@
+// Pruebas para la creación y recuperación de usuarios en la base local
 import { User } from '@/lib/types';
 
-// Mock PouchDB and pouchdb-find
+// Se mockean las dependencias de PouchDB antes de importar la lógica real
 jest.mock('pouchdb', () => {
   const PouchDBMock = jest.fn();
   (PouchDBMock as any).plugin = jest.fn();
@@ -9,6 +10,7 @@ jest.mock('pouchdb', () => {
 jest.mock('pouchdb-find', () => ({ __esModule: true, default: jest.fn() }));
 
 describe('Creación de usuarios', () => {
+  // Restablece módulos y mocks antes de cada prueba
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
@@ -16,6 +18,7 @@ describe('Creación de usuarios', () => {
     (global as any).fetch = jest.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
   });
 
+  // Debe insertar un usuario y luego recuperarlo de la base local
   it('crea un usuario y lo recupera de la base de datos local', async () => {
     const PouchDBMock = require('pouchdb').default as jest.Mock;
     const store: Record<string, any> = {};

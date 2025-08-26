@@ -1,4 +1,5 @@
 // src/lib/store/authSlice.ts
+// Slice de Redux encargado de la autenticación de usuarios
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import type { User } from "../types";
 import {
@@ -32,6 +33,7 @@ export interface LoginCredentials {
   password: string;
 }
 
+// Guarda o elimina la sesión en localStorage
 function persistSession(user: User | null, token: string | null) {
   if (typeof window === "undefined") return;
   if (user && token) {
@@ -41,6 +43,7 @@ function persistSession(user: User | null, token: string | null) {
   }
 }
 
+// Obtiene una cookie simple del navegador
 function getCookie(name: string) {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(

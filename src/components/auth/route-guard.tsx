@@ -1,5 +1,9 @@
 "use client";
 
+// Componente de orden superior que protege rutas según el estado de
+// autenticación y el rol requerido. Si no hay conexión evita redirecciones y
+// muestra el formulario de login directamente.
+
 import type React from "react";
 import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
@@ -27,7 +31,8 @@ export function RouteGuard({
     [isAuthenticated, requiredRole, user?.role],
   );
 
-  // Solo redirige cuando HAY red. En offline NO navegamos (renderizamos login inline).
+  // Solo redirige cuando HAY red. En offline NO navegamos (renderizamos
+  // LoginForm inline).
   useEffect(() => {
     if (isLoading) return;
     if (!offline && lacksAuthOrRole) {

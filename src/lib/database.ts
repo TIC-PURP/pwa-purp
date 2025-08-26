@@ -398,6 +398,7 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
   }
 }
 
+/** Alias para realizar borrado permanente */
 export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
   return deleteUserById(idOrKey);
 }

@@ -1,3 +1,4 @@
+// Componente UI badge.tsx reutilizable
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 

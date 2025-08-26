@@ -1,9 +1,12 @@
-// Next.js configuration with CSP and API cache headers
+// Configuración de Next.js incluyendo cabeceras de seguridad y cacheo
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Activa comprobaciones adicionales de React en desarrollo
   reactStrictMode: true,
+  // Deshabilita la optimización de imágenes de Next (útil en entornos limitados)
   images: { unoptimized: true },
   async headers() {
+    // Política de seguridad de contenido para limitar recursos externos
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
@@ -23,10 +26,12 @@ const nextConfig = {
 
     return [
       {
+        // Cabeceras aplicadas a todas las rutas
         source: "/:path*",
         headers: securityHeaders
       },
       {
+        // Evitamos almacenar en caché respuestas de las APIs sensibles
         source: "/api/couch/:path*",
         headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }]
       },

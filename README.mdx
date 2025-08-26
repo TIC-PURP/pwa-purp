@@ -1,0 +1,65 @@
+# Purp PWA
+
+Aplicación progresiva (PWA) construida con **Next.js 14**, **React 18** y **TypeScript**. El proyecto está diseñado con un enfoque *offline-first* gracias a la integración de **PouchDB** en el cliente y sincronización con **CouchDB** en el servidor.
+
+## Características principales
+
+- Interfaz moderna con **Tailwind CSS**.
+- Manejo de estado global mediante **Redux Toolkit**.
+- Autenticación persistente y sincronización de datos local y remoto.
+- Instalación como aplicación nativa mediante botón "Instalar".
+- Pruebas con **Jest** y **Testing Library**.
+
+## Requisitos
+
+- Node.js 18+
+- pnpm o npm
+
+## Instalación
+
+```bash
+pnpm install
+```
+
+## Desarrollo
+
+```bash
+pnpm dev
+```
+
+## Construcción de producción
+
+```bash
+pnpm build && pnpm start
+```
+
+## Pruebas
+
+```bash
+pnpm test
+```
+
+## Estructura del proyecto
+
+```
+src/
+├─ app/          # Rutas, layouts y páginas
+├─ components/   # Componentes reutilizables
+├─ lib/          # Utilidades y lógica de negocio
+├─ store/        # Estado global con Redux
+└─ styles/       # Estilos globales
+```
+
+## Autores
+
+- Equipo Purp
+
+## Licencia
+
+Distribuido bajo la licencia MIT.
+
+## Notas
+
+Todo el código está ampliamente comentado en español para facilitar su mantenimiento y comprensión.
+
+

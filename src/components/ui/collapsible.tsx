@@ -1,3 +1,4 @@
+// Componente UI collapsible.tsx reutilizable
 "use client";
 
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";

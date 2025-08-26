@@ -1,3 +1,4 @@
+// Componente UI tabs.tsx reutilizable
 "use client";
 
 import * as React from "react";

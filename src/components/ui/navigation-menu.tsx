@@ -1,3 +1,4 @@
+// Componente UI navigation-menu.tsx reutilizable
 import * as React from "react";
 import * as NavigationMenuPrimitive from "@radix-ui/react-navigation-menu";
 import { cva } from "class-variance-authority";

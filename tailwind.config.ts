@@ -1,9 +1,12 @@
 import type { Config } from "tailwindcss";
 
-// all in fixtures is set to tailwind v3 as interims solutions
+// Configuración de Tailwind CSS para estilos utilitarios.
+// Define dónde buscar clases y personaliza la temática del proyecto.
 
 const config: Config = {
+  // Activamos modo oscuro mediante la clase `dark`
   darkMode: ["class"],
+  // Rutas donde Tailwind debe escanear clases utilizadas
   content: [
     "./src/app/**/*.{ts,tsx,js,jsx,mdx}",
     "./src/components/**/*.{ts,tsx,js,jsx,mdx}",
@@ -15,6 +18,7 @@ const config: Config = {
 
   theme: {
     extend: {
+      // Colores derivados de variables CSS para fácil personalización
       colors: {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
@@ -73,21 +77,14 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       keyframes: {
+        // Animaciones para el componente acordeón
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
         },
       },
       animation: {
@@ -96,6 +93,7 @@ const config: Config = {
       },
     },
   },
+  // Plugins adicionales utilizados en el proyecto
   plugins: [require("tailwindcss-animate")],
 };
 export default config;

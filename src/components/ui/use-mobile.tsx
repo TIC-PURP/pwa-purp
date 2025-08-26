@@ -1,3 +1,4 @@
+// Componente UI use-mobile.tsx reutilizable
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;

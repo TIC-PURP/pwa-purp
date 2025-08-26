@@ -1,3 +1,4 @@
+// Hook y utilidades para manejar notificaciones tipo toast
 "use client";
 
 // Inspired by react-hot-toast library
@@ -24,6 +25,7 @@ const actionTypes = {
 
 let count = 0;
 
+// Genera un identificador incremental para cada toast
 function genId() {
   count = (count + 1) % Number.MAX_SAFE_INTEGER;
   return count.toString();
@@ -55,6 +57,7 @@ interface State {
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+// Agrega un toast a la cola de eliminación automática
 const addToRemoveQueue = (toastId: string) => {
   if (toastTimeouts.has(toastId)) {
     return;
@@ -130,6 +133,7 @@ const listeners: Array<(state: State) => void> = [];
 
 let memoryState: State = { toasts: [] };
 
+// Informa a los listeners cuando cambia el estado
 function dispatch(action: Action) {
   memoryState = reducer(memoryState, action);
   listeners.forEach((listener) => {
@@ -139,6 +143,7 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">;
 
+// Crea y muestra un nuevo toast
 function toast({ ...props }: Toast) {
   const id = genId();
 

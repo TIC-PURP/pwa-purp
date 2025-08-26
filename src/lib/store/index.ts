@@ -1,6 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "./authSlice";
 
+// Store de Redux con el slice de autenticación
 export const store = configureStore({
   reducer: {
     auth: authReducer,
@@ -13,5 +14,6 @@ export const store = configureStore({
     }),
 });
 
+// Tipos auxiliares
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

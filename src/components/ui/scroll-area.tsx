@@ -1,3 +1,4 @@
+// Componente UI scroll-area.tsx reutilizable
 "use client";
 
 import * as React from "react";

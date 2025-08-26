@@ -1,12 +1,13 @@
 import type { MetadataRoute } from "next";
 
+// Define el archivo manifest.json para la PWA
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "PWA",
-    short_name: "PWA",
+    name: "PWA", // Nombre completo
+    short_name: "PWA", // Nombre corto
     description: "PWA",
-    start_url: "/",
-    display: "standalone",
+    start_url: "/", // Punto de inicio al abrir la app instalada
+    display: "standalone", // Se comporta como aplicación nativa
     background_color: "#ffffff",
     theme_color: "#ffffff", //"#3b82f6ff"
     icons: [

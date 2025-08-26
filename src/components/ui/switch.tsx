@@ -1,3 +1,4 @@
+// Componente UI switch.tsx reutilizable
 "use client";
 
 import * as React from "react";

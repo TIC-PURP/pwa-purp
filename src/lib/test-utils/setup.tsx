@@ -1,4 +1,5 @@
 // lib/test-utils/setup.tsx
+// Utilidades para pruebas que envuelven componentes con el store de Redux
 import type { ReactElement, ReactNode } from "react";
 import { render, type RenderOptions } from "@testing-library/react";
 import { Provider } from "react-redux";

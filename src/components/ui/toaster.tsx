@@ -1,3 +1,4 @@
+// Componente UI toaster.tsx reutilizable
 "use client";
 
 import { useToast } from "@/hooks/use-toast";

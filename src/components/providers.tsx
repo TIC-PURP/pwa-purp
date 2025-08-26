@@ -1,4 +1,5 @@
 // src/components/providers.tsx
+// Proveedores globales: Redux, autenticación y sincronización
 "use client";
 
 import React, { useEffect, useRef } from "react";
@@ -14,7 +15,7 @@ import {
   guardarUsuarioOffline,
 } from "@/lib/database";
 
-/** Bootstrap de auth/sync y watcher del usuario */
+/** Bootstrap de autenticación/sincronización y observador del usuario */
 function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
