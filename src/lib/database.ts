@@ -138,9 +138,9 @@ export async function stopSync() {
 }
 
 /** Login online contra /api/auth/login */
-export async function loginOnlineToCouchDB(name: string, password: string) {
-  console.log("[db] loginOnlineToCouchDB start", { name });
-  const body = JSON.stringify({ name, password });
+export async function loginOnlineToCouchDB(email: string, password: string) {
+  console.log("[db] loginOnlineToCouchDB start", { email });
+  const body = JSON.stringify({ email, password });
   let res: Response;
   try {
     res = await fetchWithTimeout(

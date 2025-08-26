@@ -35,9 +35,9 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
         try {
-          const id = user.email || user.name;
-          if (id && user.password) {
-            await loginOnlineToCouchDB(id, user.password);
+          const email = user.email || user.name;
+          if (email && user.password) {
+            await loginOnlineToCouchDB(email, user.password);
             await startSync();
           }
         } catch {
