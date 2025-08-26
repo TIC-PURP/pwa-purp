@@ -1,16 +1,47 @@
-import { createUser, getAllUsers } from "@/lib/database";
-import { User } from "@/lib/types";
+import { User } from '@/lib/types';
 
-describe("Creación de usuarios", () => {
-  it("crea un usuario y lo recupera de la base de datos local", async () => {
+// Mock PouchDB and pouchdb-find
+jest.mock('pouchdb', () => {
+  const PouchDBMock = jest.fn();
+  (PouchDBMock as any).plugin = jest.fn();
+  return { __esModule: true, default: PouchDBMock };
+});
+jest.mock('pouchdb-find', () => ({ __esModule: true, default: jest.fn() }));
+
+describe('Creación de usuarios', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    process.env.NEXT_PUBLIC_COUCHDB_URL = 'http://localhost:5984/gestion_pwa';
+    (global as any).fetch = jest.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+  });
+
+  it('crea un usuario y lo recupera de la base de datos local', async () => {
+    const PouchDBMock = require('pouchdb').default as jest.Mock;
+    const store: Record<string, any> = {};
+    const localDB = {
+      put: jest.fn(async (doc: any) => {
+        store[doc._id] = doc;
+        return { ok: true };
+      }),
+      get: jest.fn(async (id: string) => store[id]),
+      createIndex: jest.fn().mockResolvedValue(undefined),
+      find: jest.fn(async () => ({ docs: Object.values(store) })),
+      sync: jest.fn(),
+    };
+    const remoteDB = {};
+    PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
+
+    const { createUser, getAllUsers } = await import('@/lib/database');
+
     const newUser: User = {
-      id: "",
-      _id: "",
-      name: "Nuevo Usuario",
-      email: "nuevo@purp.com.mx",
-      password: "Test123!",
-      role: "user",
-      permissions: ["read"],
+      id: '',
+      _id: '',
+      name: 'Nuevo Usuario',
+      email: 'nuevo@purp.com.mx',
+      password: 'Test123!',
+      role: 'user',
+      permissions: ['read'],
       isActive: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -18,8 +49,8 @@ describe("Creación de usuarios", () => {
 
     await createUser(newUser);
     const users = await getAllUsers();
-    const found = users.find((u) => u.email === "nuevo@purp.com.mx");
+    const found = users.find((u: any) => u.email === newUser.email);
     expect(found).toBeDefined();
-    expect(found?.name).toBe("Nuevo Usuario");
+    expect(found?.name).toBe('Nuevo Usuario');
   });
 });
