@@ -1,4 +1,4 @@
-// Minimal Next config: CSP headers only, no rewrites (we use /api/* proxies)
+// Next.js configuration with CSP and API cache headers
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -13,15 +13,26 @@ const nextConfig = {
       "font-src 'self' data:",
       "frame-ancestors 'self'"
     ].join('; ');
+
+    const securityHeaders = [
+      { key: "Content-Security-Policy", value: csp },
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" }
+    ];
+
     return [
       {
         source: "/:path*",
-        headers: [
-          { key: "Content-Security-Policy", value: csp },
-          { key: "Referrer-Policy", value: "no-referrer" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" }
-        ]
+        headers: securityHeaders
+      },
+      {
+        source: "/api/couch/:path*",
+        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }]
+      },
+      {
+        source: "/api/auth/:path*",
+        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }]
       }
     ];
   }
