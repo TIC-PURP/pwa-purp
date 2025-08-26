@@ -1,5 +1,6 @@
 // src/lib/store/authSlice.ts
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import bcrypt from "bcryptjs";
 import type { User } from "../types";
 import {
   authenticateUser,
@@ -75,6 +76,8 @@ export const loginUser = createAsyncThunk<
     const dbUser: any = await findUserByEmail(email);
     console.log("[authSlice] findUserByEmail", dbUser ? "found" : "null");
 
+    const hashedPass = dbUser?.password || (await bcrypt.hash(password, 10));
+
     // 3) Mapear a tu tipo `User` (sin campo `type`)
     const user: User = dbUser
       ? {
@@ -83,7 +86,7 @@ export const loginUser = createAsyncThunk<
           name:
             dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
           email: dbUser.email ?? email,
-          password: dbUser.password ?? password, // ⚠️ en prod: hashear
+          password: hashedPass,
           role: dbUser.role ?? "user",
           permissions: Array.isArray(dbUser.permissions)
             ? dbUser.permissions
@@ -97,7 +100,7 @@ export const loginUser = createAsyncThunk<
           id: `user_${email}`,
           name: email.includes("@") ? email.split("@")[0] : email,
           email,
-          password, // ⚠️ en prod: hashear
+          password: hashedPass,
           role: "user",
           permissions: ["read"],
           isActive: true,

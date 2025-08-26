@@ -1,6 +1,8 @@
 // src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
 
+import bcrypt from "bcryptjs";
+
 const isClient = typeof window !== "undefined";
 
 let PouchDB: any = null;
@@ -64,6 +66,12 @@ function toUserDocId(input: string) {
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
   return `user:${slug(input)}`;                    // email o username
 }
+function hashPassword(pass: string) {
+  if (!pass) return "";
+  if (/^\$2[aby]\$/.test(pass)) return pass; // ya está hasheado
+  return bcrypt.hashSync(pass, 10);
+}
+
 function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
   const _id = `user:${key}`;
@@ -74,7 +82,7 @@ function buildUserDocFromData(data: any) {
     type: "user",
     name: data.name || key,
     email: data.email || "",
-    password: data.password || "",
+    password: hashPassword(data.password || ""),
     role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
     isActive: data.isActive !== false,
@@ -191,7 +199,8 @@ export async function authenticateUser(identifier: string, password: string) {
   } catch {}
   for (const cand of candidates) {
     const r = await localDB.find({ selector: { id: cand } });
-    if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
+    if (r.docs?.[0] && (await bcrypt.compare(password, r.docs[0].password)))
+      return r.docs[0];
   }
   return null;
 }
@@ -358,6 +367,10 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   }
 
   delete patch._id;
+
+  if (patch.password) {
+    patch.password = hashPassword(patch.password);
+  }
 
   const doc = await localDB.get(_id);
   const updated = {

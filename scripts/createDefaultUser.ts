@@ -1,6 +1,7 @@
 import "dotenv/config";
 import PouchDB from "pouchdb";
 import PouchFind from "pouchdb-find";
+import bcrypt from "bcryptjs";
 import type { User } from "../src/lib/types";
 import { getCouchEnv } from "../src/lib/database";
 
@@ -32,7 +33,8 @@ async function upsertUser(db: any) {
       console.log(`✅ El usuario ya existe en ${db.name}:`, (result.docs[0] as User).email);
       return;
     }
-    await db.put({ _id: defaultUser.id, ...defaultUser });
+    const hashed = await bcrypt.hash(defaultUser.password, 10);
+    await db.put({ _id: defaultUser.id, ...defaultUser, password: hashed });
     console.log(`✅ Usuario creado exitosamente en ${db.name}.`);
   } catch (error) {
     console.error(`❌ Error al crear el usuario en ${db.name}:`, error);
