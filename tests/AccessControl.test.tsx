@@ -1,11 +1,15 @@
 import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { store } from "@/lib/store";
-import Dashboard from "@/app/(protected)/dashboard/page";
+import Dashboard from "@/app/principal/page";
 import { setUser } from "@/lib/store/authSlice";
 
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
+}));
+
 describe("Control de acceso por rol", () => {
-  it("debe mostrar el dashboard solo al rol 'manager'", () => {
+  it("muestra el panel para el rol 'manager'", () => {
     store.dispatch(
       setUser({
         id: "user_1",
@@ -16,6 +20,10 @@ describe("Control de acceso por rol", () => {
         isActive: true,
       }),
     );
+    store.dispatch({
+      type: "auth/load/fulfilled",
+      payload: { user: store.getState().auth.user, token: "token" },
+    });
 
     render(
       <Provider store={store}>
@@ -23,10 +31,10 @@ describe("Control de acceso por rol", () => {
       </Provider>,
     );
 
-    expect(screen.getByText("Bienvenido")).toBeInTheDocument();
+    expect(screen.getByText(/Panel de Control/)).toBeInTheDocument();
   });
 
-  it("no debe mostrar el dashboard si el rol no es 'manager'", () => {
+  it("oculta el panel si el rol no es 'manager'", () => {
     store.dispatch(
       setUser({
         id: "user_2",
@@ -37,6 +45,10 @@ describe("Control de acceso por rol", () => {
         isActive: true,
       }),
     );
+    store.dispatch({
+      type: "auth/load/fulfilled",
+      payload: { user: store.getState().auth.user, token: "token" },
+    });
 
     render(
       <Provider store={store}>
@@ -44,6 +56,6 @@ describe("Control de acceso por rol", () => {
       </Provider>,
     );
 
-    expect(screen.queryByText("Bienvenido")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Panel de Control/)).not.toBeInTheDocument();
   });
 });
