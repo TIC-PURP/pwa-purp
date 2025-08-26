@@ -1,41 +1,80 @@
-// app/api/auth/login/route.ts
-// Endpoint que realiza el login contra la base de datos CouchDB
+// src/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
 
-// URL del servidor Couch y secreto compartido para el proxy
-const COUCH_URL = process.env.COUCH_URL ?? "";
-const SECRET    = process.env.COUCH_PROXY_SECRET ?? "";
+const COUCHDB_URL = process.env.COUCHDB_URL;
+const COUCHDB_PROXY_SECRET = process.env.COUCHDB_PROXY_SECRET;
 
-// (opcional) quita esta línea si tienes runtime edge
-// export const runtime = "nodejs";
-
-// Procesa la solicitud POST con las credenciales del usuario
 export async function POST(req: Request) {
-  if (!COUCH_URL || !SECRET) {
-    return new NextResponse("Server misconfigured (env)", { status: 500 });
+  try {
+    if (!COUCHDB_URL || !COUCHDB_PROXY_SECRET) {
+      return NextResponse.json(
+        { error: "Server misconfigured" },
+        { status: 500 }
+      );
+    }
+
+    // soporta JSON o form-data desde el cliente
+    let email = "";
+    let password = "";
+
+    const ct = req.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const body = await req.json();
+      email = (body.email || body.username || "").trim();
+      password = (body.password || "").trim();
+    } else {
+      const form = await req.formData();
+      email = String(form.get("email") || form.get("username") || "").trim();
+      password = String(form.get("password") || "").trim();
+    }
+
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: "email/password required" },
+        { status: 400 }
+      );
+    }
+
+    // CouchDB _session requiere application/x-www-form-urlencoded
+    const body = new URLSearchParams({
+      name: email,
+      password,
+    });
+
+    const couchRes = await fetch(`${COUCHDB_URL}/_session`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-proxy-secret": COUCHDB_PROXY_SECRET,
+      },
+      body,
+      // no seguimos redirecciones; solo nos interesa el status y el JSON
+      redirect: "manual",
+    });
+
+    // Couch devuelve JSON con ok/name/roles o error/unauthorized
+    const data = await couchRes
+      .json()
+      .catch(() => ({ error: "invalid json from couch" }));
+
+    if (!couchRes.ok) {
+      // pasa el motivo al cliente para depurar
+      return NextResponse.json(
+        { error: data?.reason || "login failed" },
+        { status: couchRes.status }
+      );
+    }
+
+    // Nota: el Set-Cookie de CouchDB es para el dominio del proxy (35-…sslip.io),
+    // el navegador en localhost no puede usar esa cookie. La app debe consumir
+    // Couch exclusivamente vía endpoints del servidor (no directo desde el cliente).
+    return NextResponse.json({
+      ok: true,
+      user: data?.name,
+      roles: data?.roles || [],
+    });
+  } catch (err) {
+    console.error("[login] unexpected", err);
+    return NextResponse.json({ error: "unexpected error" }, { status: 500 });
   }
-
-  const { email, password } = await req.json();
-
-  const body = new URLSearchParams({ name: email, password });
-  const r = await fetch(`${COUCH_URL}/_session`, {
-    method: "POST",
-    headers: {
-      "x-proxy-secret": SECRET,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body,
-    redirect: "manual",
-  });
-
-  if (r.status === 200) {
-    const headers = new Headers();
-    const setCookie = r.headers.get("set-cookie");
-    if (setCookie) headers.set("set-cookie", setCookie); // opcional
-    return new NextResponse(JSON.stringify({ ok: true }), { status: 200, headers });
-  }
-
-  // Devuelve el texto de error del servidor Couch
-  const txt = await r.text().catch(() => "");
-  return new NextResponse(txt || "login failed", { status: r.status });
 }

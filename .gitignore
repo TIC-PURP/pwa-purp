@@ -11,7 +11,7 @@ build/
 next-env.d.ts
 
 # === ENV FILES ===
-.env
+.env.local
 .env.*
 !.env.example  # Deja visible solo un ejemplo si lo tienes
 
