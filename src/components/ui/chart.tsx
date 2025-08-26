@@ -1,12 +1,8 @@
 "use client";
 import * as React from "react";
 import * as RechartsPrimitive from "recharts";
-// Simple sanitize function to escape HTML (replace with a proper library if needed)
-function sanitize(input: string): string {
-  const div = document.createElement("div");
-  div.textContent = input;
-  return div.innerHTML;
-}
+
+import { sanitize } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const;
