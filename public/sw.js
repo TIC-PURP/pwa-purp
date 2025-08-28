@@ -1,3 +1,6 @@
+// Service Worker principal generado por Workbox para esta PWA. Se encarga de
+// precachear los recursos listados y responder a las peticiones de la app
+// incluso cuando no haya conexión a internet.
 if (!self.define) {
   let e,
     a = {};
@@ -29,9 +32,13 @@ if (!self.define) {
 }
 define(["./workbox-bb54ffba"], function (e) {
   "use strict";
+  // Importa el script de fallback para páginas offline y activa inmediatamente
+  // el service worker para tomar el control de las pestañas abiertas.
   (importScripts("fallback-FPcU97zAzYj99yFn1Sw01.js"),
     self.skipWaiting(),
     e.clientsClaim(),
+    // Precache de todos los recursos generados por Next.js y otros estáticos.
+    // Cada entrada contiene la URL y un hash de revisión para invalidad caches.
     e.precacheAndRoute(
       [
         {

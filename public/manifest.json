@@ -1,4 +1,5 @@
 {
+  "_comment": "Manifiesto de la aplicación PWA que define nombre, iconos y colores",
   "name": "PWA",
   "short_name": "PWA",
   "icons": [

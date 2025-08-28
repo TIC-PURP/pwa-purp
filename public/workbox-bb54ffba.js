@@ -1,3 +1,6 @@
+// Biblioteca de Workbox que contiene utilidades para manejar cachés y
+// enrutar peticiones en el service worker. Este archivo es generado
+// automáticamente durante el build y es consumido por `sw.js`.
 define(["exports"], function (t) {
   "use strict";
   try {
