@@ -1,9 +1,14 @@
 "use client";
 
+// Página de ejemplo que muestra cómo integrar Sentry en un proyecto Next.js.
+// Incluye un botón que provoca un error para verificar el reporte de eventos
+// hacia Sentry.
 import Head from "next/head";
 import * as Sentry from "@sentry/nextjs";
 import { useState, useEffect } from "react";
 
+// Error personalizado utilizado para distinguir los errores generados en esta
+// página de prueba de otros posibles errores de la aplicación.
 class SentryExampleFrontendError extends Error {
   constructor(message: string | undefined) {
     super(message);
@@ -12,10 +17,14 @@ class SentryExampleFrontendError extends Error {
 }
 
 export default function Page() {
+  // Indica si ya se envió el error de ejemplo a Sentry
   const [hasSentError, setHasSentError] = useState(false);
+  // Determina si el SDK puede comunicarse con los servidores de Sentry
   const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
+    // Comprueba la conectividad con Sentry para habilitar o deshabilitar el
+    // botón de prueba según corresponda.
     async function checkConnectivity() {
       const result = await Sentry.diagnoseSdkConnectivity();
       setIsConnected(result !== "sentry-unreachable");
@@ -25,6 +34,7 @@ export default function Page() {
 
   return (
     <div>
+      {/* Metadatos para la pestaña del navegador */}
       <Head>
         <title>sentry-example-page</title>
         <meta name="description" content="Test Sentry for your Next.js app!" />
@@ -65,6 +75,8 @@ export default function Page() {
 
         <button
           type="button"
+          // Al hacer clic se crea un span de rendimiento y se lanza un error
+          // intencional para comprobar el envío a Sentry.
           onClick={async () => {
             await Sentry.startSpan(
               {
@@ -78,15 +90,18 @@ export default function Page() {
                 }
               },
             );
+            // Error controlado que será capturado por Sentry
             throw new SentryExampleFrontendError(
               "This error is raised on the frontend of the example page.",
             );
           }}
+          // El botón se deshabilita si no hay conectividad con Sentry
           disabled={!isConnected}
         >
           <span>Throw Sample Error</span>
         </button>
 
+        {/* Mensaje condicional según el estado de la prueba */}
         {hasSentError ? (
           <p className="success">Error sent to Sentry.</p>
         ) : !isConnected ? (
@@ -104,6 +119,7 @@ export default function Page() {
         <div className="flex-spacer" />
       </main>
 
+      {/* Estilos en línea únicamente para esta página de demostración */}
       <style>{`
         main {
           display: flex;
