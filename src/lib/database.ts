@@ -21,7 +21,7 @@ export function getCouchEnv(): CouchEnv {
   const url = new URL(raw);
   const path = url.pathname.replace(/\/+$/, "");
   const parts = path.split("/").filter(Boolean);
-  const dbName = parts[parts.length - 1] || "gestion_pwa";
+  const dbName = parts[parts.length - 1] || "pwa-purp";
 
   const serverBase = `${url.protocol}//${url.host}`;
   return { serverBase, dbName };
