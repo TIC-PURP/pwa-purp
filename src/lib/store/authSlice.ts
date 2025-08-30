@@ -129,8 +129,13 @@ export const loginUser = createAsyncThunk<
   } catch (onlineErr: any) {
     console.error("[authSlice] loginUser error", onlineErr);
     const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
-    // Fallback OFFLINE (sin red o sin cookie pero con usuario local)
-    const offline = await authenticateUser(email, password);
+    // Fallback OFFLINE (sin red o si localDB no está listo)
+    let offline: any = null;
+    try {
+      offline = await authenticateUser(email, password);
+    } catch (err) {
+      console.error("[authSlice] offline auth error", err);
+    }
     console.log("[authSlice] offline fallback", offline ? "success" : "fail");
     if (offline) {
       const user = offline as User;
