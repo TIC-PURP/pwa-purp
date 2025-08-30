@@ -179,7 +179,7 @@ export async function logoutOnlineSession() {
 /** Login offline contra Pouch local */
 export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
-  if (!localDB) return null;
+  if (!localDB) throw new Error("localDB no inicializado");
 
   const candidates = [
     `user_${identifier}`,
@@ -224,30 +224,6 @@ export async function guardarUsuarioOffline(user: any) {
   }
 }
 
-/** Semilla local para primer arranque offline */
-export async function initializeDefaultUsers() {
-  await openDatabases();
-  if (!localDB) return;
-  const now = new Date().toISOString();
-  const seeds = [
-    {
-      name: "Mario Acosta",
-      email: "mario_acosta@purp.com.mx",
-      password: "Purp_*2023@",
-      role: "manager",
-      permissions: ["read", "write", "delete", "manage_users"],
-      createdAt: now,
-    }
-  ];
-  for (const data of seeds) {
-    const def = buildUserDocFromData(data);
-    try {
-      await localDB.get(def._id);
-    } catch (e: any) {
-      if (e?.status === 404) await localDB.put(def);
-    }
-  }
-}
 
 /* ============================
    ==========  USERS  =========
@@ -317,12 +293,27 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
+  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+
+  if (online) {
+    try {
+      const res = await remoteDB.put(doc);
+      doc._rev = res.rev;
+      doc.___writePath = "remote";
+      try { await localDB.put(doc); } catch {}
+      return doc;
+    } catch (err) {
+      console.warn("[createUser] remote put failed, falling back to local", err);
+    }
+  }
+
   try {
     const existing = await localDB.get(doc._id);
     doc._rev = existing._rev;
     doc.createdAt = existing.createdAt || doc.createdAt;
   } catch {}
-  await localDB.put(doc); // << LOCAL ONLY. La replicación lo sube.
+  doc.___writePath = "local";
+  await localDB.put(doc); // LOCAL ONLY. La replicación lo sube.
   return doc;
 }
 
@@ -368,7 +359,20 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     type: "user",
     updatedAt: new Date().toISOString(),
   };
-  await localDB.put(updated); // << LOCAL ONLY
+  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+  if (online) {
+    try {
+      const res = await remoteDB.put(updated);
+      updated._rev = res.rev;
+      updated.___writePath = "remote";
+      try { await localDB.put(updated); } catch {}
+      return updated;
+    } catch (err) {
+      console.warn("[updateUser] remote put failed, falling back to local", err);
+    }
+  }
+  updated.___writePath = "local";
+  await localDB.put(updated); // LOCAL ONLY
   return updated;
 }
 

@@ -46,9 +46,6 @@ pwa-purp/
 │   ├── workbox-*.js      # Librerías Workbox
 │   └── icons/            # Íconos de la PWA
 │
-├── scripts/              # Scripts utilitarios
-│   └── createDefaultUser.ts
-│
 ├── snippets/             # Ejemplos de uso
 │   └── sentry-example-page/
 │       └── page.tsx

@@ -8,7 +8,6 @@ import { store } from "@/lib/store";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loadUserFromStorage, setUser } from "@/lib/store/authSlice";
 import {
-  initializeDefaultUsers,
   startSync,
   loginOnlineToCouchDB,
   watchUserDocByEmail,
@@ -21,10 +20,9 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
   const cancelWatch = useRef<null | (() => void)>(null);
 
-  // Semilla + rehidratación de sesión
+  // Rehidratación de sesión
   useEffect(() => {
     (async () => {
-      try { await initializeDefaultUsers(); } catch {}
       // @ts-ignore
       dispatch(loadUserFromStorage());
     })();
