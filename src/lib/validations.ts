@@ -22,7 +22,8 @@ const availablePermissions = [
   "manage_users",
 ] as const;
 const permissionEnum = z.enum(availablePermissions);
-const roleEnum = z.enum(["manager", "administrador", "user"]);
+// Roles válidos en la app (mantener consistencia con tipos y guardas)
+const roleEnum = z.enum(["manager", "admin", "user"]);
 
 export type Permission = z.infer<typeof permissionEnum>;
 export type Role = z.infer<typeof roleEnum>;

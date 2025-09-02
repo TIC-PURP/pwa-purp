@@ -3,7 +3,7 @@
 // Formulario de inicio de sesión. Maneja la captura de credenciales del
 // usuario, la validación mediante Zod y el dispatch de la acción de login.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -27,7 +27,7 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const dispatch = useAppDispatch();
   const router = useRouter();
-  const { isLoading } = useAppSelector((state) => state.auth);
+  const { isLoading, isAuthenticated } = useAppSelector((state) => state.auth);
 
   // Configuramos React Hook Form con Zod para validar los campos
   const {
@@ -43,14 +43,20 @@ export function LoginForm() {
   const onSubmit = async (data: LoginSchema) => {
     try {
       const result = await dispatch(loginUser(data));
-      if (loginUser.fulfilled.match(result)) {
+      // Log y navegación robusta por tipo de resultado
+      // @ts-ignore
+      console.log("[login-form] result", result?.type, result?.meta?.requestStatus);
+      if (
+        loginUser.fulfilled.match(result) ||
+        (result as any)?.meta?.requestStatus === "fulfilled"
+      ) {
         // Autenticación exitosa → redirigimos al panel principal
         router.push("/principal");
       } else if (loginUser.rejected.match(result)) {
         // Error controlado desde el thunk
         const message =
-          (result.payload as string) ||
-          result.error.message ||
+          (result as any)?.payload ||
+          (result as any)?.error?.message ||
           "Credenciales inválidas";
         setError("root", { message });
         console.error("Error de login:", message);
@@ -63,13 +69,18 @@ export function LoginForm() {
     }
   };
 
+  // Navegación de respaldo: si el estado global pasa a autenticado, navega
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      router.replace("/principal");
+    }
+  }, [isAuthenticated, isLoading, router]);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            Iniiciar Sesión
-          </CardTitle>
+          <CardTitle className="text-2xl font-bold text-center">Iniciar Sesión</CardTitle>
           <CardDescription className="text-center">
             Ingresa tus credenciales para acceder
           </CardDescription>
@@ -85,6 +96,7 @@ export function LoginForm() {
                 <Input
                   id="email"
                   type="email"
+                  autoComplete="username"
                   placeholder="email"
                   className="pl-10"
                   {...register("email")}
@@ -103,6 +115,7 @@ export function LoginForm() {
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
                   placeholder="••••••••"
                   className="pl-10 pr-10"
                   {...register("password")}
@@ -114,30 +127,22 @@ export function LoginForm() {
                   className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                   onClick={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
               {errors.password && (
-                <p className="text-sm text-red-600">
-                  {errors.password.message}
-                </p>
+                <p className="text-sm text-red-600">{errors.password.message}</p>
               )}
             </div>
 
             {/* Mensaje de error general */}
             {errors.root && (
-              <p className="text-sm text-red-600 text-center">
-                {errors.root.message}
-              </p>
+              <p className="text-sm text-red-600 text-center">{errors.root.message}</p>
             )}
 
             {/* Botón de envío del formulario */}
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
+            <Button type="submit" className="w-full" disabled={isLoading && !isAuthenticated}>
+              {isLoading && !isAuthenticated ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>
           </form>
         </CardContent>

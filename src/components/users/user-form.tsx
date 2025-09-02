@@ -144,6 +144,7 @@ export function UserForm({
               <Label htmlFor="name">Nombre Completo</Label>
               <Input
                 id="name"
+                autoComplete="name"
                 placeholder="Nombre del usuario"
                 {...register("name")}
               />
@@ -157,6 +158,7 @@ export function UserForm({
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
                 placeholder="correo@ejemplo.com"
                 {...register("email")}
               />
@@ -177,6 +179,7 @@ export function UserForm({
                 placeholder={
                   isEditing ? "Dejar vacío para mantener actual" : "••••••••"
                 }
+                autoComplete={isEditing ? "new-password" : "new-password"}
                 {...register("password")}
               />
               <Button

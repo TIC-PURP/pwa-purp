@@ -1,23 +1,17 @@
 // src/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
 
-const COUCHDB_URL = process.env.COUCHDB_URL;
-const COUCHDB_PROXY_SECRET = process.env.COUCHDB_PROXY_SECRET;
+// Esta ruta hace login contra CouchDB (_session) a través del proxy local
+// y reenvía el Set-Cookie al navegador para que PouchDB pueda autenticarse
+// en /api/couch. No se elimina el flag Secure (queda comentado por si se
+// requiere en entornos HTTP de desarrollo).
 
 export async function POST(req: Request) {
   try {
-    if (!COUCHDB_URL || !COUCHDB_PROXY_SECRET) {
-      return NextResponse.json(
-        { error: "Server misconfigured" },
-        { status: 500 }
-      );
-    }
-
-    // soporta JSON o form-data desde el cliente
+    // Soporta JSON o form-data
+    const ct = req.headers.get("content-type") || "";
     let email = "";
     let password = "";
-
-    const ct = req.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const body = await req.json();
       email = (body.email || body.username || "").trim();
@@ -29,50 +23,48 @@ export async function POST(req: Request) {
     }
 
     if (!email || !password) {
-      return NextResponse.json(
-        { error: "email/password required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "email/password required" }, { status: 400 });
     }
 
-    // CouchDB _session requiere application/x-www-form-urlencoded
-    const body = new URLSearchParams({
-      name: email,
-      password,
-    });
+    // Body para CouchDB _session (x-www-form-urlencoded)
+    const sessionBody = new URLSearchParams({ name: email, password });
 
-    const couchRes = await fetch(`${COUCHDB_URL}/_session`, {
+    // Llamada al PROXY local para que el Set-Cookie sea del mismo origen
+    const origin = `${req.headers.get("x-forwarded-proto") || "http"}://${req.headers.get("host")}`;
+    const proxyUrl = `${origin}/api/couch/_session`;
+    const couchRes = await fetch(proxyUrl, {
       method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "x-proxy-secret": COUCHDB_PROXY_SECRET,
-      },
-      body,
-      // no seguimos redirecciones; solo nos interesa el status y el JSON
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: sessionBody,
       redirect: "manual",
     });
 
-    // Couch devuelve JSON con ok/name/roles o error/unauthorized
-    const data = await couchRes
-      .json()
-      .catch(() => ({ error: "invalid json from couch" }));
-
-    if (!couchRes.ok) {
-      // pasa el motivo al cliente para depurar
+    // Respuesta de Couch
+    const data = await couchRes.json().catch(() => ({} as any));
+    if (!couchRes.ok || (data as any)?.error) {
       return NextResponse.json(
-        { error: data?.reason || "login failed" },
-        { status: couchRes.status }
+        { error: (data as any)?.reason || (data as any)?.error || "login failed" },
+        { status: couchRes.status || 401 },
       );
     }
 
-    // Nota: el Set-Cookie de CouchDB es para el dominio del proxy (35-…sslip.io),
-    // el navegador en localhost no puede usar esa cookie. La app debe consumir
-    // Couch exclusivamente vía endpoints del servidor (no directo desde el cliente).
-    return NextResponse.json({
-      ok: true,
-      user: data?.name,
-      roles: data?.roles || [],
-    });
+    // Reenviar Set-Cookie al cliente; en localhost/http quitamos Secure para que el navegador la acepte.
+    let setCookie = couchRes.headers.get("set-cookie") || "";
+    if (setCookie) {
+      setCookie = setCookie.replace(/;\s*Domain=[^;]*/i, "");
+      const isLocal = (req.headers.get("x-forwarded-proto") || "http") === "http" &&
+        /^(localhost|127\.0\.0\.1)(:|$)/.test(String(req.headers.get("host") || ""));
+      if (isLocal) {
+        setCookie = setCookie.replace(/;\s*Secure/gi, "");
+      }
+      if (!/;\s*Path=/i.test(setCookie)) setCookie += "; Path=/";
+      if (!/;\s*SameSite=/i.test(setCookie)) setCookie += "; SameSite=Lax";
+    }
+
+    const res = NextResponse.json({ ok: true, user: (data as any)?.name, roles: (data as any)?.roles || [] });
+    if (setCookie) res.headers.set("set-cookie", setCookie);
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   } catch (err) {
     console.error("[login] unexpected", err);
     return NextResponse.json({ error: "unexpected error" }, { status: 500 });

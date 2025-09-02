@@ -8,6 +8,7 @@ async function proxy(req: NextRequest, path: string[]) {
   try {
     const targetBase = process.env.COUCH_HOST;
     if (!targetBase) {
+      console.error("[couch-proxy] Missing COUCH_HOST env");
       return NextResponse.json({ ok: false, error: "Missing COUCH_HOST env" }, { status: 500 });
     }
     const search = req.nextUrl.search ?? "";
@@ -19,8 +20,33 @@ async function proxy(req: NextRequest, path: string[]) {
     if (ct) headers["content-type"] = ct;
     const cookie = req.headers.get("cookie");
     if (cookie) headers["cookie"] = cookie;
+    // Aceptar JSON por defecto
+    headers["accept"] = headers["accept"] || "application/json";
+
+    // Inyectar secreto del proxy si está configurado
+    const proxySecret = process.env.COUCHDB_PROXY_SECRET;
+    if (proxySecret) headers["x-proxy-secret"] = proxySecret;
+
+    // Utilidad para enmascarar valores sensibles de cookies en logs
+    const redact = (val?: string | null) => {
+      const s = (val || "").toString();
+      return s.replace(/(AuthSession=)([^;]+)/gi, (_m, p1, p2) => {
+        if (!p2) return p1 + "<empty>";
+        const head = p2.slice(0, 6);
+        const tail = p2.slice(-4);
+        return `${p1}${head}…${tail}`;
+      });
+    };
 
     const method = req.method.toUpperCase();
+    console.log(
+      "[couch-proxy] ->",
+      method,
+      target,
+      "cookie:", redact(cookie),
+      "x-proxy-secret:", proxySecret ? "present" : "absent",
+    );
+
     const hasBody = !["GET", "HEAD"].includes(method);
     const body = hasBody ? await req.text() : undefined;
 
@@ -39,11 +65,13 @@ async function proxy(req: NextRequest, path: string[]) {
     // Reenvía cookies y tipo de contenido
     const setCookie = res.headers.get("set-cookie");
     if (setCookie) nextRes.headers.set("set-cookie", setCookie);
+    console.log("[couch-proxy] <-", res.status, res.statusText, "set-cookie:", redact(setCookie));
     const resCT = res.headers.get("content-type");
     if (resCT) nextRes.headers.set("content-type", resCT);
     nextRes.headers.set("Cache-Control", "no-store");
     return nextRes;
   } catch (e: any) {
+    console.error("[couch-proxy] error", e?.message || e);
     return NextResponse.json(
       { ok: false, error: "Proxy error", message: String(e?.message ?? e) },
       { status: 500 },

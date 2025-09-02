@@ -131,9 +131,15 @@ export async function startSync() {
 
 /** Detiene replicación */
 export async function stopSync() {
-  if (syncHandler?.cancel) {
-    try { await syncHandler.cancel(); } catch {}
-  }
+  try {
+    // Evitar cuelgues: no esperar a que cancel() resuelva
+    // Algunos adaptadores de PouchDB no devuelven una Promise resoluble aquí
+    // y dejar await puede colgar flujos como el login.
+    // @ts-ignore
+    if (syncHandler?.cancel) {
+      try { syncHandler.cancel(); } catch {}
+    }
+  } catch {}
   syncHandler = null;
 }
 
@@ -162,10 +168,13 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
   }
   const data = await res.json().catch(() => ({}));
   console.log("[db] loginOnlineToCouchDB response", res.status, data);
-  if (!data?.ok) {
-    throw new Error(data?.login?.message || "login failed");
+  // Mejor manejo de errores: si el API devolvió error, propagar mensaje claro
+  if (!res.ok || !data?.ok) {
+    const msg = (data && (data.error || data.reason)) || res.statusText || "login failed";
+    throw new Error(String(msg));
   }
-  return true;
+  // Devolvemos los datos para usar roles en el cliente
+  return data as any; // { ok: boolean, user?: string, roles?: string[] }
 }
 
 /** Cierra la sesión del servidor */
@@ -181,18 +190,44 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
 
-  const candidates = [
-    `user_${identifier}`,
-    identifier.includes("@") ? `user_${identifier.split("@")[0]}` : null,
-  ].filter(Boolean) as string[];
-
+  // 1) Intentar match exacto por email (más robusto)
   try {
-    await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" });
+    await ensureUserIndexes();
+    const r = await localDB.find({ selector: { type: "user", email: identifier }, limit: 1 });
+    const doc = r.docs?.[0];
+    if (doc && doc.password === password) return doc;
   } catch {}
-  for (const cand of candidates) {
-    const r = await localDB.find({ selector: { id: cand } });
-    if (r.docs?.[0] && r.docs[0].password === password) return r.docs[0];
+
+  // 2) Intentar por 'id' con slug del email/username
+  const ids: string[] = [];
+  const emailSlug = slug(identifier);
+  ids.push(`user_${emailSlug}`);
+  if (identifier.includes("@")) {
+    const name = identifier.split("@")[0];
+    ids.push(`user_${slug(name)}`);
   }
+  try { await localDB.createIndex({ index: { fields: ["id"] }, name: "idx-id" }); } catch {}
+  for (const id of ids) {
+    try {
+      const r = await localDB.find({ selector: { id }, limit: 1 });
+      const doc = r.docs?.[0];
+      if (doc && doc.password === password) return doc;
+    } catch {}
+  }
+
+  // 3) Intentar por _id (user:slug)
+  const docIds: string[] = [`user:${emailSlug}`];
+  if (identifier.includes("@")) {
+    const name = identifier.split("@")[0];
+    docIds.push(`user:${slug(name)}`);
+  }
+  for (const _id of docIds) {
+    try {
+      const doc = await localDB.get(_id);
+      if (doc && doc.password === password) return doc;
+    } catch {}
+  }
+
   return null;
 }
 
@@ -267,7 +302,7 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
     const resA = await localDB.allDocs({
       include_docs: true,
       startkey: "user:",
-      endkey: "user;\ufff0",
+      endkey: "user:\ufff0",
       limit,
     });
     const resB = await localDB.allDocs({
@@ -301,6 +336,11 @@ export async function createUser(data: any) {
       doc._rev = res.rev;
       doc.___writePath = "remote";
       try { await localDB.put(doc); } catch {}
+      // Best-effort: also create a CouchDB _users account so the user can login online
+      try {
+        const roles = [doc.role].filter(Boolean) as string[];
+        await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
+      } catch (e) { console.warn("[createUser] _users upsert failed", (e as any)?.message || e); }
       return doc;
     } catch (err) {
       console.warn("[createUser] remote put failed, falling back to local", err);
@@ -314,6 +354,14 @@ export async function createUser(data: any) {
   } catch {}
   doc.___writePath = "local";
   await localDB.put(doc); // LOCAL ONLY. La replicación lo sube.
+  // If online, still try to create _users auth so the user can login immediately
+  try {
+    const online2 = typeof navigator !== "undefined" && navigator.onLine;
+    if (online2) {
+      const roles = [doc.role].filter(Boolean) as string[];
+      await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
+    }
+  } catch {}
   return doc;
 }
 
@@ -349,6 +397,10 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   }
 
   delete patch._id;
+  // No sobreescribir password con cadena vacía desde el formulario de edición
+  if (typeof patch.password === "string" && patch.password.trim() === "") {
+    delete patch.password;
+  }
 
   const doc = await localDB.get(_id);
   const updated = {
@@ -359,6 +411,11 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     type: "user",
     updatedAt: new Date().toISOString(),
   };
+  const wasActive = doc.isActive !== false;
+  const isNowActive = updated.isActive !== false;
+  const oldName = (doc.email || doc.name || "").trim();
+  const newName = (updated.email || updated.name || "").trim();
+  const nameChanged = oldName && newName && oldName !== newName;
   const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
   if (online) {
     try {
@@ -366,6 +423,32 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
       updated._rev = res.rev;
       updated.___writePath = "remote";
       try { await localDB.put(updated); } catch {}
+      // Best-effort: sync CouchDB _users according to status and identity changes
+      try {
+        const roles = [updated.role].filter(Boolean) as string[];
+        if (wasActive !== isNowActive) {
+          // Status changed
+          if (!isNowActive) {
+            // Deactivated: remove auth account
+            await deleteRemoteAuthUser(oldName || newName);
+          } else {
+            // Activated: ensure auth account exists with current identity and password
+            if (nameChanged) {
+              await deleteRemoteAuthUser(oldName);
+            }
+            await upsertRemoteAuthUser({ name: newName, password: updated.password, roles });
+          }
+        } else {
+          // Status unchanged
+          if (isNowActive) {
+            // Only sync auth account when active
+            if (nameChanged) {
+              await deleteRemoteAuthUser(oldName);
+            }
+            await upsertRemoteAuthUser({ name: newName, password: patch.password, roles });
+          }
+        }
+      } catch (e) { console.warn("[updateUser] _users auth sync failed", (e as any)?.message || e); }
       return updated;
     } catch (err) {
       console.warn("[updateUser] remote put failed, falling back to local", err);
@@ -385,6 +468,10 @@ export async function softDeleteUser(idOrKey: string) {
   doc.updatedAt = new Date().toISOString();
   doc.deletedAt = doc.updatedAt;
   await localDB.put(doc); // << LOCAL ONLY
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine;
+    if (online) await deleteRemoteAuthUser(doc.email || doc.name);
+  } catch {}
   return doc;
 }
 
@@ -404,6 +491,24 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
 
 /** Alias para realizar borrado permanente */
 export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
+  // Best-effort: remove CouchDB _users account before deleting local doc
+  try {
+    await openDatabases();
+    const online = typeof navigator !== "undefined" && navigator.onLine;
+    if (online) {
+      try {
+        const _id = toUserDocId(idOrKey);
+        const doc = await localDB.get(_id);
+        const email = (doc && (doc.email || doc.name)) || "";
+        if (email) {
+          await fetch(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+        }
+      } catch {}
+    }
+  } catch {}
   return deleteUserById(idOrKey);
 }
 
@@ -433,8 +538,12 @@ export async function watchUserDocByEmail(
   await openDatabases();
   if (!localDB) return () => {};
 
+  // Track by slugged keys to match how docs are stored locally (buildUserDocFromData)
+  const key = slug(email);
   const ids = [
-    `user_${email}`,
+    `user_${key}`,
+    `user:${key}`,
+    // Back-compat: also watch username-only key for older docs
     email.includes("@") ? `user:${email.split("@")[0]}` : `user:${email}`,
   ];
 
@@ -458,3 +567,45 @@ export async function watchUserDocByEmail(
 }
 
 export { localDB, remoteDB };
+
+// ===========================
+// _users helpers (client-side)
+// ===========================
+async function upsertRemoteAuthUser({ name, password, roles }: { name?: string; password?: string; roles?: string[] }) {
+  const n = (name || "").trim();
+  if (!n) return;
+  try {
+    // Try create; if exists, update.
+    if (password) {
+      const createRes = await fetch(`/api/admin/couch/users`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ name: n, password, roles: roles || [] }),
+      });
+      if (createRes.ok || createRes.status === 201) return;
+      if (createRes.status !== 409) return; // other error, give up silently
+    }
+    // Update roles/password if provided
+    await fetch(`/api/admin/couch/users`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ name: n, password, roles }),
+    });
+  } catch (e) {
+    // ignore, UI already indicates local/remote path
+  }
+}
+
+// Remove CouchDB _users account for given name/email (best-effort)
+async function deleteRemoteAuthUser(name?: string) {
+  const n = (name || "").trim();
+  if (!n) return;
+  try {
+    await fetch(`/api/admin/couch/users?name=${encodeURIComponent(n)}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+  } catch {}
+}

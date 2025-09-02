@@ -35,7 +35,7 @@ import {
   createUser,
   updateUser,
   softDeleteUser,
-  deleteUserById,
+  hardDeleteUser,
 } from "@/lib/database";
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
@@ -68,7 +68,8 @@ export default function UsersPage() {
 
   // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
-    const allUsers = await getAllUsers();
+    // Incluir inactivos para que no desaparezcan del panel
+    const allUsers = await getAllUsers({ includeInactive: true });
     setUsers(allUsers);
   };
 
@@ -104,6 +105,13 @@ export default function UsersPage() {
       await loadUsers();
       setShowForm(false);
       setEditingUser(null);
+      if (typeof navigator !== "undefined") {
+        if (navigator.onLine) {
+          toast.success("Cuenta de acceso (/_users) actualizada/creada (intentada)");
+        } else {
+          toast.message("La cuenta de acceso se actualizará en Couch al volver online.");
+        }
+      }
     } catch (error) {
       console.error(error);
       toast.error("No se pudo crear el usuario.");
@@ -126,6 +134,13 @@ export default function UsersPage() {
         );
       await loadUsers();
       setEditingUser(null);
+      if (typeof navigator !== "undefined") {
+        if (navigator.onLine) {
+          toast.success("Cuenta de acceso (/_users) actualizada (intentada)");
+        } else {
+          toast.message("La cuenta de acceso se actualizará en Couch al volver online.");
+        }
+      }
     } catch (error) {
       console.error(error);
       toast.error("No se pudo actualizar el usuario.");
@@ -165,7 +180,7 @@ export default function UsersPage() {
             "Usuario reactivado offline; se subirá al recuperar Internet.",
           );
       } else {
-        const ok = await deleteUserById(
+        const ok = await hardDeleteUser(
           deletingUser._id || deletingUser.id || deletingUser.email,
         );
         if (ok) {
@@ -289,6 +304,7 @@ export default function UsersPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={!user.isActive}
                           onClick={() => setEditingUser(user)}
                         >
                           <Edit className="h-4 w-4" />
@@ -306,6 +322,7 @@ export default function UsersPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={!user.isActive}
                           onClick={() => {
                             setDeletingUser(user);
                             setDeleteMode("hard");
@@ -410,12 +427,24 @@ export default function UsersPage() {
                     if (deleteMode === "soft") {
                       await softDeleteUser(deletingUser._id || deletingUser.id);
                       toast.success("Usuario desactivado");
+                      if (typeof navigator !== "undefined") {
+                        if (navigator.onLine) toast.success("Cuenta de acceso desactivada en Couch (intentada)");
+                        else toast.message("La cuenta de acceso se desactivará en Couch al volver online.");
+                      }
                     } else if (deleteMode === "activate") {
                       await updateUser({ ...deletingUser, isActive: true });
                       toast.success("Usuario activado");
+                      if (typeof navigator !== "undefined") {
+                        if (navigator.onLine) toast.success("Cuenta de acceso activada en Couch (intentada)");
+                        else toast.message("La cuenta de acceso se activará en Couch al volver online.");
+                      }
                     } else {
-                      await deleteUserById(deletingUser._id || deletingUser.id);
+                      await hardDeleteUser(deletingUser._id || deletingUser.id);
                       toast.success("Usuario eliminado permanentemente");
+                      if (typeof navigator !== "undefined") {
+                        if (navigator.onLine) toast.success("Cuenta de acceso eliminada en Couch (intentada)");
+                        else toast.message("La cuenta de acceso se eliminará en Couch al volver online.");
+                      }
                     }
                     await loadUsers();
                     setDeletingUser(null);

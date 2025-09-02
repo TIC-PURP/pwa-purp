@@ -70,10 +70,8 @@ export const loginUser = createAsyncThunk<
 >("auth/login", async ({ email, password }, { rejectWithValue }) => {
   try {
     console.log("[authSlice] loginUser start", email);
-    // 1) Login ONLINE (crea cookie AuthSession) y obtener roles
-    const sessionInfo: any = await loginOnlineToCouchDB(email, password);
-    const sessionRoles: string[] = Array.isArray(sessionInfo?.roles) ? sessionInfo.roles : [];
-    console.log("[authSlice] session roles", sessionRoles);
+    // 1) Login ONLINE (crea cookie AuthSession)
+    await loginOnlineToCouchDB(email, password);
 
     // 2) Intentar obtener el usuario REAL desde DB (por email)
     const now = new Date().toISOString();
@@ -81,15 +79,6 @@ export const loginUser = createAsyncThunk<
     console.log("[authSlice] findUserByEmail", dbUser ? "found" : "null");
 
     // 3) Mapear a tu tipo `User` (sin campo `type`)
-    // Preferimos el rol proveniente de la sesión (CouchDB/_users) sobre el almacenado local
-    // para evitar que un rol local obsoleto "baje" permisos (p.ej. user -> manager).
-    const sessionRole = sessionRoles.includes("admin")
-      ? "admin"
-      : sessionRoles.includes("manager")
-      ? "manager"
-      : null;
-    const resolvedRole = sessionRole || (dbUser?.role as string | undefined) || "user";
-
     const user: User = dbUser
       ? {
           _id: dbUser._id ?? `user_${email}`,
@@ -98,7 +87,7 @@ export const loginUser = createAsyncThunk<
             dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
           email: dbUser.email ?? email,
           password: dbUser.password ?? password, // ⚠️ en prod: hashear
-          role: resolvedRole,
+          role: dbUser.role ?? "user",
           permissions: Array.isArray(dbUser.permissions)
             ? dbUser.permissions
             : ["read"],
@@ -112,7 +101,7 @@ export const loginUser = createAsyncThunk<
           name: email.includes("@") ? email.split("@")[0] : email,
           email,
           password, // ⚠️ en prod: hashear
-          role: resolvedRole,
+          role: "user",
           permissions: ["read"],
           isActive: true,
           createdAt: now,
@@ -125,12 +114,10 @@ export const loginUser = createAsyncThunk<
 
     // 5) Reiniciar sync (usará la cookie recién creada)
     try {
-      // no await para evitar bloquear el thunk de login
-      stopSync();
+      await stopSync();
     } catch {}
     try {
-      // no await para evitar bloquear el thunk de login
-      startSync();
+      await startSync();
     } catch {}
 
     // 6) Persistir sesión leyendo token de la cookie AuthSession
@@ -138,7 +125,6 @@ export const loginUser = createAsyncThunk<
     const token = getCookie("AuthSession") || "cookie-session";
     persistSession(user, token);
     console.log("[authSlice] login success", { user: user.email, token });
-    console.log("[authSlice] about to return payload");
     return { user, token };
   } catch (onlineErr: any) {
     console.error("[authSlice] loginUser error", onlineErr);
@@ -154,7 +140,6 @@ export const loginUser = createAsyncThunk<
     if (offline) {
       const user = offline as User;
       persistSession(user, "offline");
-      console.log("[authSlice] offline path success, returning payload");
       return { user, token: "offline" };
     }
     return rejectWithValue(errorMessage);
@@ -200,11 +185,9 @@ const authSlice = createSlice({
     builder
       // Rehidratación al cargar
       .addCase(loadUserFromStorage.pending, (state) => {
-        console.log("[authSlice.reducer] loadUserFromStorage.pending");
         state.isLoading = true;
       })
       .addCase(loadUserFromStorage.fulfilled, (state, action) => {
-        console.log("[authSlice.reducer] loadUserFromStorage.fulfilled");
         const { user, token } = action.payload as any;
         state.user = user;
         state.token = token;
@@ -212,14 +195,12 @@ const authSlice = createSlice({
         state.isLoading = false;
       })
       .addCase(loadUserFromStorage.rejected, (state) => {
-        console.log("[authSlice.reducer] loadUserFromStorage.rejected");
         state.isLoading = false;
       })
       // Login
       .addCase(
         loginUser.fulfilled,
         (state, action: PayloadAction<{ user: User; token: string }>) => {
-          console.log("[authSlice.reducer] loginUser.fulfilled", !!action.payload);
           state.isLoading = false;
           state.isAuthenticated = true;
           state.user = action.payload.user;
@@ -227,15 +208,10 @@ const authSlice = createSlice({
         },
       )
       .addCase(loginUser.pending, (state) => {
-        console.log("[authSlice.reducer] loginUser.pending");
         state.isLoading = true;
         state.error = null;
       })
       .addCase(loginUser.rejected, (state, action) => {
-        console.log(
-          "[authSlice.reducer] loginUser.rejected",
-          (action.payload as any) || action.error?.message,
-        );
         state.isLoading = false;
         state.error =
           (action.payload as string) ||
