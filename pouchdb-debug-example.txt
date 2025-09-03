@@ -1,5 +1,0 @@
-// Agrega en database.ts cuando estés en desarrollo
-if (process.env.NODE_ENV === 'development') {
-  const PouchDB = require('pouchdb');
-  PouchDB.debug.enable('*'); // Habilita logs
-}

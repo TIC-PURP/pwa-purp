@@ -57,3 +57,13 @@ jest-html-reporters-*.html
 *.cache/
 .cache/
 turbo/
+# Local dev notes (ignore specific local-only files)
+tmp_authSlice.txt
+redux-devtools.md
+pouchdb-logs.md
+pouchdb-debug-example.txt
+docs/local/
+tmp_*.txt
+tmp_*.md
+notes/
+scratch/
