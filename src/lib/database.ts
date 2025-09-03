@@ -84,6 +84,19 @@ function buildUserDocFromData(data: any) {
   };
 }
 
+// Elimina campos reservados no permitidos por CouchDB (claves que empiezan por "_"
+// excepto las reconocidas). Evita errores de validación como
+// "Bad special document member: ___writePath".
+function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
+  const allowed = new Set(["_id", "_rev", "_deleted", "_attachments"]);
+  const out: any = {};
+  for (const k in doc) {
+    if (k.startsWith("_") && !allowed.has(k)) continue;
+    out[k] = (doc as any)[k];
+  }
+  return out as T;
+}
+
 /** Abre/crea las bases local y remota */
 export async function openDatabases() {
   if (!isClient) return;
@@ -324,6 +337,44 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
   }
 }
 
+/** Limpia campos inválidos (como ___writePath) de documentos de usuario existentes */
+export async function cleanupUserDocs(): Promise<number> {
+  await openDatabases();
+  if (!localDB) return 0;
+  const allowed = new Set(["_id", "_rev", "_deleted", "_attachments"]);
+  const needsClean = (doc: any) => Object.keys(doc).some(k => k.startsWith("_") && !allowed.has(k));
+
+  let docs: any[] = [];
+  try {
+    const res = await (localDB as any).find({ selector: { type: "user" }, limit: 5000 });
+    docs = res.docs || [];
+  } catch {
+    const resA = await localDB.allDocs({ include_docs: true, startkey: "user:", endkey: "user:\ufff0", limit: 5000 });
+    const resB = await localDB.allDocs({ include_docs: true, startkey: "user_", endkey: "user_\ufff0", limit: 5000 });
+    docs = [...resA.rows, ...resB.rows].map((r: any) => r.doc).filter(Boolean);
+  }
+
+  let cleaned = 0;
+  for (const d of docs) {
+    if (d?.type !== "user") continue;
+    if (!needsClean(d)) continue;
+    const sanitized = sanitizeForCouch(d);
+    try {
+      await localDB.put({ ...sanitized });
+      cleaned++;
+    } catch (e) {
+      // si choca por rev, intentamos traer y reintentar una vez
+      try {
+        const latest = await localDB.get(d._id);
+        const merged = sanitizeForCouch({ ...latest, ...sanitized, _rev: latest._rev });
+        await localDB.put(merged);
+        cleaned++;
+      } catch {}
+    }
+  }
+  return cleaned;
+}
+
 /** Crea (o upserta) usuario — LOCAL FIRST */
 export async function createUser(data: any) {
   await openDatabases();
@@ -332,16 +383,16 @@ export async function createUser(data: any) {
 
   if (online) {
     try {
-      const res = await remoteDB.put(doc);
+      const toRemote = sanitizeForCouch(doc);
+      const res = await remoteDB.put(toRemote);
       doc._rev = res.rev;
-      doc.___writePath = "remote";
-      try { await localDB.put(doc); } catch {}
+      try { await localDB.put(sanitizeForCouch(doc)); } catch {}
       // Best-effort: also create a CouchDB _users account so the user can login online
       try {
         const roles = [doc.role].filter(Boolean) as string[];
         await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
       } catch (e) { console.warn("[createUser] _users upsert failed", (e as any)?.message || e); }
-      return doc;
+      return { ...doc, ___writePath: "remote" } as any;
     } catch (err) {
       console.warn("[createUser] remote put failed, falling back to local", err);
     }
@@ -352,8 +403,8 @@ export async function createUser(data: any) {
     doc._rev = existing._rev;
     doc.createdAt = existing.createdAt || doc.createdAt;
   } catch {}
-  doc.___writePath = "local";
-  await localDB.put(doc); // LOCAL ONLY. La replicación lo sube.
+  const toLocal = sanitizeForCouch(doc);
+  await localDB.put(toLocal); // LOCAL ONLY. La replicación lo sube.
   // If online, still try to create _users auth so the user can login immediately
   try {
     const online2 = typeof navigator !== "undefined" && navigator.onLine;
@@ -362,7 +413,7 @@ export async function createUser(data: any) {
       await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
     }
   } catch {}
-  return doc;
+  return { ...toLocal, ___writePath: "local" } as any;
 }
 
 /** Get por id/email/username */
@@ -419,10 +470,10 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
   if (online) {
     try {
-      const res = await remoteDB.put(updated);
+      const toRemote = sanitizeForCouch(updated);
+      const res = await remoteDB.put(toRemote);
       updated._rev = res.rev;
-      updated.___writePath = "remote";
-      try { await localDB.put(updated); } catch {}
+      try { await localDB.put(sanitizeForCouch(updated)); } catch {}
       // Best-effort: sync CouchDB _users according to status and identity changes
       try {
         const roles = [updated.role].filter(Boolean) as string[];
@@ -449,14 +500,52 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
           }
         }
       } catch (e) { console.warn("[updateUser] _users auth sync failed", (e as any)?.message || e); }
-      return updated;
+      return { ...sanitizeForCouch(updated), ___writePath: "remote" } as any;
     } catch (err) {
+      if ((err as any)?.status === 409) {
+        try {
+          const latest = await remoteDB.get(_id);
+          const merged = {
+            ...latest,
+            ...patch,
+            _id,
+            _rev: latest._rev,
+            type: "user",
+            updatedAt: new Date().toISOString(),
+          } as any;
+          const res2 = await remoteDB.put(sanitizeForCouch(merged));
+          merged._rev = res2.rev;
+          try { await localDB.put(sanitizeForCouch(merged)); } catch {}
+          try {
+            const roles = [merged.role].filter(Boolean) as string[];
+            const wasActive2 = (latest.isActive !== false);
+            const isNowActive2 = (merged.isActive !== false);
+            const oldName2 = (latest.email || latest.name || "").trim();
+            const newName2 = (merged.email || merged.name || "").trim();
+            const nameChanged2 = oldName2 && newName2 && oldName2 !== newName2;
+            if (wasActive2 !== isNowActive2) {
+              if (!isNowActive2) {
+                await deleteRemoteAuthUser(oldName2 || newName2);
+              } else {
+                if (nameChanged2) await deleteRemoteAuthUser(oldName2);
+                await upsertRemoteAuthUser({ name: newName2, password: merged.password, roles });
+              }
+            } else if (isNowActive2) {
+              if (nameChanged2) await deleteRemoteAuthUser(oldName2);
+              await upsertRemoteAuthUser({ name: newName2, password: patch.password, roles });
+            }
+          } catch (e) { console.warn("[updateUser] _users auth sync (retry) failed", (e as any)?.message || e); }
+          return { ...sanitizeForCouch(merged), ___writePath: "remote" } as any;
+        } catch (e2) {
+          console.warn("[updateUser] 409 retry failed, falling back to local", e2);
+        }
+      }
       console.warn("[updateUser] remote put failed, falling back to local", err);
     }
   }
-  updated.___writePath = "local";
-  await localDB.put(updated); // LOCAL ONLY
-  return updated;
+  const toLocal = sanitizeForCouch(updated);
+  await localDB.put(toLocal); // LOCAL ONLY
+  return { ...toLocal, ___writePath: "local" } as any;
 }
 
 /** Borrado lógico — LOCAL FIRST */
@@ -467,12 +556,12 @@ export async function softDeleteUser(idOrKey: string) {
   doc.isActive = false;
   doc.updatedAt = new Date().toISOString();
   doc.deletedAt = doc.updatedAt;
-  await localDB.put(doc); // << LOCAL ONLY
+  await localDB.put(sanitizeForCouch(doc)); // << LOCAL ONLY
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine;
     if (online) await deleteRemoteAuthUser(doc.email || doc.name);
   } catch {}
-  return doc;
+  return sanitizeForCouch(doc);
 }
 
 /** Borrado permanente — LOCAL FIRST */

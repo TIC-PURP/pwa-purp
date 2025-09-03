@@ -12,6 +12,7 @@ import {
   loginOnlineToCouchDB,
   watchUserDocByEmail,
   guardarUsuarioOffline,
+  cleanupUserDocs,
 } from "@/lib/database";
 
 /** Bootstrap de autenticación/sincronización y observador del usuario */
@@ -25,6 +26,8 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     (async () => {
       // @ts-ignore
       dispatch(loadUserFromStorage());
+      // Limpieza silenciosa al arrancar la app
+      try { await cleanupUserDocs(); } catch {}
     })();
   }, [dispatch]);
 
@@ -37,6 +40,8 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           if (email && user.password) {
             await loginOnlineToCouchDB(email, user.password);
             await startSync();
+            // Tras login/sync, limpiar documentos locales antiguos si los hubiera
+            try { await cleanupUserDocs(); } catch {}
           }
         } catch {
           // si falla, seguimos offline

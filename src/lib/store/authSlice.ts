@@ -1,5 +1,5 @@
-// src/lib/store/authSlice.ts
-// Slice de Redux encargado de la autenticación de usuarios
+﻿// src/lib/store/authSlice.ts
+// Slice de Redux encargado de la autenticaciÃ³n de usuarios
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import type { User, Role } from "../types";
 import {
@@ -9,7 +9,7 @@ import {
   loginOnlineToCouchDB,
   logoutOnlineSession,
   guardarUsuarioOffline,
-  findUserByEmail, // ← debe existir en ../database
+  findUserByEmail, // â† debe existir en ../database
 } from "../database";
 
 export interface AuthState {
@@ -52,7 +52,7 @@ function getCookie(name: string) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-// Asegura que el valor sea un Role válido
+// Asegura que el valor sea un Role vÃ¡lido
 function toRole(val: any): Role {
   return val === "admin" || val === "manager" || val === "user" ? val : "user";
 }
@@ -70,7 +70,7 @@ export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
 });
 
 export const loginUser = createAsyncThunk<
-  { user: User; token: string }, // ← payload de éxito tipado
+  { user: User; token: string }, // â† payload de Ã©xito tipado
   LoginCredentials
 >("auth/login", async ({ email, password }, { rejectWithValue }) => {
   try {
@@ -102,7 +102,7 @@ export const loginUser = createAsyncThunk<
           name:
             dbUser.name ?? (email.includes("@") ? email.split("@")[0] : email),
           email: dbUser.email ?? email,
-          password: dbUser.password ?? password, // ⚠️ en prod: hashear
+          password: dbUser.password ?? password, // âš ï¸ en prod: hashear
           role: resolvedRole,
           permissions: Array.isArray(dbUser.permissions)
             ? dbUser.permissions
@@ -116,7 +116,7 @@ export const loginUser = createAsyncThunk<
           id: `user_${email}`,
           name: email.includes("@") ? email.split("@")[0] : email,
           email,
-          password, // ⚠️ en prod: hashear
+          password, // âš ï¸ en prod: hashear
           role: resolvedRole,
           permissions: ["read"],
           isActive: true,
@@ -128,7 +128,7 @@ export const loginUser = createAsyncThunk<
     await guardarUsuarioOffline(user);
     console.log("[authSlice] saved user offline", user._id);
 
-    // 5) Reiniciar sync (usará la cookie recién creada)
+    // 5) Reiniciar sync (usarÃ¡ la cookie reciÃ©n creada)
     try {
       // no await para evitar bloquear el thunk de login
       stopSync();
@@ -139,7 +139,7 @@ export const loginUser = createAsyncThunk<
     } catch {}
 
     // 6) Persistir sesión leyendo token de la cookie AuthSession
-    // Si la cookie no es accesible (HttpOnly), usamos un token simbólico
+    // Si la cookie no es accesible (HttpOnly), usamos un token simbÃ³lico
     const token = getCookie("AuthSession") || "cookie-session";
     persistSession(user, token);
     console.log("[authSlice] login success", { user: user.email, token });
@@ -148,7 +148,7 @@ export const loginUser = createAsyncThunk<
   } catch (onlineErr: any) {
     console.error("[authSlice] loginUser error", onlineErr);
     const errorMessage = onlineErr?.message || "No se pudo iniciar sesión";
-    // Fallback OFFLINE (sin red o si localDB no está listo)
+    // Fallback OFFLINE (sin red o si localDB no estÃ¡ listo)
     let offline: any = null;
     try {
       offline = await authenticateUser(email, password);
@@ -187,7 +187,7 @@ const authSlice = createSlice({
     setUser(state, action: PayloadAction<User>) {
       state.user = action.payload;
       state.isAuthenticated = true;
-      // Persistimos también en localStorage con el token actual (si existe)
+      // Persistimos tambiÃ©n en localStorage con el token actual (si existe)
       if (typeof window !== "undefined") {
         const token = state.token ?? "cookie-session";
         window.localStorage.setItem(
@@ -203,7 +203,7 @@ const authSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // Rehidratación al cargar
+      // RehidrataciÃ³n al cargar
       .addCase(loadUserFromStorage.pending, (state) => {
         console.log("[authSlice.reducer] loadUserFromStorage.pending");
         state.isLoading = true;
@@ -260,3 +260,8 @@ const authSlice = createSlice({
 
 export const { clearError, setUser } = authSlice.actions;
 export default authSlice.reducer;
+
+
+
+
+

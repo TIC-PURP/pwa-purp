@@ -1,9 +1,10 @@
-// Página de administración de usuarios protegida por autenticación
+﻿// Página de administración de usuarios protegida por autenticación
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+// Importar solo notify para evitar duplicados de estilos
+import { notify } from "@/lib/notify";
 import { RouteGuard } from "@/components/auth/route-guard";
 import { Navbar } from "@/components/layout/navbar";
 import { UserForm } from "@/components/users/user-form";
@@ -36,6 +37,7 @@ import {
   updateUser,
   softDeleteUser,
   hardDeleteUser,
+  cleanupUserDocs,
 } from "@/lib/database";
 import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
 
@@ -64,6 +66,16 @@ export default function UsersPage() {
   // Cargar usuarios al montar el componente
   useEffect(() => {
     loadUsers();
+    // Ejecuta limpieza una sola vez al montar
+    (async () => {
+      try {
+        const n = await cleanupUserDocs();
+        if (n > 0) {
+          notify.info("Datos actualizados en segundo plano");
+          await loadUsers();
+        }
+      } catch {}
+    })();
   }, []);
 
   // Obtiene todos los usuarios de la base local o remota
@@ -80,10 +92,10 @@ export default function UsersPage() {
       const created: any = await createUser(data);
       const path = created?.___writePath === "remote" ? "remote" : "local";
       if (path === "remote")
-        toast.success("Usuario creado y guardado en la nube.");
+        notify.success("Usuario guardado en la nube");
       else
-        toast.message(
-          "Usuario creado offline; se subirá al recuperar Internet.",
+        notify.info(
+          "Usuario guardado sin conexión. Se sincronizará cuando haya internet",
         );
 
       const createdEmail = (created?.email || data.email || "").toLowerCase();
@@ -105,16 +117,9 @@ export default function UsersPage() {
       await loadUsers();
       setShowForm(false);
       setEditingUser(null);
-      if (typeof navigator !== "undefined") {
-        if (navigator.onLine) {
-          toast.success("Cuenta de acceso (/_users) actualizada/creada (intentada)");
-        } else {
-          toast.message("La cuenta de acceso se actualizará en Couch al volver online.");
-        }
-      }
     } catch (error) {
       console.error(error);
-      toast.error("No se pudo crear el usuario.");
+      notify.error("No se pudo crear el usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -127,23 +132,16 @@ export default function UsersPage() {
     try {
       const updated: any = await updateUser({ ...editingUser, ...data });
       const path = updated?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote") toast.success("Usuario actualizado en la nube.");
+      if (path === "remote") notify.success("Cambios guardados en la nube");
       else
-        toast.message(
-          "Usuario actualizado offline; se subirá al recuperar Internet.",
+        notify.info(
+          "Cambios guardados sin conexión. Se sincronizarán luego",
         );
       await loadUsers();
       setEditingUser(null);
-      if (typeof navigator !== "undefined") {
-        if (navigator.onLine) {
-          toast.success("Cuenta de acceso (/_users) actualizada (intentada)");
-        } else {
-          toast.message("La cuenta de acceso se actualizará en Couch al volver online.");
-        }
-      }
     } catch (error) {
       console.error(error);
-      toast.error("No se pudo actualizar el usuario.");
+      notify.error("No se pudo actualizar el usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -162,10 +160,10 @@ export default function UsersPage() {
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
         if (path === "remote")
-          toast.success("Usuario desactivado (borrado lógico) en la nube.");
+          notify.success("Usuario desactivado");
         else
-          toast.message(
-            "Usuario desactivado offline; se subirá al recuperar Internet.",
+          notify.info(
+            "Usuario desactivado. Se sincronizará luego",
           );
       } else if (deleteMode === "activate") {
         const updated: any = await updateUser({
@@ -174,10 +172,10 @@ export default function UsersPage() {
           deletedAt: undefined,
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
-        if (path === "remote") toast.success("Usuario reactivado en la nube.");
+        if (path === "remote") notify.success("Usuario activado");
         else
-          toast.message(
-            "Usuario reactivado offline; se subirá al recuperar Internet.",
+          notify.info(
+            "Usuario activado. Se sincronizará luego",
           );
       } else {
         const ok = await hardDeleteUser(
@@ -185,14 +183,14 @@ export default function UsersPage() {
         );
         if (ok) {
           if (typeof navigator !== "undefined" && navigator.onLine) {
-            toast.success("Usuario eliminado permanentemente en la nube.");
+            notify.error("Usuario eliminado para siempre");
           } else {
-            toast.message(
-              "Usuario eliminado localmente; se sincronizará al recuperar Internet.",
+            notify.info(
+              "Usuario eliminado. Se sincronizará luego",
             );
           }
         } else {
-          toast.message("El usuario ya no existe.");
+          notify.info("El usuario ya no existe.");
         }
       }
 
@@ -200,7 +198,7 @@ export default function UsersPage() {
       setDeletingUser(null);
     } catch (error) {
       console.error(error);
-      toast.error("No se pudo completar la acción.");
+      notify.error("No se pudo completar la acción.");
     } finally {
       setIsLoading(false);
     }
@@ -218,22 +216,22 @@ export default function UsersPage() {
       });
       const path = updated?.___writePath === "remote" ? "remote" : "local";
       if (toggleTo) {
-        if (path === "remote") toast.success("Usuario activado en la nube.");
+        if (path === "remote") notify.success("Usuario activado");
         else
-          toast.message(
-            "Usuario activado offline; se subirá al recuperar Internet.",
+          notify.info(
+            "Usuario activado. Se sincronizará luego",
           );
       } else {
-        if (path === "remote") toast.success("Usuario desactivado en la nube.");
+        if (path === "remote") notify.warn("Usuario desactivado");
         else
-          toast.message(
-            "Usuario desactivado offline; se subirá al recuperar Internet.",
+          notify.info(
+            "Usuario desactivado. Se sincronizará luego",
           );
       }
       await loadUsers();
     } catch (error) {
       console.error(error);
-      toast.error("No se pudo cambiar el estado del usuario.");
+      notify.error("No se pudo cambiar el estado del usuario.");
     } finally {
       setIsLoading(false);
     }
@@ -312,6 +310,10 @@ export default function UsersPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={
+                            (me?.role === "manager") &&
+                            ((user.email || "").toLowerCase() === (me?.email || "").toLowerCase())
+                          }
                           onClick={() => {
                             setDeletingUser(user);
                             setDeleteMode(user.isActive ? "soft" : "activate");
@@ -322,7 +324,11 @@ export default function UsersPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={!user.isActive}
+                          disabled={
+                            !user.isActive ||
+                            ((me?.role === "manager") &&
+                              ((user.email || "").toLowerCase() === (me?.email || "").toLowerCase()))
+                          }
                           onClick={() => {
                             setDeletingUser(user);
                             setDeleteMode("hard");
@@ -426,25 +432,13 @@ export default function UsersPage() {
                   try {
                     if (deleteMode === "soft") {
                       await softDeleteUser(deletingUser._id || deletingUser.id);
-                      toast.success("Usuario desactivado");
-                      if (typeof navigator !== "undefined") {
-                        if (navigator.onLine) toast.success("Cuenta de acceso desactivada en Couch (intentada)");
-                        else toast.message("La cuenta de acceso se desactivará en Couch al volver online.");
-                      }
+                      notify.warn("Usuario desactivado");
                     } else if (deleteMode === "activate") {
                       await updateUser({ ...deletingUser, isActive: true });
-                      toast.success("Usuario activado");
-                      if (typeof navigator !== "undefined") {
-                        if (navigator.onLine) toast.success("Cuenta de acceso activada en Couch (intentada)");
-                        else toast.message("La cuenta de acceso se activará en Couch al volver online.");
-                      }
+                      notify.success("Usuario activado");
                     } else {
                       await hardDeleteUser(deletingUser._id || deletingUser.id);
-                      toast.success("Usuario eliminado permanentemente");
-                      if (typeof navigator !== "undefined") {
-                        if (navigator.onLine) toast.success("Cuenta de acceso eliminada en Couch (intentada)");
-                        else toast.message("La cuenta de acceso se eliminará en Couch al volver online.");
-                      }
+                      notify.error("Usuario eliminado permanentemente");
                     }
                     await loadUsers();
                     setDeletingUser(null);
@@ -475,3 +469,16 @@ export default function UsersPage() {
     </RouteGuard>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
