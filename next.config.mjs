@@ -7,40 +7,51 @@ const nextConfig = {
   images: { unoptimized: true },
   async headers() {
     // Política de seguridad de contenido para limitar recursos externos
+    // Ampliamos connect-src para permitir envíos a Sentry desde el cliente si se usa Sentry.
+    const connectSrc = ["'self'"];
+    if (process.env.SENTRY_DSN) {
+      connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
+    }
+
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
-      "connect-src 'self'",
+      `connect-src ${connectSrc.join(' ')}`,
       "font-src 'self' data:",
-      "frame-ancestors 'self'"
+      "frame-ancestors 'self'",
     ].join('; ');
 
     const securityHeaders = [
       { key: "Content-Security-Policy", value: csp },
       { key: "Referrer-Policy", value: "no-referrer" },
       { key: "X-Content-Type-Options", value: "nosniff" },
-      { key: "X-Frame-Options", value: "SAMEORIGIN" }
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
     ];
 
     return [
       {
         // Cabeceras aplicadas a todas las rutas
         source: "/:path*",
-        headers: securityHeaders
+        headers: securityHeaders,
+      },
+      {
+        // Evitar cachear el Service Worker para recibir updates inmediatos
+        source: "/sw.js",
+        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }],
       },
       {
         // Evitamos almacenar en caché respuestas de las APIs sensibles
         source: "/api/couch/:path*",
-        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }]
+        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }],
       },
       {
         source: "/api/auth/:path*",
-        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }]
-      }
+        headers: [...securityHeaders, { key: "Cache-Control", value: "no-store" }],
+      },
     ];
-  }
+  },
 };
 
 export default nextConfig;

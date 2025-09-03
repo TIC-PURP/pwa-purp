@@ -1,18 +1,18 @@
 // Configuración de Sentry para el entorno de servidor (Node.js).
-// El código aquí se ejecuta cada vez que el servidor atiende una petición.
 // Documentación: https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
 
+const dsn = process.env.SENTRY_DSN || undefined;
+
 Sentry.init({
-  dsn: "https://212a921d236eb4b36831f918e6cc7b5f@o4509788384788480.ingest.us.sentry.io/4509788385837056",
-
-  // Porcentaje de trazas de rendimiento que se enviarán
-  tracesSampleRate: 1,
-
-  // Permite enviar logs al dashboard de Sentry
-  enableLogs: true,
-
-  // Muestra información adicional en consola durante la configuración
+  dsn,
+  // Porcentaje de trazas de rendimiento (ajustable por variable de entorno)
+  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.2"),
+  // Enviar logs de Sentry solo fuera de producción
+  enableLogs: process.env.NODE_ENV !== "production",
+  // Habilitar Sentry solo en producción y cuando exista DSN
+  enabled: process.env.NODE_ENV === "production" && Boolean(dsn),
   debug: false,
 });
+
