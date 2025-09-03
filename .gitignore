@@ -11,9 +11,18 @@ build/
 next-env.d.ts
 
 # === ENV FILES ===
+.env
 .env.local
 .env.*
 !.env.example  # Deja visible solo un ejemplo si lo tienes
+.direnv/
+.envrc
+
+# === SECRETS / KEYS ===
+*.pem
+*.key
+*.p12
+.eslintcache
 
 # === LOG FILES ===
 npm-debug.log*

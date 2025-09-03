@@ -1,7 +1,7 @@
 // src/lib/store/authSlice.ts
 // Slice de Redux encargado de la autenticación de usuarios
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
-import type { User } from "../types";
+import type { User, Role } from "../types";
 import {
   authenticateUser,
   startSync,
@@ -52,6 +52,11 @@ function getCookie(name: string) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// Asegura que el valor sea un Role válido
+function toRole(val: any): Role {
+  return val === "admin" || val === "manager" || val === "user" ? val : "user";
+}
+
 export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
   if (typeof window === "undefined") return { user: null, token: null };
   try {
@@ -88,7 +93,7 @@ export const loginUser = createAsyncThunk<
       : sessionRoles.includes("manager")
       ? "manager"
       : null;
-    const resolvedRole = sessionRole || (dbUser?.role as string | undefined) || "user";
+    const resolvedRole: Role = toRole(sessionRole ?? dbUser?.role);
 
     const user: User = dbUser
       ? {
