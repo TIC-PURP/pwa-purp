@@ -17,12 +17,10 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html>
-      <body>
-        <h2>Algo salió mal.</h2>
-        {/* Permite reintentar la acción fallida */}
-        <button onClick={() => reset()}>Intentar de nuevo</button>
-      </body>
-    </html>
+    <div className="p-6">
+      <h2>Algo salió mal.</h2>
+      {/* Permite reintentar la acción fallida */}
+      <button onClick={() => reset()}>Intentar de nuevo</button>
+    </div>
   );
 }

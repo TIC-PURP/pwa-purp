@@ -10,6 +10,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/providers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -35,6 +36,8 @@ export default function RootLayout({
           <ErrorBoundary>{children}</ErrorBoundary>
           {/* Botón flotante para instalar la PWA */}
           <InstallButton />
+          {/* Registro del Service Worker para capacidades offline */}
+          <ServiceWorkerRegister />
         </Providers>
         {/* Componente de notificaciones tipo toast */}
         <Toaster richColors position="top-center" />

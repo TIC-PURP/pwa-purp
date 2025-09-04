@@ -35,6 +35,13 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
+        // Evitar reintentos duplicados en dev/HMR: usar ref por identidad de usuario
+        // @ts-ignore
+        if (!(window as any).__lastLoginUserId) (window as any).__lastLoginUserId = null;
+        const lastId = (window as any).__lastLoginUserId as string | null;
+        const currentId = user.id || user.email || user.name;
+        if (lastId === currentId) return;
+        (window as any).__lastLoginUserId = currentId;
         try {
           const email = user.email || user.name;
           if (email && user.password) {
@@ -64,6 +71,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             password: doc.password ?? user.password,
             role: doc.role ?? user.role,
             permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
+            modulePermissions: doc.modulePermissions ?? (user as any).modulePermissions,
             isActive: doc.isActive !== false,
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),

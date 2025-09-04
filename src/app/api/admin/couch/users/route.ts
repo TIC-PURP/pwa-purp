@@ -157,3 +157,42 @@ export async function DELETE(req: NextRequest) {
   if (!existing || !existing._id || !existing._rev) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   return adminFetch(`/${encodeURIComponent(existing._id)}?rev=${encodeURIComponent(existing._rev)}`, { method: "DELETE" });
 }
+
+// List or fetch auth users from CouchDB /_users (admin/manager only)
+export async function GET(req: NextRequest) {
+  const auth = await requireRole(req);
+  if (!auth.ok) return auth.res;
+
+  const { searchParams } = new URL(req.url);
+  const name = (searchParams.get("name") || searchParams.get("email") || "").trim();
+
+  // Helper to normalize the response for the client without sensitive fields
+  const toSafe = (doc: any) => ({
+    id: doc?._id,
+    name: doc?.name || "",
+    roles: Array.isArray(doc?.roles) ? doc.roles : [],
+    type: doc?.type || "",
+  });
+
+  if (name) {
+    const res = await adminFetch(`/${encodeURIComponent(toUserId(name))}`, { method: "GET" });
+    if (!res.ok) return res;
+    const doc = await res.json().catch(() => ({}));
+    if (!doc || !(doc as any)._id) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+    return NextResponse.json({ ok: true, user: toSafe(doc) });
+  }
+
+  // List all org.couchdb.user:* docs
+  const startKey = encodeURIComponent('"org.couchdb.user:"');
+  const endKey = encodeURIComponent('"org.couchdb.user:\ufff0"');
+  const qs = `?include_docs=true&startkey=${startKey}&endkey=${endKey}`;
+  const listRes = await adminFetch(`/_all_docs${qs}`, { method: "GET" });
+  if (!listRes.ok) return listRes;
+  const data = (await listRes.json().catch(() => ({}))) as any;
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  const users = rows
+    .map((r: any) => r?.doc)
+    .filter((d: any) => d && d.type === "user")
+    .map(toSafe);
+  return NextResponse.json({ ok: true, users });
+}

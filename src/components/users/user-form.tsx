@@ -52,6 +52,7 @@ export function UserForm({
 }: UserFormProps) {
   const [showPassword, setShowPassword] = useState(false); // Control de visibilidad de contraseña
   const isEditing = !!user; // Indica si se está editando o creando
+  const [modAPerm, setModAPerm] = useState<"FULL" | "READ" | "NONE">(user?.modulePermissions?.MOD_A ?? "NONE");
 
   const {
     register,
@@ -82,6 +83,7 @@ export function UserForm({
   // Manager: siempre acceso total y ocultar radios
   useEffect(() => {
     if (role === "manager") {
+      setModAPerm("FULL");
       const full: Permission[] = ["read", "write", "delete", "manage_users"];
       const current = new Set(perms || []);
       const needsSet =
@@ -135,7 +137,12 @@ export function UserForm({
               }
             }
 
-            onSubmit(data);
+            const payload: any = {
+              ...data,
+              modulePermissions: { MOD_A: role === "manager" ? "FULL" : modAPerm },
+            };
+            // Mantener permissions como arreglo (v1) y enviar modulePermissions (v2)
+            onSubmit(payload as any);
           })}
           className="space-y-6"
         >
@@ -247,54 +254,7 @@ export function UserForm({
           {/* Radios ocultos para manager */}
           {role !== "manager" && (
             <div className="space-y-3">
-              <Label>Tipo de Acceso</Label>
-
-              <RadioGroup
-                value={watchedPermissionLevel}
-                onValueChange={(val) => {
-                  let next: Permission[] = [];
-                  if (val === "none") next = [];
-                  if (val === "read_only") next = ["read"];
-                  if (val === "full") {
-                    // Admin y Usuario: "Acceso completo" = read + write
-                    next = ["read", "write"];
-                  }
-                  setValue("permissions", next as Permission[], {
-                    shouldValidate: true,
-                    shouldDirty: true,
-                  });
-                }}
-                className="grid gap-3 md:grid-cols-3"
-              >
-                <div className="flex items-start space-x-3 rounded-xl border p-3">
-                  <RadioGroupItem id="perm-none" value="none" />
-                  <div className="space-y-1">
-                    <Label htmlFor="perm-none" className="font-medium">
-                      Sin permisos
-                    </Label>
-                  </div>
-                </div>
-
-                <div className="flex items-start space-x-3 rounded-xl border p-3">
-                  <RadioGroupItem id="perm-read" value="read_only" />
-                  <div className="space-y-1">
-                    <Label htmlFor="perm-read" className="font-medium">
-                      Solo lectura
-                    </Label>
-                  </div>
-                </div>
-
-                <div className="flex items-start space-x-3 rounded-xl border p-3">
-                  <RadioGroupItem id="perm-full" value="full" />
-                  <div className="space-y-1">
-                    <Label htmlFor="perm-full" className="font-medium">
-                      Acceso completo
-                    </Label>
-                  </div>
-                </div>
-              </RadioGroup>
-
-              {errors.permissions && (
+{errors.permissions && (
                 <p className="text-sm text-red-600">
                   {errors.permissions.message}
                 </p>
@@ -315,7 +275,44 @@ export function UserForm({
                   ? "Actualizar Usuario"
                   : "Crear Usuario"}
             </Button>
-          </div>
+          </div>{/* --- Gestión de permisos (Módulos) --- */}
+<details className="group mt-6 rounded-2xl border bg-white/60 dark:bg-zinc-900/60 backdrop-blur-sm shadow-sm">
+  <summary className="flex items-center justify-between px-5 py-4 cursor-pointer select-none">
+    <div className="flex items-center gap-3">
+      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600/10 text-indigo-600"></span>
+      <div>
+        <p className="text-sm font-semibold">Gestión de permisos</p>
+        <p className="text-xs text-muted-foreground">Configura el acceso por módulo para este usuario</p>
+      </div>
+    </div>
+    <span className="text-sm text-muted-foreground transition-transform group-open:rotate-180">▾</span>
+  </summary>
+  <div className="border-t p-5 space-y-4">
+    <div className="rounded-xl border bg-background/50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Módulo A</p>
+          <p className="text-xs text-muted-foreground">Define permisos</p>
+        </div>
+        <select
+          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+          value={modAPerm}
+          onChange={(e) => setModAPerm(e.target.value as any)}
+          disabled={role === "manager"}
+        >
+          <option value="FULL">Acceso completo</option>
+          <option value="READ">Solo lectura</option>
+          <option value="NONE">Sin permiso</option>
+        </select>
+      </div>
+      {role === "manager" && (
+        <p className="mt-2 text-xs text-muted-foreground">Este usuario es Manager: el acceso al Módulo A es completo por defecto.</p>
+      )}
+    </div>
+  </div>
+</details>
+
+
         </form>
       </CardContent>
     </Card>

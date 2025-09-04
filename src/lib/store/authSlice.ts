@@ -107,6 +107,7 @@ export const loginUser = createAsyncThunk<
           permissions: Array.isArray(dbUser.permissions)
             ? dbUser.permissions
             : ["read"],
+          modulePermissions: dbUser.modulePermissions || (typeof dbUser.permissions === "object" && !Array.isArray(dbUser.permissions) ? dbUser.permissions : {}),
           isActive: dbUser.isActive !== false,
           createdAt: dbUser.createdAt ?? now,
           updatedAt: now,
@@ -211,9 +212,27 @@ const authSlice = createSlice({
       .addCase(loadUserFromStorage.fulfilled, (state, action) => {
         console.log("[authSlice.reducer] loadUserFromStorage.fulfilled");
         const { user, token } = action.payload as any;
-        state.user = user;
+        // Normalizar shape del usuario para evitar crashes por datos viejos
+        const normalized = user
+          ? {
+              ...user,
+              permissions: Array.isArray((user as any).permissions)
+                ? (user as any).permissions
+                : [],
+              modulePermissions:
+                (user as any).modulePermissions &&
+                typeof (user as any).modulePermissions === "object" &&
+                !Array.isArray((user as any).modulePermissions)
+                  ? (user as any).modulePermissions
+                  : !Array.isArray((user as any).permissions) &&
+                      typeof (user as any).permissions === "object"
+                    ? (user as any).permissions
+                    : { MOD_A: "NONE" },
+            }
+          : null;
+        state.user = normalized as any;
         state.token = token;
-        state.isAuthenticated = Boolean(user && token);
+        state.isAuthenticated = Boolean(normalized && token);
         state.isLoading = false;
       })
       .addCase(loadUserFromStorage.rejected, (state) => {
@@ -260,7 +279,6 @@ const authSlice = createSlice({
 
 export const { clearError, setUser } = authSlice.actions;
 export default authSlice.reducer;
-
 
 
 

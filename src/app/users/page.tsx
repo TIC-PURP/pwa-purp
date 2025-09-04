@@ -33,13 +33,15 @@ import {
 import type { User, CreateUserData } from "@/lib/types";
 import {
   getAllUsers,
+  getAllUsersAsManager,
   createUser,
   updateUser,
   softDeleteUser,
   hardDeleteUser,
   cleanupUserDocs,
 } from "@/lib/database";
-import { Plus, Edit, Trash2, UserX, ArrowLeftCircle } from "lucide-react";
+import { Plus, Edit, Trash2, UserX } from "lucide-react";
+import BackButton from "@/components/common/back-button";
 
 export default function UsersPage() {
   // Hook de Redux para despachar acciones
@@ -80,9 +82,11 @@ export default function UsersPage() {
 
   // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
-    // Incluir inactivos para que no desaparezcan del panel
-    const allUsers = await getAllUsers({ includeInactive: true });
-    setUsers(allUsers);
+    // Manager: listar desde _users + fusionar locales. Otros (por si cambia guard): solo locales
+    const allUsers = me?.role === "manager"
+      ? await getAllUsersAsManager()
+      : await getAllUsers({ includeInactive: true });
+    setUsers(allUsers as any);
   };
 
   // Crea un nuevo usuario y sincroniza según la conexión
@@ -266,13 +270,9 @@ export default function UsersPage() {
         <Navbar />
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
-            <button
-              onClick={() => router.back()}
-              className="inline-flex items-center text-slate-600 hover:text-slate-900 transition text-sm mb-4"
-            >
-              <ArrowLeftCircle className="h-5 w-5 mr-2" />
-              <span>Regresar</span>
-            </button>
+            <div className="mb-4">
+              <BackButton />
+            </div>
             <div className="flex justify-between items-center mb-8">
               <div>
                 <h1 className="text-3xl font-bold text-slate-900">
@@ -366,7 +366,9 @@ export default function UsersPage() {
 
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
-                            const perms = (user.permissions || []).sort();
+                            const perms = Array.isArray(user.permissions)
+                              ? [...user.permissions].sort()
+                              : [];
                             let label = "Acceso completo";
                             if (perms.length === 0) label = "Sin permisos";
                             else if (perms.length === 1 && perms[0] === "read")

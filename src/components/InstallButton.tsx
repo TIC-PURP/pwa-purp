@@ -19,6 +19,8 @@ export default function InstallButton() {
   // nos avisa si la app puede instalarse.
   useEffect(() => {
     const handler = (e: any) => {
+      // Evitar registrar múltiples veces por HMR / múltiples disparos
+      if (deferredPrompt) return;
       e.preventDefault(); // evitamos que el navegador muestre el prompt por defecto
       deferredPrompt = e; // guardamos el evento para usarlo luego
       setIsInstallable(true); // mostramos el botón

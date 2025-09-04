@@ -77,6 +77,9 @@ function buildUserDocFromData(data: any) {
     password: data.password || "",
     role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
+    modulePermissions: (typeof data.modulePermissions === "object" && !Array.isArray(data.modulePermissions))
+      ? data.modulePermissions
+      : (!Array.isArray(data.permissions) && typeof data.permissions === "object" ? (data.permissions as any) : { MOD_A: "NONE" }),
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
     updatedAt: now,
@@ -310,7 +313,8 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
       sort: [{ updatedAt: "desc" }],
       limit,
     });
-    return r.docs || [];
+    const docs = (r.docs || []).map(normalizeUserDocShape);
+    return docs;
   } catch {
     const resA = await localDB.allDocs({
       include_docs: true,
@@ -330,11 +334,111 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
       .filter((d: any) =>
         includeInactive ? d.type === "user" : d.type === "user" && d.isActive !== false,
       );
-    docs.sort((a: any, b: any) =>
+    const normalized = docs.map(normalizeUserDocShape);
+    normalized.sort((a: any, b: any) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
     );
-    return docs;
+    return normalized;
   }
+}
+
+/**
+ * Lista cuentas de CouchDB /_users vía API admin (solo manager/admin).
+ * Devuelve usuarios mapeados al shape de la app con permisos derivados.
+ */
+export async function getAllUsersAsManager(): Promise<any[]> {
+  try {
+    const res = await fetch(`/api/admin/couch/users`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    const data = await res.json().catch(() => ({} as any));
+    const list = Array.isArray((data as any)?.users) ? (data as any).users : [];
+
+    // Traer también lo local para fusionar metadatos si existen
+    let locals: Record<string, any> = {};
+    try {
+      const localList = await getAllUsers({ includeInactive: true, limit: 5000 });
+      for (const u of localList) {
+        const key = String((u.email || u.name || "").toLowerCase());
+        if (key) locals[key] = u;
+      }
+    } catch {}
+
+    // Util para mapear roles de Couch a Role de la app
+    const toRole = (roles: string[]): "admin" | "manager" | "user" => {
+      const set = new Set((roles || []).map(String));
+      if (set.has("admin")) return "admin";
+      if (set.has("manager")) return "manager";
+      return "user";
+    };
+
+    const now = new Date().toISOString();
+    const fullPerms = ["read", "write", "delete", "manage_users"] as any[];
+
+    const mapped = list.map((a: any) => {
+      const email = String(a?.name || "").trim();
+      const baseName = email.includes("@") ? email.split("@")[0] : email;
+      const role = toRole(Array.isArray(a?.roles) ? a.roles : []);
+      const local = locals[email.toLowerCase()];
+      // Para manager, asegurar permisos completos coherentes con validaciones
+      const permissions = role === "manager" ? fullPerms.slice() : Array.isArray(local?.permissions) ? local.permissions : ["read"];
+      const modulePermissions = role === "manager"
+        ? { MOD_A: "FULL" }
+        : (local && local.modulePermissions && typeof local.modulePermissions === "object" && !Array.isArray(local.modulePermissions))
+          ? local.modulePermissions
+          : { MOD_A: "NONE" };
+      return {
+        _id: `user:${(email || baseName).toLowerCase()}`,
+        id: `user_${(email || baseName).toLowerCase()}`,
+        name: local?.name ?? baseName,
+        email,
+        password: local?.password ?? "", // nunca devolvemos real; solo display
+        role,
+        permissions,
+        modulePermissions,
+        isActive: local ? (local.isActive !== false) : true,
+        createdAt: local?.createdAt || now,
+        updatedAt: local?.updatedAt || now,
+      } as any;
+    });
+
+    // Incluir locales que no tienen cuenta en _users (usuarios solo locales)
+    for (const key of Object.keys(locals)) {
+      const email = key;
+      if (!mapped.some((m: any) => String(m.email || "").toLowerCase() === email)) {
+        mapped.push(locals[key]);
+      }
+    }
+
+    // Ordenar por updatedAt desc como en getAllUsers
+    mapped.sort((a: any, b: any) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    return mapped;
+  } catch (e) {
+    // Si falla por permisos/red, devolvemos el local como fallback
+    try {
+      return await getAllUsers({ includeInactive: true });
+    } catch {
+      return [];
+    }
+  }
+}
+
+/** Normaliza formas de permisos para evitar crashes en UI */
+function normalizeUserDocShape(u: any) {
+  const out: any = { ...u };
+  if (!Array.isArray(out.permissions)) {
+    out.permissions = [];
+  }
+  const mp = out.modulePermissions;
+  if (!mp || Array.isArray(mp) || typeof mp !== "object") {
+    // Si permissions venía como objeto v2 (raro), intentar usarlo; si no, valor por defecto
+    out.modulePermissions = (!Array.isArray(u.permissions) && typeof u.permissions === "object" && u.permissions)
+      ? { MOD_A: (u.permissions as any).MOD_A || "NONE", ...(u.permissions as any) }
+      : { MOD_A: "NONE" };
+  }
+  return out;
 }
 
 /** Limpia campos inválidos (como ___writePath) de documentos de usuario existentes */
@@ -342,7 +446,12 @@ export async function cleanupUserDocs(): Promise<number> {
   await openDatabases();
   if (!localDB) return 0;
   const allowed = new Set(["_id", "_rev", "_deleted", "_attachments"]);
-  const needsClean = (doc: any) => Object.keys(doc).some(k => k.startsWith("_") && !allowed.has(k));
+  const needsClean = (doc: any) => {
+    const badUnderscore = Object.keys(doc).some(k => k.startsWith("_") && !allowed.has(k));
+    const badPerms = !Array.isArray(doc.permissions);
+    const badModule = !doc.modulePermissions || Array.isArray(doc.modulePermissions) || typeof doc.modulePermissions !== "object";
+    return badUnderscore || badPerms || badModule;
+  };
 
   let docs: any[] = [];
   try {
@@ -358,7 +467,7 @@ export async function cleanupUserDocs(): Promise<number> {
   for (const d of docs) {
     if (d?.type !== "user") continue;
     if (!needsClean(d)) continue;
-    const sanitized = sanitizeForCouch(d);
+    const sanitized = normalizeUserDocShape(sanitizeForCouch(d));
     try {
       await localDB.put({ ...sanitized });
       cleaned++;
@@ -457,11 +566,21 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   const updated = {
     ...doc,
     ...patch,
+    // v2: soportar modulePermissions y permisos estilo objeto (MOD_A: FULL|READ|NONE)
+    ...(patch.modulePermissions && typeof patch.modulePermissions === "object"
+        ? { modulePermissions: { ...(doc.modulePermissions || {}), ...patch.modulePermissions } } : {}),
+    ...(patch.permissions && !Array.isArray(patch.permissions) && typeof patch.permissions === "object"
+        ? { modulePermissions: { ...(doc.modulePermissions || {}), ...(patch.permissions as any) } } : {}),
+    
     _id,
     _rev: doc._rev,
     type: "user",
     updatedAt: new Date().toISOString(),
   };
+  // Asegurar forma correcta: si patch.permissions venía como objeto (v2), no sobreescribir el array
+  if (updated.permissions && !Array.isArray(updated.permissions)) {
+    updated.permissions = Array.isArray(doc.permissions) ? doc.permissions : [];
+  }
   const wasActive = doc.isActive !== false;
   const isNowActive = updated.isActive !== false;
   const oldName = (doc.email || doc.name || "").trim();
@@ -513,6 +632,9 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
             type: "user",
             updatedAt: new Date().toISOString(),
           } as any;
+          if (merged.permissions && !Array.isArray(merged.permissions)) {
+            merged.permissions = Array.isArray(latest.permissions) ? latest.permissions : [];
+          }
           const res2 = await remoteDB.put(sanitizeForCouch(merged));
           merged._rev = res2.rev;
           try { await localDB.put(sanitizeForCouch(merged)); } catch {}

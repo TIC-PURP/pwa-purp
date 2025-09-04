@@ -13,6 +13,7 @@ import {
 import { useAppSelector } from "@/lib/hooks";
 import { BarChart3, Users, Shield, Activity } from "lucide-react";
 import Link from "next/link";
+import { canSeeModuleA } from "@/lib/permissions";
 
 export default function Principal() {
   // Obtiene el usuario autenticado desde el store global
@@ -53,6 +54,25 @@ export default function Principal() {
               </div>
             )}
           </div>
+        {/* Tile Módulo A: visible si manager o permisos READ/FULL */}
+{(user?.role === "manager" || canSeeModuleA(user)) && (
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <Link href="/mod-a" className="block">
+      <div className="rounded-xl border bg-white p-5 shadow-md hover:shadow-lg transition hover:border-blue-50">
+        <div className="flex items-center gap-4">
+          <div className="bg-slate-900 text-white p-3 rounded-xl shadow">
+            <svg viewBox="0 0 24 24" className="h-6 w-6"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zM13 3v6h8V3h-8z" /></svg>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800">Módulo A</h3>
+            <p className="text-sm text-slate-600">Ir al módulo</p>
+          </div>
+        </div>
+      </div>
+    </Link>
+  </div>
+)}
+
         </main>
       </div>
     </RouteGuard>
