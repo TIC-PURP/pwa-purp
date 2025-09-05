@@ -13,9 +13,14 @@ const nextConfig = {
       connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
     }
 
+    // Generamos la directiva script-src sin permitir unsafe-inline/unsafe-eval
+    // Se añade un nonce estático o configurable mediante CSP_SCRIPT_NONCE
+    const scriptNonce = process.env.CSP_SCRIPT_NONCE || "staticNonce";
+    const scriptSrc = ["'self'", `'nonce-${scriptNonce}'`];
+
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      `script-src ${scriptSrc.join(' ')}`,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       `connect-src ${connectSrc.join(' ')}`,
