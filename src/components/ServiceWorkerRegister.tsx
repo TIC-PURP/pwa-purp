@@ -1,28 +1,25 @@
-"use client";
+import Script from "next/script";
 
-import { useEffect } from "react";
-
-export default function ServiceWorkerRegister() {
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!("serviceWorker" in navigator)) return;
-    // Evitar registros duplicados en desarrollo (HMR)
-    if ((window as any).__swRegistered) return;
-    const register = async () => {
-      try {
-        const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        (window as any).__swRegistered = true;
-        // Opcional: escuchar updates del SW para futura UI
-        reg.addEventListener?.("updatefound", () => {
-          // placeholder para manejar nuevas versiones
-        });
-      } catch (e) {
-        // Silencioso: la app funciona sin SW si falla el registro
-        console.warn("[sw] register failed", (e as any)?.message || e);
-      }
-    };
-    register();
-  }, []);
-
-  return null;
+export default function ServiceWorkerRegister({ nonce }: { nonce?: string }) {
+  return (
+    <Script
+      id="sw-register"
+      nonce={nonce}
+      strategy="afterInteractive"
+      dangerouslySetInnerHTML={{
+        __html: `
+          if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+            if (!window.__swRegistered) {
+              navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
+                window.__swRegistered = true;
+                reg.addEventListener?.('updatefound', () => {});
+              }).catch((e) => {
+                console.warn('[sw] register failed', e?.message || e);
+              });
+            }
+          }
+        `,
+      }}
+    />
+  );
 }

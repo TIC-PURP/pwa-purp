@@ -26,6 +26,9 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // El nonce para las etiquetas <script> se obtiene de la variable de entorno o usa un valor por defecto
+  const cspNonce = process.env.CSP_SCRIPT_NONCE || "staticNonce";
+
   // El layout envuelve todo el HTML de cada página
   return (
     <html lang="es">
@@ -37,7 +40,7 @@ export default function RootLayout({
           {/* Botón flotante para instalar la PWA */}
           <InstallButton />
           {/* Registro del Service Worker para capacidades offline */}
-          <ServiceWorkerRegister />
+          <ServiceWorkerRegister nonce={cspNonce} />
         </Providers>
         {/* Componente de notificaciones tipo toast */}
         <Toaster richColors position="top-center" />
