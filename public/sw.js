@@ -417,6 +417,67 @@ define(["./workbox-bb54ffba"], function (e) {
       }),
       "GET",
     ),
+    // Cache de API GET (misma origen) para uso offline
+    e.registerRoute(
+      ({ url: t, request: r }) => (
+        t.origin === self.location.origin &&
+        r.method === "GET" &&
+        // Lista blanca de endpoints seguros para cachear
+        (t.pathname === "/api/sentry-example-api")
+      ),
+      new e.NetworkFirst({
+        cacheName: "api-get",
+        networkTimeoutSeconds: 3,
+        plugins: [
+          new e.ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 86400 }),
+        ],
+      }),
+      "GET",
+    ),
+    // Encolado de mutaciones API (POST/PUT/DELETE) con Background Sync
+    (() => {
+      try {
+        const postMessageAll = async (payload) => {
+          try {
+            const cls = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+            for (const c of cls) c.postMessage(payload);
+          } catch {}
+        };
+        const bgSync = new e.BackgroundSyncPlugin("api-queue", {
+          maxRetentionTime: 24 * 60,
+          onSync: async ({ queue }) => {
+            try {
+              await queue.replayRequests();
+              await postMessageAll({ type: 'BG_SYNC_SUCCESS' });
+            } catch (err) {
+              await postMessageAll({ type: 'BG_SYNC_FAILURE' });
+              throw err;
+            }
+          },
+        });
+        const matchApiMutation = ({ url: t, request: r }) => (
+          t.origin === self.location.origin &&
+          t.pathname.startsWith("/api/") &&
+          (r.method === "POST" || r.method === "PUT" || r.method === "DELETE")
+        );
+        e.registerRoute(
+          matchApiMutation,
+          new e.NetworkOnly({
+            plugins: [
+              bgSync,
+              {
+                handlerDidError: async () => {
+                  await postMessageAll({ type: 'BG_SYNC_QUEUED' });
+                },
+              },
+            ],
+          }),
+          ["POST", "PUT", "DELETE"],
+        );
+      } catch (err) {
+        // Si Background Sync no está disponible, ignorar silenciosamente
+      }
+    })(),
     e.registerRoute(
       /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
       new e.NetworkFirst({

@@ -7,6 +7,7 @@ import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/lib/store";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loadUserFromStorage, setUser } from "@/lib/store/authSlice";
+import { notify } from "@/lib/notify";
 import {
   startSync,
   loginOnlineToCouchDB,
@@ -20,6 +21,17 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
   const cancelWatch = useRef<null | (() => void)>(null);
+  const avatarUrlRef = useRef<string | null>(null);
+
+  // Aplicar tema guardado
+  useEffect(() => {
+    try {
+      const t = window.localStorage.getItem("theme");
+      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (t === "dark" || (!t && prefersDark)) document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
+    } catch {}
+  }, []);
 
   // Rehidratación de sesión
   useEffect(() => {
@@ -63,6 +75,12 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       if (cancelWatch.current) { cancelWatch.current(); cancelWatch.current = null; }
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
+          const defaults = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+          const mpDoc =
+            doc.modulePermissions && typeof doc.modulePermissions === "object" && !Array.isArray(doc.modulePermissions)
+              ? doc.modulePermissions
+              : (user as any).modulePermissions;
+          const mergedMP = { ...defaults, ...(mpDoc || {}) } as any;
           const updated = {
             _id: doc._id ?? user._id,
             id: doc.id ?? user.id,
@@ -71,19 +89,41 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             password: doc.password ?? user.password,
             role: doc.role ?? user.role,
             permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
-            modulePermissions: doc.modulePermissions ?? (user as any).modulePermissions,
+            modulePermissions: mergedMP,
             isActive: doc.isActive !== false,
             createdAt: doc.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
           } as any;
-          try { await guardarUsuarioOffline(updated); } catch {}
+          // Cargar avatar (attachment)
+          try {
+            const { getUserAvatarBlob } = await import("@/lib/database");
+            const blob = await getUserAvatarBlob(updated.email || user.email);
+            if (blob) {
+              try {
+                if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current);
+                const url = URL.createObjectURL(blob);
+                (updated as any).avatarUrl = url;
+                avatarUrlRef.current = url;
+              } catch {}
+            }
+          } catch {}
+          // Guardar doc sin avatarUrl para no inflar el documento
+          try {
+            const toSave = { ...(updated as any) };
+            delete (toSave as any).avatarUrl;
+            await guardarUsuarioOffline(toSave);
+          } catch {}
           dispatch(setUser(updated));
         });
         cancelWatch.current = stop;
       }
     })();
 
-    return () => { try { cancelWatch.current?.(); } catch {} };
+    return () => {
+      try { cancelWatch.current?.(); } catch {}
+      try { if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current); } catch {}
+      avatarUrlRef.current = null;
+    };
   }, [isAuthenticated, user?.email, dispatch]);
 
   // Reintentar sync al volver online
@@ -92,6 +132,19 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
+
+  // Escuchar eventos del Service Worker (Background Sync)
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !('serviceWorker' in navigator)) return;
+    const handler = (event: MessageEvent) => {
+      const type = (event && (event as any).data && (event as any).data.type) || "";
+      if (type === 'BG_SYNC_QUEUED') notify.info('Acción encolada. Se enviará al recuperar internet.');
+      else if (type === 'BG_SYNC_SUCCESS') notify.success('Acciones sincronizadas correctamente.');
+      else if (type === 'BG_SYNC_FAILURE') notify.warn('No se pudieron sincronizar algunas acciones.');
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
 
   return <>{children}</>;
 }
