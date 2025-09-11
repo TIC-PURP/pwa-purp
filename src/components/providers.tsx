@@ -7,6 +7,7 @@ import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/lib/store";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loadUserFromStorage, setUser } from "@/lib/store/authSlice";
+import { notify } from "@/lib/notify";
 import {
   initializeDefaultUsers,
   startSync,
@@ -81,6 +82,19 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
+
+  // Avisos de Background Sync desde el Service Worker
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !('serviceWorker' in navigator)) return;
+    const handler = (event: MessageEvent) => {
+      const type = (event && (event as any).data && (event as any).data.type) || "";
+      if (type === 'BG_SYNC_QUEUED') notify.info('Acción encolada. Se enviará al recuperar internet.');
+      else if (type === 'BG_SYNC_SUCCESS') notify.success('Acciones sincronizadas correctamente.');
+      else if (type === 'BG_SYNC_FAILURE') notify.warn('No se pudieron sincronizar algunas acciones.');
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, []);
 
   return <>{children}</>;
 }
