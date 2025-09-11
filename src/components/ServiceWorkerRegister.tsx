@@ -2,7 +2,11 @@
 
 import { useEffect } from "react";
 
-export default function ServiceWorkerRegister() {
+type Props = {
+  nonce?: string;
+};
+
+export default function ServiceWorkerRegister({ nonce }: Props) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
