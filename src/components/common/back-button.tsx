@@ -8,7 +8,7 @@ export default function BackButton() {
   return (
     <button
       onClick={() => router.back()}
-      className="inline-flex items-center text-slate-600 hover:text-slate-900 transition text-sm"
+      className="inline-flex items-center text-muted-foreground hover:text-foreground transition text-sm"
       aria-label="Regresar"
       type="button"
    >
@@ -17,4 +17,3 @@ export default function BackButton() {
     </button>
   );
 }
-

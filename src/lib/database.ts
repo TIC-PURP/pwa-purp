@@ -41,6 +41,27 @@ function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms =
   return fetch(input, opts).finally(() => clearTimeout(timer));
 }
 
+// --- Helpers para reintentar operaciones locales si IndexedDB esta cerrando ---
+function isClosingError(err: any) {
+  const name = (err && err.name) || "";
+  const msg = (err && err.message) || "";
+  return /InvalidStateError/i.test(name) || /connection is closing/i.test(String(msg));
+}
+async function safeLocalGet(id: string) {
+  try { return await (localDB as any).get(id); }
+  catch (e) {
+    if (isClosingError(e)) { try { /* force reopen */ /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).get(id); }
+    throw e;
+  }
+}
+async function safeLocalPut(doc: any) {
+  try { return await (localDB as any).put(doc); }
+  catch (e) {
+    if (isClosingError(e)) { try { /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).put(doc); }
+    throw e;
+  }
+}
+
 /** Carga PouchDB y plugin find (solo en cliente) */
 async function ensurePouch() {
   if (PouchDB) return;
@@ -68,6 +89,7 @@ function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
   const _id = `user:${key}`;
   const now = new Date().toISOString();
+  const baseModulePerms = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
   return {
     _id,
     id: `user_${key}`,
@@ -78,8 +100,10 @@ function buildUserDocFromData(data: any) {
     role: data.role || "user",
     permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
     modulePermissions: (typeof data.modulePermissions === "object" && !Array.isArray(data.modulePermissions))
-      ? data.modulePermissions
-      : (!Array.isArray(data.permissions) && typeof data.permissions === "object" ? (data.permissions as any) : { MOD_A: "NONE" }),
+      ? { ...baseModulePerms, ...data.modulePermissions }
+      : (!Array.isArray(data.permissions) && typeof data.permissions === "object"
+          ? { ...baseModulePerms, ...(data.permissions as any) }
+          : { ...baseModulePerms }),
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
     updatedAt: now,
@@ -180,7 +204,7 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
     );
   } catch (err) {
     console.error("[db] loginOnlineToCouchDB fetch error", err);
-    throw err;
+    throw new Error("No hay conexión a internet. Revisa tu conexión e inténtalo nuevamente.");
   }
   const data = await res.json().catch(() => ({}));
   console.log("[db] loginOnlineToCouchDB response", res.status, data);
@@ -385,10 +409,10 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       // Para manager, asegurar permisos completos coherentes con validaciones
       const permissions = role === "manager" ? fullPerms.slice() : Array.isArray(local?.permissions) ? local.permissions : ["read"];
       const modulePermissions = role === "manager"
-        ? { MOD_A: "FULL" }
+        ? { MOD_A: "FULL", MOD_B: "FULL", MOD_C: "FULL", MOD_D: "FULL" }
         : (local && local.modulePermissions && typeof local.modulePermissions === "object" && !Array.isArray(local.modulePermissions))
-          ? local.modulePermissions
-          : { MOD_A: "NONE" };
+          ? { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE", ...local.modulePermissions }
+          : { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" };
       return {
         _id: `user:${(email || baseName).toLowerCase()}`,
         id: `user_${(email || baseName).toLowerCase()}`,
@@ -432,11 +456,14 @@ function normalizeUserDocShape(u: any) {
     out.permissions = [];
   }
   const mp = out.modulePermissions;
+  const defaults = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" };
   if (!mp || Array.isArray(mp) || typeof mp !== "object") {
     // Si permissions venía como objeto v2 (raro), intentar usarlo; si no, valor por defecto
     out.modulePermissions = (!Array.isArray(u.permissions) && typeof u.permissions === "object" && u.permissions)
-      ? { MOD_A: (u.permissions as any).MOD_A || "NONE", ...(u.permissions as any) }
-      : { MOD_A: "NONE" };
+      ? { ...defaults, ...(u.permissions as any) }
+      : { ...defaults };
+  } else {
+    out.modulePermissions = { ...defaults, ...mp };
   }
   return out;
 }
@@ -495,6 +522,9 @@ export async function createUser(data: any) {
       const toRemote = sanitizeForCouch(doc);
       const res = await remoteDB.put(toRemote);
       doc._rev = res.rev;
+      if (!('remoteCreatedAt' in doc) || !doc.remoteCreatedAt) {
+        (doc as any).remoteCreatedAt = new Date().toISOString();
+      }
       try { await localDB.put(sanitizeForCouch(doc)); } catch {}
       // Best-effort: also create a CouchDB _users account so the user can login online
       try {
@@ -562,7 +592,18 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     delete patch.password;
   }
 
-  const doc = await localDB.get(_id);
+  // Cargar doc existente; si no existe, crear base a partir del patch para permitir acciones desde listados remotos
+  let doc: any;
+  try {
+    doc = await safeLocalGet(_id);
+  } catch (e: any) {
+    if (e?.status === 404) {
+      doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), ...patch });
+      // No lo guardamos aún; se guardará al final (local o remoto)
+    } else {
+      throw e;
+    }
+  }
   const updated = {
     ...doc,
     ...patch,
@@ -592,7 +633,10 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
       const toRemote = sanitizeForCouch(updated);
       const res = await remoteDB.put(toRemote);
       updated._rev = res.rev;
-      try { await localDB.put(sanitizeForCouch(updated)); } catch {}
+      if (!('remoteCreatedAt' in updated) || !updated.remoteCreatedAt) {
+        (updated as any).remoteCreatedAt = new Date().toISOString();
+      }
+      try { await safeLocalPut(sanitizeForCouch(updated)); } catch {}
       // Best-effort: sync CouchDB _users according to status and identity changes
       try {
         const roles = [updated.role].filter(Boolean) as string[];
@@ -632,12 +676,15 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
             type: "user",
             updatedAt: new Date().toISOString(),
           } as any;
+          if (!('remoteCreatedAt' in merged) || !merged.remoteCreatedAt) {
+            (merged as any).remoteCreatedAt = new Date().toISOString();
+          }
           if (merged.permissions && !Array.isArray(merged.permissions)) {
             merged.permissions = Array.isArray(latest.permissions) ? latest.permissions : [];
           }
           const res2 = await remoteDB.put(sanitizeForCouch(merged));
           merged._rev = res2.rev;
-          try { await localDB.put(sanitizeForCouch(merged)); } catch {}
+          try { await safeLocalPut(sanitizeForCouch(merged)); } catch {}
           try {
             const roles = [merged.role].filter(Boolean) as string[];
             const wasActive2 = (latest.isActive !== false);
@@ -666,25 +713,37 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     }
   }
   const toLocal = sanitizeForCouch(updated);
-  await localDB.put(toLocal); // LOCAL ONLY
+  await safeLocalPut(toLocal); // LOCAL ONLY
   return { ...toLocal, ___writePath: "local" } as any;
 }
 
 /** Borrado lógico — LOCAL FIRST */
-export async function softDeleteUser(idOrKey: string) {
+// deprecated: no longer used; keep for reference
+/* removed: softDeleteUser(idOrKey: any) {
   await openDatabases();
-  const _id = toUserDocId(idOrKey);
-  const doc = await localDB.get(_id);
+  const key = typeof idOrKey === "string" ? idOrKey : (idOrKey?._id || idOrKey?.id || idOrKey?.email || idOrKey?.name || "");
+  const _id = toUserDocId(key);
+  let doc: any;
+  try {
+    doc = await localDB.get(_id);
+  } catch (e: any) {
+    if (e?.status === 404) {
+      // Crear doc base para permitir desactivación de usuarios listados desde _users
+      const email = typeof idOrKey === "object" ? (idOrKey.email || idOrKey.name || "") : (key.includes("@") ? key : "");
+      doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email, name: email ? (email.split("@")[0]) : key });
+    } else {
+      throw e;
+    }
+  }
   doc.isActive = false;
   doc.updatedAt = new Date().toISOString();
-  doc.deletedAt = doc.updatedAt;
   await localDB.put(sanitizeForCouch(doc)); // << LOCAL ONLY
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine;
     if (online) await deleteRemoteAuthUser(doc.email || doc.name);
   } catch {}
   return sanitizeForCouch(doc);
-}
+} */
 
 /** Borrado permanente — LOCAL FIRST */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
@@ -701,16 +760,28 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
 }
 
 /** Alias para realizar borrado permanente */
-export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
+export async function hardDeleteUser(idOrKey: any): Promise<boolean> {
   // Best-effort: remove CouchDB _users account before deleting local doc
   try {
     await openDatabases();
     const online = typeof navigator !== "undefined" && navigator.onLine;
     if (online) {
       try {
-        const _id = toUserDocId(idOrKey);
-        const doc = await localDB.get(_id);
-        const email = (doc && (doc.email || doc.name)) || "";
+        let email = "";
+        if (typeof idOrKey === "string") {
+          // Si nos pasan email directamente
+          if (idOrKey.includes("@")) email = idOrKey;
+          else {
+            // Intentar resolver por doc local si existe
+            try {
+              const _id = toUserDocId(idOrKey);
+              const doc = await localDB.get(_id);
+              email = (doc && (doc.email || doc.name)) || "";
+            } catch {}
+          }
+        } else if (idOrKey && typeof idOrKey === "object") {
+          email = String(idOrKey.email || idOrKey.name || "");
+        }
         if (email) {
           await fetch(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
             method: "DELETE",
@@ -720,7 +791,7 @@ export async function hardDeleteUser(idOrKey: string): Promise<boolean> {
       } catch {}
     }
   } catch {}
-  return deleteUserById(idOrKey);
+  return deleteUserById(typeof idOrKey === "string" ? idOrKey : (idOrKey?._id || idOrKey?.id || idOrKey?.email || ""));
 }
 
 /** Busca por email en local */
@@ -731,12 +802,12 @@ export async function findUserByEmail(email: string) {
       selector: { type: "user", email },
       limit: 1,
     });
-    if (res.docs && res.docs[0]) return res.docs[0];
+    if (res.docs && res.docs[0]) return normalizeUserDocShape(res.docs[0]);
   } catch {}
 
   const name = email.includes("@") ? email.split("@")[0] : email;
-  try { return await localDB.get(`user:${name}`); } catch {}
-  try { return await localDB.get(`user_${name}`); } catch {}
+  try { return normalizeUserDocShape(await localDB.get(`user:${name}`)); } catch {}
+  try { return normalizeUserDocShape(await localDB.get(`user_${name}`)); } catch {}
 
   return null;
 }
@@ -780,6 +851,147 @@ export async function watchUserDocByEmail(
 export { localDB, remoteDB };
 
 // ===========================
+// Avatar helpers (attachments)
+// ===========================
+export async function saveUserAvatar(
+  email: string,
+  blob: Blob,
+  contentType: string = blob.type || "image/jpeg",
+): Promise<{ ok: true; _id: string; _rev?: string }> {
+  await openDatabases();
+  if (!localDB) throw new Error("localDB no inicializado");
+  const _id = toUserDocId(email);
+  let doc: any;
+  try { doc = await localDB.get(_id); } catch (e: any) {
+    if (e?.status === 404) {
+      // crear base mínima
+      doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email });
+      try { await localDB.put(sanitizeForCouch(doc)); } catch {}
+      doc = await localDB.get(_id);
+    } else { throw e; }
+  }
+  // putAttachment local-first
+  const res = await localDB.putAttachment(_id, "avatar", doc._rev, blob, contentType);
+  // también miniatura 64x64
+  try {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+    URL.revokeObjectURL(url);
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      // @ts-ignore
+      ctx.imageSmoothingQuality = "high";
+      const r = Math.max(size / img.width, size / img.height);
+      const dw = img.width * r, dh = img.height * r;
+      const dx = (size - dw) / 2, dy = (size - dh) / 2;
+      ctx.drawImage(img, dx, dy, dw, dh);
+      let d = "";
+      try { d = canvas.toDataURL("image/webp", 0.8); if (!d.startsWith("data:image/webp")) throw new Error(); }
+      catch { d = canvas.toDataURL("image/jpeg", 0.8); }
+      const thumb = await (await fetch(d)).blob();
+      const latest0 = await localDB.get(_id);
+      await localDB.putAttachment(_id, "avatar_64", latest0._rev, thumb, thumb.type || "image/jpeg");
+    }
+  } catch {}
+  // marcar bandera y updatedAt
+  const latest = await localDB.get(_id);
+  latest.hasAvatar = true;
+  latest.updatedAt = new Date().toISOString();
+  await localDB.put(sanitizeForCouch(latest));
+
+  // Best-effort: subir a remoto si hay internet
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
+      let rdoc = await remoteDB.get(_id).catch(() => null);
+      if (!rdoc) {
+        const base = sanitizeForCouch(latest);
+        const put = await remoteDB.put(base);
+        rdoc = { ...base, _rev: put.rev };
+      }
+      const r = await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
+      // también miniatura remota
+      try {
+        const size = 64;
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+        URL.revokeObjectURL(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // @ts-ignore
+          ctx.imageSmoothingQuality = "high";
+          const r2 = Math.max(size / img.width, size / img.height);
+          const dw2 = img.width * r2, dh2 = img.height * r2;
+          const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
+          ctx.drawImage(img, dx2, dy2, dw2, dh2);
+          let d2 = "";
+          try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
+          catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
+          const thumb2 = await (await fetch(d2)).blob();
+          const rlatest0 = await remoteDB.get(_id);
+          await remoteDB.putAttachment(_id, "avatar_64", rlatest0._rev, thumb2, thumb2.type || "image/jpeg");
+        }
+      } catch {}
+      // actualizar doc remoto con bandera por coherencia
+      const rlatest = await remoteDB.get(_id);
+      rlatest.hasAvatar = true;
+      rlatest.updatedAt = new Date().toISOString();
+      await remoteDB.put(sanitizeForCouch(rlatest));
+    }
+  } catch {}
+
+  return { ok: true, _id, _rev: res?.rev };
+}
+
+
+export async function deleteUserAvatar(email: string) {
+  await openDatabases();
+  const _id = toUserDocId(email);
+  try {
+    let rev = (await localDB.get(_id))._rev;
+    try { const r1 = await localDB.removeAttachment(_id, "avatar", rev); rev = r1.rev; } catch {}
+    try { const r2 = await localDB.removeAttachment(_id, "avatar_64", rev); rev = r2.rev; } catch {}
+    const latest = await localDB.get(_id);
+    latest.hasAvatar = false;
+    latest.updatedAt = new Date().toISOString();
+    await localDB.put(sanitizeForCouch(latest));
+  } catch {}
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
+      let rdoc = await remoteDB.get(_id).catch(() => null);
+      if (rdoc) {
+        let rrev = rdoc._rev;
+        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", rrev); rrev = rr1.rev; } catch {}
+        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", rrev); rrev = rr2.rev; } catch {}
+        const rlatest = await remoteDB.get(_id);
+        rlatest.hasAvatar = false;
+        rlatest.updatedAt = new Date().toISOString();
+        await remoteDB.put(sanitizeForCouch(rlatest));
+      }
+    }
+  } catch {}
+  return { ok: true } as const;
+}export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
+  await openDatabases();
+  if (!localDB) return null;
+  const _id = toUserDocId(email);
+  try {
+    const blob = await localDB.getAttachment(_id, "avatar");
+    return blob || null;
+  } catch {
+    return null;
+  }
+}
+
+// ===========================
 // _users helpers (client-side)
 // ===========================
 async function upsertRemoteAuthUser({ name, password, roles }: { name?: string; password?: string; roles?: string[] }) {
@@ -820,3 +1032,4 @@ async function deleteRemoteAuthUser(name?: string) {
     });
   } catch {}
 }
+

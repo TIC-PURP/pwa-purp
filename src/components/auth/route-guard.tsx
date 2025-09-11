@@ -44,7 +44,7 @@ export function RouteGuard({
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-900" />
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-foreground" />
       </div>
     );
   }
@@ -56,7 +56,7 @@ export function RouteGuard({
         <div className="w-full max-w-sm space-y-3">
           <div>
             <h1 className="text-lg font-semibold">Modo sin conexión</h1>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-muted-foreground">
               Inicia sesión con tus credenciales guardadas para continuar.
             </p>
           </div>

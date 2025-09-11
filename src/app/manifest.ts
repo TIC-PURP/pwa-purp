@@ -8,8 +8,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "PWA",
     start_url: "/", // Punto de inicio al abrir la app instalada
     display: "standalone", // Se comporta como aplicación nativa
-    background_color: "#ffffff",
-    theme_color: "#ffffff", //"#3b82f6ff"
+    background_color: "#0f172a",
+    theme_color: "#0f172a",
     icons: [
       {
         src: "/icons/icon-192x192.png",

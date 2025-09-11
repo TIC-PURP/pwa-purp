@@ -39,8 +39,8 @@ describe('authSlice', () => {
     window.localStorage.clear();
   });
 
-  // Debe autenticar con la base local cuando falla el login online
-  it('login offline falls back to local authentication', async () => {
+  // Nueva política: si falla el login ONLINE, no hay fallback offline
+  it('rejects when online login fails (no offline fallback)', async () => {
     (db.loginOnlineToCouchDB as jest.Mock).mockRejectedValue(new Error('offline'));
     (db.authenticateUser as jest.Mock).mockResolvedValue(sampleUser);
 
@@ -48,10 +48,8 @@ describe('authSlice', () => {
     await store.dispatch(loginUser({ email: sampleUser.email, password: sampleUser.password }) as any);
     const state = store.getState().auth;
 
-    expect(state.isAuthenticated).toBe(true);
-    expect(state.user?.email).toBe(sampleUser.email);
-    expect(state.token).toBe('offline');
-    expect(window.localStorage.getItem('auth')).toBeTruthy();
+    expect(state.isAuthenticated).toBe(false);
+    expect(state.user).toBeNull();
   });
 
   // Al cerrar sesión se limpia el estado y se llama al logout del backend
@@ -90,9 +88,39 @@ describe('authSlice', () => {
     await store.dispatch(loadUserFromStorage());
     const state = store.getState().auth;
 
-    expect(state.user).toEqual(sampleUser);
+    expect(state.user).toEqual(expect.objectContaining({
+      ...sampleUser,
+      modulePermissions: { MOD_A: 'NONE', MOD_B: 'NONE', MOD_C: 'NONE', MOD_D: 'NONE' },
+    }));
     expect(state.token).toBe('abc123');
     expect(state.isAuthenticated).toBe(true);
     expect(state.isLoading).toBe(false);
+  });
+
+  it('rehydration merges modulePermissions defaults A-D', async () => {
+    const partial = {
+      ...sampleUser,
+      modulePermissions: { MOD_A: 'FULL' },
+    } as any;
+    window.localStorage.setItem('auth', JSON.stringify({ user: partial, token: 'abc123' }));
+    const store = configureStore({ reducer: { auth: authReducer } });
+    await store.dispatch(loadUserFromStorage() as any);
+    const state = store.getState().auth;
+    expect(state.user?.modulePermissions).toEqual(
+      expect.objectContaining({ MOD_A: 'FULL', MOD_B: 'NONE', MOD_C: 'NONE', MOD_D: 'NONE' })
+    );
+  });
+
+  it('login maps modulePermissions and fills missing keys', async () => {
+    (db.loginOnlineToCouchDB as jest.Mock).mockResolvedValue({ ok: true, user: sampleUser.email, roles: ['admin'] });
+    (db.findUserByEmail as jest.Mock).mockResolvedValue({ ...sampleUser, modulePermissions: { MOD_D: 'FULL' } });
+    const store = configureStore({ reducer: { auth: authReducer } });
+    await store.dispatch(loginUser({ email: sampleUser.email, password: sampleUser.password }) as any);
+    const mp = store.getState().auth.user?.modulePermissions as any;
+    expect(mp).toBeTruthy();
+    expect(mp.MOD_D).toBe('FULL');
+    expect(mp.MOD_A).toBeDefined();
+    expect(mp.MOD_B).toBeDefined();
+    expect(mp.MOD_C).toBeDefined();
   });
 });

@@ -1,4 +1,4 @@
-﻿// Página de administración de usuarios protegida por autenticación
+// Página de administración de usuarios protegida por autenticación
 "use client";
 
 import { useState, useEffect } from "react";
@@ -36,7 +36,6 @@ import {
   getAllUsersAsManager,
   createUser,
   updateUser,
-  softDeleteUser,
   hardDeleteUser,
   cleanupUserDocs,
 } from "@/lib/database";
@@ -47,7 +46,7 @@ export default function UsersPage() {
   // Hook de Redux para despachar acciones
   const dispatch = useAppDispatch();
   // Usuario autenticado almacenado globalmente
-  const { user: me } = useAppSelector((s) => s.auth);
+  const { user: me, isAuthenticated } = useAppSelector((s) => s.auth);
 
   const router = useRouter();
   // Lista de usuarios recuperados
@@ -80,12 +79,17 @@ export default function UsersPage() {
     })();
   }, []);
 
+  // Al resolver autenticación/cambio de usuario, volver a cargar para intentar el listado manager
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadUsers();
+    }
+  }, [isAuthenticated, me?.email]);
+
   // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
-    // Manager: listar desde _users + fusionar locales. Otros (por si cambia guard): solo locales
-    const allUsers = me?.role === "manager"
-      ? await getAllUsersAsManager()
-      : await getAllUsers({ includeInactive: true });
+    // Intentar listado manager siempre (el API validará por cookie/rol). Tiene fallback a locales.
+    const allUsers = await getAllUsersAsManager();
     setUsers(allUsers as any);
   };
 
@@ -95,12 +99,17 @@ export default function UsersPage() {
     try {
       const created: any = await createUser(data);
       const path = created?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote")
-        notify.success("Usuario guardado en la nube");
-      else
-        notify.info(
-          "Usuario guardado sin conexión. Se sincronizará cuando haya internet",
-        );
+      if (path === "remote") notify.success("Usuario guardado en la nube");
+      else notify.info("Usuario guardado sin conexión. Se sincronizará cuando haya internet");
+
+      // Mensaje específico si se establecieron permisos por módulo
+      const defMP = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+      const mp = { ...defMP, ...(created?.modulePermissions || (data as any).modulePermissions || {}) } as any;
+      const hasModulePerms = [mp.MOD_A, mp.MOD_B, mp.MOD_C, mp.MOD_D].some((v) => v && v !== "NONE");
+      if (hasModulePerms) {
+        if (path === "remote") notify.success("Permisos por módulo establecidos");
+        else notify.info("Permisos por módulo establecidos. Se sincronizarán luego");
+      }
 
       const createdEmail = (created?.email || data.email || "").toLowerCase();
       const meEmail = (me?.email || "").toLowerCase();
@@ -134,13 +143,30 @@ export default function UsersPage() {
     if (!editingUser) return;
     setIsLoading(true);
     try {
+      // Detectar si solo cambiaron permisos por módulo (A–D)
+      const defMP = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+      const beforeMP = { ...defMP, ...(editingUser.modulePermissions || {}) } as any;
+      const afterMP = { ...defMP, ...(data as any).modulePermissions } as any;
+      const moduleChanged = JSON.stringify(beforeMP) !== JSON.stringify(afterMP);
+      const permsChanged = JSON.stringify((editingUser.permissions || []).slice().sort()) !==
+        JSON.stringify(((data.permissions || []) as any).slice().sort());
+      const nonModuleChanged = (
+        editingUser.name !== data.name ||
+        editingUser.email !== data.email ||
+        editingUser.role !== data.role ||
+        permsChanged ||
+        Boolean((data.password || "").trim())
+      );
+
       const updated: any = await updateUser({ ...editingUser, ...data });
       const path = updated?.___writePath === "remote" ? "remote" : "local";
-      if (path === "remote") notify.success("Cambios guardados en la nube");
-      else
-        notify.info(
-          "Cambios guardados sin conexión. Se sincronizarán luego",
-        );
+      if (moduleChanged && !nonModuleChanged) {
+        if (path === "remote") notify.success("Permisos actualizados en la nube");
+        else notify.info("Permisos actualizados. Se sincronizarán luego");
+      } else {
+        if (path === "remote") notify.success("Cambios guardados en la nube");
+        else notify.info("Cambios guardados sin conexión. Se sincronizarán luego");
+      }
       await loadUsers();
       setEditingUser(null);
     } catch (error) {
@@ -160,7 +186,6 @@ export default function UsersPage() {
         const updated: any = await updateUser({
           ...deletingUser,
           isActive: false,
-          deletedAt: new Date().toISOString(),
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
         if (path === "remote")
@@ -173,7 +198,6 @@ export default function UsersPage() {
         const updated: any = await updateUser({
           ...deletingUser,
           isActive: true,
-          deletedAt: undefined,
         });
         const path = updated?.___writePath === "remote" ? "remote" : "local";
         if (path === "remote") notify.success("Usuario activado");
@@ -183,7 +207,7 @@ export default function UsersPage() {
           );
       } else {
         const ok = await hardDeleteUser(
-          deletingUser._id || deletingUser.id || deletingUser.email,
+          deletingUser.email || deletingUser._id || deletingUser.id,
         );
         if (ok) {
           if (typeof navigator !== "undefined" && navigator.onLine) {
@@ -216,7 +240,6 @@ export default function UsersPage() {
       const updated: any = await updateUser({
         ...user,
         isActive: toggleTo,
-        deletedAt: toggleTo ? undefined : new Date().toISOString(),
       });
       const path = updated?.___writePath === "remote" ? "remote" : "local";
       if (toggleTo) {
@@ -244,7 +267,7 @@ export default function UsersPage() {
   if (showForm || editingUser) {
     return (
       <RouteGuard requiredRole="manager">
-        <div className="min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-background">
           <Navbar />
           <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
             <div className="px-4 py-6 sm:px-0">
@@ -266,7 +289,7 @@ export default function UsersPage() {
 
   return (
     <RouteGuard requiredRole="manager">
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-background">
         <Navbar />
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
@@ -275,10 +298,10 @@ export default function UsersPage() {
             </div>
             <div className="flex justify-between items-center mb-8">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">
+                <h1 className="text-3xl font-bold text-foreground">
                   Panel de control
                 </h1>
-                <p className="mt-2 text-slate-600">Gestión de usuarios</p>
+                <p className="mt-2 text-muted-foreground">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -342,7 +365,7 @@ export default function UsersPage() {
                   <CardContent>
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Rol:</span>
+                        <span className="text-sm text-muted-foreground">Rol:</span>
                         <Badge
                           variant={
                             user.role === "manager" ? "default" : "secondary"
@@ -352,37 +375,44 @@ export default function UsersPage() {
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">Estado:</span>
+                        <span className="text-sm text-muted-foreground">Estado:</span>
                         <Badge
                           variant={user.isActive ? "default" : "destructive"}
                         >
                           {user.isActive ? "Activo" : "Inactivo"}
                         </Badge>
                       </div>
+                      {/* Se retira el bloque de permisos v1 de la tarjeta */}
                       <div>
-                        <span className="text-sm text-slate-600">
-                          Permisos:
-                        </span>
-
+                        <span className="text-sm text-muted-foreground">Módulos:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
-                            const perms = Array.isArray(user.permissions)
-                              ? [...user.permissions].sort()
-                              : [];
-                            let label = "Acceso completo";
-                            if (perms.length === 0) label = "Sin permisos";
-                            else if (perms.length === 1 && perms[0] === "read")
-                              label = "Solo lectura";
-                            return (
-                              <Badge variant="outline" className="text-xs">
-                                {label}
+                            const mp = (user as any).modulePermissions || {};
+                            const val = (k: string) => (mp && typeof mp === 'object' ? mp[k] : 'NONE');
+                            const values = [val('MOD_A'), val('MOD_B'), val('MOD_C'), val('MOD_D')];
+                            const anyVisible = values.some((v) => v && v !== "NONE"); if (!anyVisible) return null;
+                            const item = (label: string, k: string) => (
+                              <Badge
+                                key={k}
+                                variant={val(k) === 'FULL' ? 'default' : val(k) === 'READ' ? 'secondary' : 'outline'}
+                                className="text-[10px] tracking-wide"
+                              >
+                                {label}: {val(k)}
                               </Badge>
+                            );
+                            return (
+                              <>
+                                {item('A', 'MOD_A')}
+                                {item('B', 'MOD_B')}
+                                {item('C', 'MOD_C')}
+                                {item('D', 'MOD_D')}
+                              </>
                             );
                           })()}
                         </div>
                       </div>
-                      <div className="text-xs text-slate-500">
-                        Creado: {new Date(user.createdAt).toLocaleDateString()}
+                      <div className="text-xs text-muted-foreground">
+                        Creado: {new Date((user as any).remoteCreatedAt || user.createdAt).toLocaleDateString()}
                       </div>
                     </div>
                   </CardContent>
@@ -393,7 +423,7 @@ export default function UsersPage() {
             {users.length === 0 && (
               <Card>
                 <CardContent className="text-center py-12">
-                  <p className="text-slate-600">No hay usuarios registrados</p>
+                  <p className="text-muted-foreground">No hay usuarios registrados</p>
                   <Button className="mt-4" onClick={() => setShowForm(true)}>
                     <Plus className="h-4 w-4 mr-2" />
                     Crear Primer Usuario
@@ -433,13 +463,13 @@ export default function UsersPage() {
                   setIsLoading(true);
                   try {
                     if (deleteMode === "soft") {
-                      await softDeleteUser(deletingUser._id || deletingUser.id);
+                      await updateUser({ ...deletingUser, isActive: false });
                       notify.warn("Usuario desactivado");
                     } else if (deleteMode === "activate") {
                       await updateUser({ ...deletingUser, isActive: true });
                       notify.success("Usuario activado");
                     } else {
-                      await hardDeleteUser(deletingUser._id || deletingUser.id);
+                      await hardDeleteUser(deletingUser.email || deletingUser._id || deletingUser.id);
                       notify.error("Usuario eliminado permanentemente");
                     }
                     await loadUsers();
@@ -471,6 +501,8 @@ export default function UsersPage() {
     </RouteGuard>
   );
 }
+
+
 
 
 

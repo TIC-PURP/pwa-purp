@@ -31,14 +31,15 @@ export default function RootLayout({
 
   // El layout envuelve todo el HTML de cada página
   return (
-    <html lang="es">
+    <html lang="es" suppressHydrationWarning>
       <body className={inter.className}>
+        <script dangerouslySetInnerHTML={{__html:"try{var t=localStorage.getItem('theme');var prefersDark=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(t==='dark'||(!t&&prefersDark)){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}}catch(e){}"}} />
         {/* Proveedores de contexto global (Redux, etc.) */}
         <Providers>
           {/* Captura errores de React y muestra una UI alternativa */}
           <ErrorBoundary>{children}</ErrorBoundary>
           {/* Botón flotante para instalar la PWA */}
-          <InstallButton />
+          
           {/* Registro del Service Worker para capacidades offline */}
           <ServiceWorkerRegister nonce={cspNonce} />
         </Providers>

@@ -42,9 +42,14 @@ export async function POST(req: Request) {
     // Respuesta de Couch
     const data = await couchRes.json().catch(() => ({} as any));
     if (!couchRes.ok || (data as any)?.error) {
+      const status = couchRes.status || 401;
+      let friendly = (data as any)?.reason || (data as any)?.error || "login failed";
+      if (status === 401 || status === 403) {
+        friendly = "Correo o contraseña incorrectos.";
+      }
       return NextResponse.json(
-        { error: (data as any)?.reason || (data as any)?.error || "login failed" },
-        { status: couchRes.status || 401 },
+        { error: friendly },
+        { status },
       );
     }
 

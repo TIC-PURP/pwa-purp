@@ -1,25 +1,40 @@
-import Script from "next/script";
+"use client";
 
-export default function ServiceWorkerRegister({ nonce }: { nonce?: string }) {
-  return (
-    <Script
-      id="sw-register"
-      nonce={nonce}
-      strategy="afterInteractive"
-      dangerouslySetInnerHTML={{
-        __html: `
-          if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-            if (!window.__swRegistered) {
-              navigator.serviceWorker.register('/sw.js', { scope: '/' }).then((reg) => {
-                window.__swRegistered = true;
-                reg.addEventListener?.('updatefound', () => {});
-              }).catch((e) => {
-                console.warn('[sw] register failed', e?.message || e);
-              });
-            }
-          }
-        `,
-      }}
-    />
-  );
+import { useEffect } from "react";
+
+export default function ServiceWorkerRegister() {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator)) return;
+    // Evitar registrar en desarrollo: Next.js no sirve todos los assets (dev server)
+    if (process.env.NODE_ENV !== "production") {
+      // Si hubiera uno previo, intentar desregistrarlo para evitar errores de precache en dev
+      navigator.serviceWorker
+        .getRegistrations?.()
+        .then((regs) => {
+          regs.forEach((r) => {
+            try {
+              r.unregister();
+            } catch {}
+          });
+        })
+        .catch(() => {});
+      return;
+    }
+    // Evitar registros duplicados
+    if ((window as any).__swRegistered) return;
+    const register = async () => {
+      try {
+        const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        (window as any).__swRegistered = true;
+        reg.addEventListener?.("updatefound", () => {
+          // hook para actualizar UI si se desea
+        });
+      } catch (e) {
+        console.warn("[sw] register failed", (e as any)?.message || e);
+      }
+    };
+    register();
+  }, []);
+  return null;
 }

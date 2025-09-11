@@ -53,6 +53,9 @@ export function UserForm({
   const [showPassword, setShowPassword] = useState(false); // Control de visibilidad de contraseña
   const isEditing = !!user; // Indica si se está editando o creando
   const [modAPerm, setModAPerm] = useState<"FULL" | "READ" | "NONE">(user?.modulePermissions?.MOD_A ?? "NONE");
+  const [modBPerm, setModBPerm] = useState<"FULL" | "READ" | "NONE">(user?.modulePermissions?.MOD_B ?? "NONE");
+  const [modCPerm, setModCPerm] = useState<"FULL" | "READ" | "NONE">(user?.modulePermissions?.MOD_C ?? "NONE");
+  const [modDPerm, setModDPerm] = useState<"FULL" | "READ" | "NONE">(user?.modulePermissions?.MOD_D ?? "NONE");
 
   const {
     register,
@@ -84,6 +87,9 @@ export function UserForm({
   useEffect(() => {
     if (role === "manager") {
       setModAPerm("FULL");
+      setModBPerm("FULL");
+      setModCPerm("FULL");
+      setModDPerm("FULL");
       const full: Permission[] = ["read", "write", "delete", "manage_users"];
       const current = new Set(perms || []);
       const needsSet =
@@ -117,13 +123,24 @@ export function UserForm({
         <form
           onSubmit={handleSubmit((data) => {
             if (isEditing && user) {
+              const defaultsMP = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+              const oldMP = { ...defaultsMP, ...(user.modulePermissions || {}) } as any;
+              const newMP = {
+                MOD_A: data.role === "manager" ? "FULL" : modAPerm,
+                MOD_B: data.role === "manager" ? "FULL" : modBPerm,
+                MOD_C: data.role === "manager" ? "FULL" : modCPerm,
+                MOD_D: data.role === "manager" ? "FULL" : modDPerm,
+              } as any;
+              const moduleChanged = JSON.stringify(oldMP) !== JSON.stringify(newMP);
+
               const changed =
                 user.name !== data.name ||
                 user.email !== data.email ||
                 user.role !== data.role ||
                 JSON.stringify((user.permissions ?? []).slice().sort()) !==
                   JSON.stringify((data.permissions ?? []).slice().sort()) ||
-                !!(data.password && data.password.trim().length > 0);
+                !!(data.password && data.password.trim().length > 0) ||
+                moduleChanged;
 
               if (!changed) {
                 alert(
@@ -139,7 +156,12 @@ export function UserForm({
 
             const payload: any = {
               ...data,
-              modulePermissions: { MOD_A: role === "manager" ? "FULL" : modAPerm },
+              modulePermissions: {
+                MOD_A: role === "manager" ? "FULL" : modAPerm,
+                MOD_B: role === "manager" ? "FULL" : modBPerm,
+                MOD_C: role === "manager" ? "FULL" : modCPerm,
+                MOD_D: role === "manager" ? "FULL" : modDPerm,
+              },
             };
             // Mantener permissions como arreglo (v1) y enviar modulePermissions (v2)
             onSubmit(payload as any);
@@ -276,10 +298,10 @@ export function UserForm({
                   : "Crear Usuario"}
             </Button>
           </div>{/* --- Gestión de permisos (Módulos) --- */}
-<details className="group mt-6 rounded-2xl border bg-white/60 dark:bg-zinc-900/60 backdrop-blur-sm shadow-sm">
+<details className="group mt-6 rounded-2xl border bg-card/60 backdrop-blur-sm shadow-sm">
   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer select-none">
     <div className="flex items-center gap-3">
-      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600/10 text-indigo-600"></span>
+      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full"></span>
       <div>
         <p className="text-sm font-semibold">Gestión de permisos</p>
         <p className="text-xs text-muted-foreground">Configura el acceso por módulo para este usuario</p>
@@ -295,7 +317,7 @@ export function UserForm({
           <p className="text-xs text-muted-foreground">Define permisos</p>
         </div>
         <select
-          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
           value={modAPerm}
           onChange={(e) => setModAPerm(e.target.value as any)}
           disabled={role === "manager"}
@@ -307,6 +329,69 @@ export function UserForm({
       </div>
       {role === "manager" && (
         <p className="mt-2 text-xs text-muted-foreground">Este usuario es Manager: el acceso al Módulo A es completo por defecto.</p>
+      )}
+    </div>
+    <div className="rounded-xl border bg-background/50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Módulo B</p>
+          <p className="text-xs text-muted-foreground">Define permisos</p>
+        </div>
+        <select
+          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+          value={modBPerm}
+          onChange={(e) => setModBPerm(e.target.value as any)}
+          disabled={role === "manager"}
+        >
+          <option value="FULL">Acceso completo</option>
+          <option value="READ">Solo lectura</option>
+          <option value="NONE">Sin permiso</option>
+        </select>
+      </div>
+      {role === "manager" && (
+        <p className="mt-2 text-xs text-muted-foreground">Este usuario es Manager: el acceso al Módulo B es completo por defecto.</p>
+      )}
+    </div>
+    <div className="rounded-xl border bg-background/50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Módulo C</p>
+          <p className="text-xs text-muted-foreground">Define permisos</p>
+        </div>
+        <select
+          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+          value={modCPerm}
+          onChange={(e) => setModCPerm(e.target.value as any)}
+          disabled={role === "manager"}
+        >
+          <option value="FULL">Acceso completo</option>
+          <option value="READ">Solo lectura</option>
+          <option value="NONE">Sin permiso</option>
+        </select>
+      </div>
+      {role === "manager" && (
+        <p className="mt-2 text-xs text-muted-foreground">Este usuario es Manager: el acceso al Módulo C es completo por defecto.</p>
+      )}
+    </div>
+    <div className="rounded-xl border bg-background/50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Módulo D</p>
+          <p className="text-xs text-muted-foreground">Define permisos</p>
+        </div>
+        <select
+          className="w-full max-w-xs rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+          value={modDPerm}
+          onChange={(e) => setModDPerm(e.target.value as any)}
+          disabled={role === "manager"}
+        >
+          <option value="FULL">Acceso completo</option>
+          <option value="READ">Solo lectura</option>
+          <option value="NONE">Sin permiso</option>
+        </select>
+      </div>
+      {role === "manager" && (
+        <p className="mt-2 text-xs text-muted-foreground">Este usuario es Manager: el acceso al Módulo D es completo por defecto.</p>
       )}
     </div>
   </div>

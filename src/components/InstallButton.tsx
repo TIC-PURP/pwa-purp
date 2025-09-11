@@ -61,7 +61,7 @@ export default function InstallButton() {
   return (
     <button
       onClick={handleInstallClick}
-      className="fixed bottom-5 right-5 z-50 animate-bounce rounded-full bg-slate-900 px-5 py-3 text-white shadow-lg hover:bg-gray-800 transition-all duration-900"
+      className="fixed bottom-5 right-5 z-50 animate-bounce rounded-full bg-primary px-5 py-3 text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-900"
     >
       Instalar App
     </button>
