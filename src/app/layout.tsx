@@ -32,7 +32,12 @@ export default function RootLayout({
   if (process.env.SENTRY_DSN) {
     connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
   }
-  const scriptSrc = isDev ? ["'self'", "'unsafe-eval'", "'unsafe-inline'"] : ["'self'"];
+  // En producción permitimos 'unsafe-inline' porque Next.js inyecta pequeños
+  // scripts inline necesarios para la hidratación. Si más adelante migramos
+  // a CSP con nonce por cabecera, podemos retirar este permiso.
+  const scriptSrc = isDev
+    ? ["'self'", "'unsafe-eval'", "'unsafe-inline'"]
+    : ["'self'", "'unsafe-inline'"];
   const csp = [
     "default-src 'self'",
     `script-src ${scriptSrc.join(' ')}`,
@@ -47,7 +52,6 @@ export default function RootLayout({
   return (
     <html lang="es" suppressHydrationWarning>
       <head>
-        <meta httpEquiv="Content-Security-Policy" content={csp} />
         <script src="/theme-init.js"></script>
       </head>
       <body className={inter.className}>
