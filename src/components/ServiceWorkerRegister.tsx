@@ -10,8 +10,13 @@ export default function ServiceWorkerRegister({ nonce }: Props) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
-    // Evitar registrar en desarrollo: Next.js no sirve todos los assets (dev server)
-    if (process.env.NODE_ENV !== "production") {
+    // En desarrollo, permite activar el SW con NEXT_PUBLIC_SW_ENABLE_DEV=1
+    const enableDevSW =
+      process.env.NEXT_PUBLIC_SW_ENABLE_DEV === "1" ||
+      process.env.NEXT_PUBLIC_SW_ENABLE_DEV === "true";
+
+    // Evitar registrar en desarrollo salvo que se habilite explícitamente
+    if (process.env.NODE_ENV !== "production" && !enableDevSW) {
       // Si hubiera uno previo, intentar desregistrarlo para evitar errores de precache en dev
       navigator.serviceWorker
         .getRegistrations?.()

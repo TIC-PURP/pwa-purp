@@ -26,14 +26,31 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // El nonce para las etiquetas <script> se obtiene de la variable de entorno o usa un valor por defecto
-  const cspNonce = process.env.CSP_SCRIPT_NONCE || "staticNonce";
+  // CSP por meta (desarrollo permite HMR; producción más estricta)
+  const isDev = process.env.NODE_ENV !== "production";
+  const connectSrc = ["'self'"];
+  if (process.env.SENTRY_DSN) {
+    connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
+  }
+  const scriptSrc = isDev ? ["'self'", "'unsafe-eval'", "'unsafe-inline'"] : ["'self'"];
+  const csp = [
+    "default-src 'self'",
+    `script-src ${scriptSrc.join(' ')}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    `connect-src ${connectSrc.join(' ')}`,
+    "font-src 'self' data:",
+    // frame-ancestors no tiene efecto en <meta>, debe ir como cabecera
+  ].join('; ');
 
   // El layout envuelve todo el HTML de cada página
   return (
     <html lang="es" suppressHydrationWarning>
+      <head>
+        <meta httpEquiv="Content-Security-Policy" content={csp} />
+        <script src="/theme-init.js"></script>
+      </head>
       <body className={inter.className}>
-        <script nonce={cspNonce} dangerouslySetInnerHTML={{__html:"try{var t=localStorage.getItem('theme');var prefersDark=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(t==='dark'||(!t&&prefersDark)){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}}catch(e){}"}} />
         {/* Proveedores de contexto global (Redux, etc.) */}
         <Providers>
           {/* Captura errores de React y muestra una UI alternativa */}
@@ -41,8 +58,8 @@ export default function RootLayout({
           {/* Botón flotante para instalar la PWA */}
           
           {/* Registro del Service Worker para capacidades offline */}
-          <ServiceWorkerRegister nonce={cspNonce} />
-        </Providers>
+          <ServiceWorkerRegister />
+      </Providers>
         {/* Componente de notificaciones tipo toast */}
         <Toaster richColors position="top-center" />
       </body>

@@ -15,21 +15,9 @@ const nextConfig = {
 
     // Generamos la directiva script-src sin permitir unsafe-inline/unsafe-eval
     // Se añade un nonce estático o configurable mediante CSP_SCRIPT_NONCE
-    const scriptNonce = process.env.CSP_SCRIPT_NONCE || "staticNonce";
-    const scriptSrc = ["'self'", `'nonce-${scriptNonce}'`];
-
-    const csp = [
-      "default-src 'self'",
-      `script-src ${scriptSrc.join(' ')}`,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      `connect-src ${connectSrc.join(' ')}`,
-      "font-src 'self' data:",
-      "frame-ancestors 'self'",
-    ].join('; ');
-
+    // Content-Security-Policy se define dinámicamente en app/layout.tsx usando
+    // el nonce por solicitud que expone Next.js. Aquí mantenemos el resto.
     const securityHeaders = [
-      { key: "Content-Security-Policy", value: csp },
       { key: "Referrer-Policy", value: "no-referrer" },
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "X-Frame-Options", value: "SAMEORIGIN" },

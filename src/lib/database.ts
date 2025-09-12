@@ -436,6 +436,28 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       }
     }
 
+    // Persistir listado en la base local para soporte offline completo
+    try {
+      await openDatabases();
+      if (localDB) {
+        for (const u of mapped) {
+          try {
+            const existing = await localDB.get(u._id).catch(() => null);
+            const toSave = sanitizeForCouch({
+              ...(existing || {}),
+              ...u,
+              _id: u._id,
+              id: u.id,
+              type: "user",
+              updatedAt: new Date().toISOString(),
+            });
+            if (existing && existing._rev) toSave._rev = existing._rev;
+            await safeLocalPut(toSave);
+          } catch {}
+        }
+      }
+    } catch {}
+
     // Ordenar por updatedAt desc como en getAllUsers
     mapped.sort((a: any, b: any) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     return mapped;

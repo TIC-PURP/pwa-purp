@@ -423,7 +423,11 @@ define(["./workbox-bb54ffba"], function (e) {
         t.origin === self.location.origin &&
         r.method === "GET" &&
         // Lista blanca de endpoints seguros para cachear
-        (t.pathname === "/api/sentry-example-api")
+        (
+          t.pathname === "/api/sentry-example-api" ||
+          t.pathname.startsWith("/api/couch/") ||
+          t.pathname === "/api/admin/couch/users"
+        )
       ),
       new e.NetworkFirst({
         cacheName: "api-get",
@@ -490,5 +494,37 @@ define(["./workbox-bb54ffba"], function (e) {
       }),
       "GET",
     ));
+});
+
+// Precalentar rutas HTML clave para primer uso offline.
+// Usamos credenciales same-origin para cachear contenido autenticado si hay sesión.
+self.addEventListener('install', (event) => {
+  const urls = [
+    '/',
+    '/auth/login',
+    '/principal',
+    '/mod-a',
+    '/mod-b',
+    '/mod-c',
+    '/mod-d',
+    '/users',
+    '/account',
+    '/sentry-example-page',
+  ];
+  event.waitUntil(
+    (async () => {
+      try {
+        const cache = await caches.open('html-pages');
+        await Promise.all(
+          urls.map(async (url) => {
+            try {
+              const res = await fetch(url, { credentials: 'same-origin' });
+              if (res && res.ok) await cache.put(url, res.clone());
+            } catch {}
+          })
+        );
+      } catch {}
+    })()
+  );
 });
 //# sourceMappingURL=sw.js.map

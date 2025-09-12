@@ -14,6 +14,7 @@ import {
   watchUserDocByEmail,
   guardarUsuarioOffline,
   cleanupUserDocs,
+  getAllUsersAsManager,
 } from "@/lib/database";
 
 /** Bootstrap de autenticación/sincronización y observador del usuario */
@@ -22,13 +23,40 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
   const cancelWatch = useRef<null | (() => void)>(null);
   const avatarUrlRef = useRef<string | null>(null);
+  const warmedRef = useRef<boolean>(false);
 
-  // Aplicar tema guardado
+  // Rutas a precachear tras login online para navegación offline
+  const ROUTES_TO_WARM = [
+    "/",
+    "/auth/login",
+    "/principal",
+    "/mod-a",
+    "/mod-b",
+    "/mod-c",
+    "/mod-d",
+    "/users",
+    "/account",
+    "/sentry-example-page",
+  ];
+
+  const warmRoutes = async () => {
+    if (typeof window === "undefined") return;
+    if (warmedRef.current) return;
+    try {
+      for (const url of ROUTES_TO_WARM) {
+        try {
+          await fetch(url, { credentials: "same-origin", cache: "reload" });
+        } catch {}
+      }
+      warmedRef.current = true;
+    } catch {}
+  };
+
+  // Aplicar tema guardado (por defecto claro)
   useEffect(() => {
     try {
       const t = window.localStorage.getItem("theme");
-      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (t === "dark" || (!t && prefersDark)) document.documentElement.classList.add("dark");
+      if (t === "dark") document.documentElement.classList.add("dark");
       else document.documentElement.classList.remove("dark");
     } catch {}
   }, []);
@@ -59,6 +87,10 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           if (email && user.password) {
             await loginOnlineToCouchDB(email, user.password);
             await startSync();
+            // Sembrar caché local de usuarios para panel offline si tiene permisos
+            try { await getAllUsersAsManager(); } catch {}
+            // Precalentar rutas HTML para uso offline tras login online
+            try { await warmRoutes(); } catch {}
             // Tras login/sync, limpiar documentos locales antiguos si los hubiera
             try { await cleanupUserDocs(); } catch {}
           }
@@ -126,9 +158,14 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     };
   }, [isAuthenticated, user?.email, dispatch]);
 
-  // Reintentar sync al volver online
+  // Reintentar sync y calentar rutas al volver online
   useEffect(() => {
-    const onOnline = () => { if (isAuthenticated) startSync().catch(() => {}); };
+    const onOnline = () => {
+      if (isAuthenticated) {
+        startSync().catch(() => {});
+        warmRoutes().catch(() => {});
+      }
+    };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
