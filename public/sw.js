@@ -406,6 +406,33 @@ define(["./workbox-bb54ffba"], function (e) {
       }),
       "GET",
     ),
+    // Cache Next.js data requests for Pages Router
+    e.registerRoute(
+      ({ url: t, request: r }) => (
+        t.origin === self.location.origin &&
+        t.pathname.startsWith('/_next/data/') &&
+        r.method === 'GET'
+      ),
+      new e.StaleWhileRevalidate({ cacheName: 'next-data' }),
+      'GET',
+    ),
+    // Cache App Router RSC/Flight data (Accept: text/x-component)
+    e.registerRoute(
+      ({ request: r }) => {
+        try {
+          const acc = r.headers && r.headers.get && r.headers.get('accept');
+          return !!acc && acc.includes('text/x-component');
+        } catch { return false; }
+      },
+      new e.NetworkFirst({
+        cacheName: 'next-rsc',
+        networkTimeoutSeconds: 3,
+        plugins: [
+          { handlerDidError: async ({ request: req }) => self.fallback(new Request(req.url, { mode: 'navigate' })) },
+        ],
+      }),
+      'GET',
+    ),
     e.registerRoute(
       ({ request: e }) => "image" === e.destination,
       new e.StaleWhileRevalidate({

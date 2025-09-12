@@ -17,17 +17,19 @@ export default function ServiceWorkerRegister({ nonce }: Props) {
 
     // Evitar registrar en desarrollo salvo que se habilite explícitamente
     if (process.env.NODE_ENV !== "production" && !enableDevSW) {
-      // Si hubiera uno previo, intentar desregistrarlo para evitar errores de precache en dev
-      navigator.serviceWorker
-        .getRegistrations?.()
-        .then((regs) => {
-          regs.forEach((r) => {
-            try {
-              r.unregister();
-            } catch {}
+      // En dev: desregistrar y limpiar caches para evitar colisiones con HMR
+      (async () => {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations?.();
+          regs?.forEach((r) => {
+            try { r.unregister(); } catch {}
           });
-        })
-        .catch(() => {});
+        } catch {}
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        } catch {}
+      })();
       return;
     }
     // Evitar registros duplicados
@@ -43,7 +45,13 @@ export default function ServiceWorkerRegister({ nonce }: Props) {
         console.warn("[sw] register failed", (e as any)?.message || e);
       }
     };
-    register();
+    // Registrar tras 'load' para minimizar condiciones de carrera con chunks iniciales
+    const onLoad = () => { void register(); };
+    if (document.readyState === 'complete') onLoad();
+    else window.addEventListener('load', onLoad, { once: true });
+    return () => {
+      window.removeEventListener('load', onLoad);
+    };
   }, []);
   return null;
 }
