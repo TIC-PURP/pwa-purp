@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "PWA", // Nombre completo
     short_name: "PWA", // Nombre corto
     description: "PWA",
-    start_url: "/", // Punto de inicio al abrir la app instalada
+    start_url: "/principal", // Arranca en el shell principal, usable offline
     display: "standalone", // Se comporta como aplicación nativa
     background_color: "#0f172a",
     theme_color: "#0f172a",

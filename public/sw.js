@@ -374,6 +374,12 @@ define(["./workbox-bb54ffba"], function (e) {
         cacheName: "html-pages",
         networkTimeoutSeconds: 3,
         plugins: [
+          {
+            cacheWillUpdate: async ({ response: a }) =>
+              a && "opaqueredirect" === a.type
+                ? new Response(a.body, { status: 200, statusText: "OK", headers: a.headers })
+                : a,
+          },
           new e.ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 604800 }),
           { handlerDidError: async ({ request: e }) => self.fallback(e) },
         ],
@@ -390,6 +396,12 @@ define(["./workbox-bb54ffba"], function (e) {
         cacheName: "html-pages",
         networkTimeoutSeconds: 3,
         plugins: [
+          {
+            cacheWillUpdate: async ({ response: a }) =>
+              a && "opaqueredirect" === a.type
+                ? new Response(a.body, { status: 200, statusText: "OK", headers: a.headers })
+                : a,
+          },
           new e.ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 604800 }),
           { handlerDidError: async ({ request: e }) => self.fallback(e) },
         ],

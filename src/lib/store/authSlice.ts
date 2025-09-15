@@ -219,6 +219,13 @@ export const logoutUser = createAsyncThunk("auth/logout", async () => {
   if (typeof document !== "undefined") {
     document.cookie = "AuthSession=; Max-Age=0; path=/;";
   }
+  // Limpieza de caches del SW al cerrar sesión para evitar fugas entre usuarios
+  if (typeof caches !== "undefined") {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch {}
+  }
   persistSession(null, null);
   return true;
 });
