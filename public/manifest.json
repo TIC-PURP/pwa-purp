@@ -1,5 +1,5 @@
 {
-  "_comment": "Manifiesto de la aplicación PWA que define nombre, iconos y colores",
+  "_comment": "Manifiesto de la PWA que define nombre, iconos y colores",
   "name": "PWA",
   "short_name": "PWA",
   "icons": [
@@ -16,6 +16,6 @@
   ],
   "start_url": "/principal",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff"
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a"
 }

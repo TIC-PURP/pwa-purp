@@ -1,11 +1,10 @@
-// Layout raíz de la aplicación. Aquí se definen los proveedores globales,
+// Layout raiz de la aplicacion. Aqui se definen los proveedores globales,
 // estilos compartidos y elementos que deben estar presentes en todas las
-// páginas (como el botón de instalación PWA o el manejador de errores).
+// paginas (como el boton de instalacion PWA o el manejador de errores).
 
-import InstallButton from "../components/InstallButton";
 import dynamic from "next/dynamic";
+import { headers } from "next/headers";
 import type React from "react";
-import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/providers";
@@ -14,7 +13,7 @@ import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
 const inter = Inter({ subsets: ["latin"] });
 
-// Cargamos el componente de notificaciones de manera dinámica para evitar
+// Cargamos el componente de notificaciones de manera dinamica para evitar
 // incluirlo en el servidor (solo se usa en el cliente).
 const Toaster = dynamic(
   () => import("sonner").then((mod) => mod.Toaster),
@@ -26,14 +25,17 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // CSP por meta (desarrollo permite HMR; producción más estricta)
+  const headerList = headers();
+  const nonce = headerList.get("x-nonce") ?? undefined;
+
+  // CSP por meta (desarrollo permite HMR; produccion mas estricta)
   const isDev = process.env.NODE_ENV !== "production";
   const connectSrc = ["'self'"];
   if (process.env.SENTRY_DSN) {
     connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
   }
-  // En producción permitimos 'unsafe-inline' porque Next.js inyecta pequeños
-  // scripts inline necesarios para la hidratación. Si más adelante migramos
+  // En produccion permitimos 'unsafe-inline' porque Next.js inyecta pequenos
+  // scripts inline necesarios para la hidratacion. Si mas adelante migramos
   // a CSP con nonce por cabecera, podemos retirar este permiso.
   const scriptSrc = isDev
     ? ["'self'", "'unsafe-eval'", "'unsafe-inline'"]
@@ -48,22 +50,20 @@ export default function RootLayout({
     // frame-ancestors no tiene efecto en <meta>, debe ir como cabecera
   ].join('; ');
 
-  // El layout envuelve todo el HTML de cada página
+  // El layout envuelve todo el HTML de cada pagina
   return (
     <html lang="es" suppressHydrationWarning>
       <head>
-        <script src="/theme-init.js"></script>
+        <script nonce={nonce} src="/theme-init.js"></script>
       </head>
       <body className={inter.className}>
         {/* Proveedores de contexto global (Redux, etc.) */}
         <Providers>
           {/* Captura errores de React y muestra una UI alternativa */}
           <ErrorBoundary>{children}</ErrorBoundary>
-          {/* Botón flotante para instalar la PWA */}
-          
           {/* Registro del Service Worker para capacidades offline */}
           <ServiceWorkerRegister />
-      </Providers>
+        </Providers>
         {/* Componente de notificaciones tipo toast */}
         <Toaster richColors position="top-center" />
       </body>

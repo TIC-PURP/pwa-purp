@@ -116,7 +116,7 @@ export function LoginForm() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
-                  placeholder="••••••••"
+                  placeholder="********"
                   className="pl-10 pr-10"
                   {...register("password")}
                 />

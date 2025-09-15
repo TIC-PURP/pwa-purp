@@ -42,10 +42,27 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const warmRoutes = async () => {
     if (typeof window === "undefined") return;
     if (warmedRef.current) return;
+    const origin = window.location.origin;
+    let startCache: Cache | null = null;
+    let htmlCache: Cache | null = null;
     try {
-      for (const url of ROUTES_TO_WARM) {
+      if ("caches" in window) {
+        try { startCache = await caches.open("start-url"); } catch {}
+        try { htmlCache = await caches.open("html-pages"); } catch {}
+      }
+      for (const path of ROUTES_TO_WARM) {
         try {
-          await fetch(url, { credentials: "same-origin", cache: "reload" });
+          const target = new URL(path, origin).toString();
+          const response = await fetch(target, { credentials: "same-origin" });
+          if (!response || !response.ok) continue;
+          if (htmlCache) {
+            const htmlRequest = new Request(target, { credentials: "same-origin" });
+            await htmlCache.put(htmlRequest, response.clone());
+          }
+          if ((path === "/" || path === "") && startCache) {
+            const startRequest = new Request(target, { credentials: "same-origin" });
+            await startCache.put(startRequest, response.clone());
+          }
         } catch {}
       }
       warmedRef.current = true;

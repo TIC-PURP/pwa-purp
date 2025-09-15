@@ -91,7 +91,7 @@ export function Navbar() {
           setInstalled(true); setCanInstall(false); setDeferred(null);
         }
       } else {
-        alert("Para instalar, usa el menú del navegador (Añadir a la pantalla de inicio).");
+        alert("Para instalar, usa el menu del navegador (Anadir a la pantalla de inicio).");
       }
     } catch {}
   };
@@ -103,20 +103,20 @@ export function Navbar() {
       const isAndroid = /android/.test(ua);
       const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (navigator as any).standalone;
       if (isIOS) {
-        alert("iOS: Mantén presionado el icono en la pantalla de inicio y pulsa ‘Eliminar app’.\nTambién puedes hacerlo desde Ajustes > General > Almacenamiento del iPhone.");
+        alert("iOS: Mantenga presionado el icono en la pantalla de inicio y pulse 'Eliminar app'.\nTambien puedes hacerlo desde Ajustes > General > Almacenamiento del iPhone.");
         return;
       }
       if (isAndroid) {
-        alert("Android: Mantén presionado el icono y pulsa ‘Desinstalar’.\nSi la abriste como app, usa el menú de ? en la barra superior > ‘Desinstalar app’.");
+        alert("Android: Mantenga presionado el icono y pulse 'Desinstalar'.\nSi la abriste como app, usa el menu de tres puntos en la barra superior > 'Desinstalar app'.");
         return;
       }
       if (isStandalone) {
-        alert("Escritorio: En la ventana de la app, abre el menú (? o…) y elige ‘Desinstalar app’.\nEn Chrome: Ajustes > Apps > Administrar apps > Eliminar.\nEn Edge: Configuración > Apps > Eliminar.");
+        alert("Escritorio: En la ventana de la app, abre el menu (tres puntos) y elige 'Desinstalar app'.\nEn Chrome: Ajustes > Apps > Administrar apps > Eliminar.\nEn Edge: Configuracion > Apps > Eliminar.");
       } else {
-        alert("Para desinstalar desde escritorio, si instalaste la app: abre el menú del navegador (Chrome/Edge) > Apps > Administrar apps > Eliminar.");
+        alert("Para desinstalar desde escritorio, si instalaste la app: abre el menu del navegador (Chrome/Edge) > Apps > Administrar apps > Eliminar.");
       }
     } catch {
-      alert("Consulta cómo desinstalar la app desde tu sistema o navegador.");
+      alert("Consulta como desinstalar la app desde tu sistema o navegador.");
     }
   };
 
