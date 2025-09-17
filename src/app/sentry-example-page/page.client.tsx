@@ -1,4 +1,4 @@
-// PÃ¡gina de ejemplo para probar la integraciÃ³n con Sentry
+// Página de ejemplo para probar la integración con Sentry
 "use client";
 
 import Head from "next/head";
@@ -14,7 +14,7 @@ class SentryExampleFrontendError extends Error {
 }
 
 export default function Page() {
-  const [hasSentError, setHasSentError] = useState(false); // Indica si se enviÃ³ el error
+  const [hasSentError, setHasSentError] = useState(false); // Indica si se envió el error
   const [isConnected, setIsConnected] = useState(true); // Estado de conectividad con Sentry
 
   // Verifica la conectividad con el servidor de Sentry al montar

@@ -1,4 +1,5 @@
-// Nueva pantalla del MÃ³dulo A
+// Nueva pantalla del Módulo A.
+// Protege el contenido verificando los permisos del usuario autenticado.
 "use client";
 
 import { Navbar } from "@/components/layout/navbar";
@@ -11,8 +12,10 @@ import { moduleAMode } from "@/lib/permissions";
 import BackButton from "@/components/common/back-button";
 
 export default function ModuleAPage() {
+  // Usuario activo y utilidades de navegación.
   const { user } = useAppSelector((s) => s.auth);
   const router = useRouter();
+  // Determina el modo de acceso (total, lectura o bloqueado) para el módulo.
   const mode = moduleAMode(user); // FULL | READ | NONE
 
   useEffect(() => {
@@ -28,17 +31,17 @@ export default function ModuleAPage() {
       <Navbar />
       <main className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">MÃ³dulo A</h1>
+          <h1 className="text-xl font-semibold">Módulo A</h1>
           <BackButton />
         </div>
         <Card>
           <CardHeader>
-            <CardTitle>Bienvenido al mÃ³dulo A</CardTitle>
+            <CardTitle>Bienvenido al módulo A</CardTitle>
           </CardHeader>
           <CardContent>
             {mode === "READ" ? (
               <p className="text-sm text-muted-foreground">
-                Modo lectura: si existieran formularios, estarÃ­an deshabilitados.
+                Modo lectura: si existieran formularios, estarían deshabilitados.
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">

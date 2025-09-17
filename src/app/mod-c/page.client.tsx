@@ -1,4 +1,5 @@
-// Pantalla del MÃ³dulo C
+// Pantalla del Módulo C.
+// Determina el nivel de acceso permitiendo mostrar un modo lectura si es necesario.
 "use client";
 
 import { Navbar } from "@/components/layout/navbar";
@@ -11,8 +12,10 @@ import { moduleCMode } from "@/lib/permissions";
 import BackButton from "@/components/common/back-button";
 
 export default function ModuleCPage() {
+  // Datos del usuario autenticado y utilidades de enrutamiento.
   const { user } = useAppSelector((s) => s.auth);
   const router = useRouter();
+  // Calcula los permisos efectivos para decidir qué interfaz mostrar.
   const mode = moduleCMode(user); // FULL | READ | NONE
 
   useEffect(() => {
@@ -28,17 +31,17 @@ export default function ModuleCPage() {
       <Navbar />
       <main className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">MÃ³dulo C</h1>
+          <h1 className="text-xl font-semibold">Módulo C</h1>
           <BackButton />
         </div>
         <Card>
           <CardHeader>
-            <CardTitle>Bienvenido al mÃ³dulo C</CardTitle>
+            <CardTitle>Bienvenido al módulo C</CardTitle>
           </CardHeader>
           <CardContent>
             {mode === "READ" ? (
               <p className="text-sm text-muted-foreground">
-                Modo lectura: si existieran formularios, estarÃ­an deshabilitados.
+                Modo lectura: si existieran formularios, estarían deshabilitados.
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">

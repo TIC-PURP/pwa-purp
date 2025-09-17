@@ -1,15 +1,8 @@
-// PÃ¡gina principal del panel accesible tras autenticaciÃ³n
+// Página principal del panel accesible tras autenticación
 "use client";
 
 import { RouteGuard } from "@/components/auth/route-guard";
 import { Navbar } from "@/components/layout/navbar";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { useAppSelector } from "@/lib/hooks";
 import { useEffect, useState } from "react";
 import { getAllUsers, getAllUsersAsManager } from "@/lib/database";
@@ -21,10 +14,12 @@ import Link from "next/link";
 import { canSeeModuleA, canSeeModuleB, canSeeModuleC, canSeeModuleD } from "@/lib/permissions";
 
 export default function Principal() {
-  // Obtiene el usuario autenticado desde el store global
+  // Obtiene el usuario autenticado desde el estado global de la aplicación.
   const { user } = useAppSelector((state) => state.auth);
+  // Número de usuarios detectados en la base de datos (null = cargando / error).
   const [activeUsers, setActiveUsers] = useState<number | null>(null);
 
+  // Consulta la cantidad de usuarios visibles para mostrarla en el panel principal.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -40,6 +35,7 @@ export default function Principal() {
     return () => { cancelled = true; };
   }, [user?.role]);
 
+  // El guardia de ruta garantiza que solo personas autenticadas vean el panel.
   return (
     <RouteGuard>
       <div className="min-h-screen bg-background">
@@ -53,103 +49,100 @@ export default function Principal() {
               </h1>
             </div>
 
-            {/* Contenedor de todos los mÃ³dulos */}
+            {/* Contenedor de accesos rápidos a cada módulo disponible */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                {/* Panel de control (solo manager) */}
+                {/* Panel de control (exclusivo para personas con rol manager) */}
                 {user?.role === "manager" && (
-                <Link href="/users" className="block">
-                  <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
-                        <Users className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          Panel de Control
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          {activeUsers === null ? "Cargando usuarios..." : `${activeUsers} usuarios en la base`}
-                        </p>
+                  <Link href="/users" className="block">
+                    <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
+                          <Users className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">
+                            Panel de control
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {activeUsers === null ? "Cargando usuarios..." : `${activeUsers} usuarios en la base`}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
                 )}
 
-                {/* MÃ³dulo A */}
+                {/* Enlaces condicionales a los módulos según permisos */}
                 {(user?.role === "manager" || canSeeModuleA(user)) && (
-                <Link href="/mod-a" className="block">
-                  <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
-                        <Folder className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          MÃ³dulo A
-                        </h3>
-                        <p className="text-sm text-muted-foreground">Ir al mÃ³dulo</p>
+                  <Link href="/mod-a" className="block">
+                    <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
+                          <Folder className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">
+                            Módulo A
+                          </h3>
+                          <p className="text-sm text-muted-foreground">Ir al módulo</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
                 )}
 
-                {/* MÃ³dulo B */}
                 {(user?.role === "manager" || canSeeModuleB(user)) && (
-                <Link href="/mod-b" className="block">
-                  <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
-                        <Folder className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          MÃ³dulo B
-                        </h3>
-                        <p className="text-sm text-muted-foreground">Ir al mÃ³dulo</p>
+                  <Link href="/mod-b" className="block">
+                    <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
+                          <Folder className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">
+                            Módulo B
+                          </h3>
+                          <p className="text-sm text-muted-foreground">Ir al módulo</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
                 )}
 
-                {/* MÃ³dulo C */}
                 {(user?.role === "manager" || canSeeModuleC(user)) && (
-                <Link href="/mod-c" className="block">
-                  <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
-                        <Folder className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          MÃ³dulo C
-                        </h3>
-                        <p className="text-sm text-muted-foreground">Ir al mÃ³dulo</p>
+                  <Link href="/mod-c" className="block">
+                    <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
+                          <Folder className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">
+                            Módulo C
+                          </h3>
+                          <p className="text-sm text-muted-foreground">Ir al módulo</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
                 )}
 
-                {/* MÃ³dulo D */}
                 {(user?.role === "manager" || canSeeModuleD(user)) && (
-                <Link href="/mod-d" className="block">
-                  <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
-                    <div className="flex items-center gap-4">
-                      <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
-                        <Folder className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          MÃ³dulo D
-                        </h3>
-                        <p className="text-sm text-muted-foreground">Ir al mÃ³dulo</p>
+                  <Link href="/mod-d" className="block">
+                    <div className="rounded-xl border bg-card text-card-foreground p-5 shadow-md hover:shadow-lg transition hover:border-accent">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow">
+                          <Folder className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">
+                            Módulo D
+                          </h3>
+                          <p className="text-sm text-muted-foreground">Ir al módulo</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
                 )}
 
               </div>
