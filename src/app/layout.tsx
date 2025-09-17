@@ -1,4 +1,4 @@
-// Layout raiz de la aplicacion. Aqui se definen los proveedores globales,
+﻿// Layout raiz de la aplicacion. Aqui se definen los proveedores globales,
 // estilos compartidos y elementos que deben estar presentes en todas las
 // paginas (como el boton de instalacion PWA o el manejador de errores).
 
@@ -28,32 +28,28 @@ export default function RootLayout({
   const headerList = headers();
   const nonce = headerList.get("x-nonce") ?? undefined;
 
-  // CSP por meta (desarrollo permite HMR; produccion mas estricta)
-  const isDev = process.env.NODE_ENV !== "production";
-  const connectSrc = ["'self'"];
+  const connectSources = ["'self'"];
   if (process.env.SENTRY_DSN) {
-    connectSrc.push("https://*.sentry.io", "https://*.ingest.sentry.io");
+    connectSources.push("https://*.sentry.io", "https://*.ingest.sentry.io");
   }
-  // En produccion permitimos 'unsafe-inline' porque Next.js inyecta pequenos
-  // scripts inline necesarios para la hidratacion. Si mas adelante migramos
-  // a CSP con nonce por cabecera, podemos retirar este permiso.
-  const scriptSrc = isDev
-    ? ["'self'", "'unsafe-eval'", "'unsafe-inline'"]
-    : ["'self'", "'unsafe-inline'"];
-  const csp = [
-    "default-src 'self'",
-    `script-src ${scriptSrc.join(' ')}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    `connect-src ${connectSrc.join(' ')}`,
-    "font-src 'self' data:",
-    // frame-ancestors no tiene efecto en <meta>, debe ir como cabecera
-  ].join('; ');
+  const cspMeta = nonce
+    ? [
+        "default-src 'self'",
+        `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        `connect-src ${connectSources.join(' ')}`,
+        "font-src 'self' data:"
+      ].join('; ')
+    : null;
 
   // El layout envuelve todo el HTML de cada pagina
   return (
     <html lang="es" suppressHydrationWarning>
       <head>
+        {cspMeta ? (
+          <meta httpEquiv="Content-Security-Policy" content={cspMeta} />
+        ) : null}
         <script nonce={nonce} src="/theme-init.js"></script>
       </head>
       <body className={inter.className}>
@@ -70,3 +66,4 @@ export default function RootLayout({
     </html>
   );
 }
+

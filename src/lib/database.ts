@@ -1,5 +1,5 @@
 // src/lib/database.ts
-// CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login vía /couchdb/_session
+// CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login via /couchdb/_session
 
 const isClient = typeof window !== "undefined";
 
@@ -16,7 +16,7 @@ export type CouchEnv = {
 /** Lee NEXT_PUBLIC_COUCHDB_URL y devuelve { serverBase, dbName } */
 export function getCouchEnv(): CouchEnv {
   const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
-  if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no está definido");
+  if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no esta definido");
 
   const url = new URL(raw);
   const path = url.pathname.replace(/\/+$/, "");
@@ -72,7 +72,7 @@ async function ensurePouch() {
   PouchDB.plugin(find);
 }
 
-/** Helpers de IDs / normalización */
+/** Helpers de IDs / normalizacion */
 function slug(s: string) {
   return (s || "")
     .trim()
@@ -85,11 +85,39 @@ function toUserDocId(input: string) {
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
   return `user:${slug(input)}`;                    // email o username
 }
+const MODULE_PERMISSION_DEFAULTS = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+
+type ModulePermissionKey = keyof typeof MODULE_PERMISSION_DEFAULTS;
+type ModulePermissionValue = typeof MODULE_PERMISSION_DEFAULTS[ModulePermissionKey];
+type ModulePermissionPatch = Partial<Record<ModulePermissionKey, ModulePermissionValue>>;
+
+function sanitizeModulePermissionPatch(raw: any): ModulePermissionPatch {
+  const result: ModulePermissionPatch = {};
+  if (!raw || typeof raw !== "object") {
+    return result;
+  }
+  for (const key of Object.keys(MODULE_PERMISSION_DEFAULTS)) {
+    const value = (raw as any)[key];
+    if (value === "FULL" || value === "READ" || value === "NONE") {
+      result[key as ModulePermissionKey] = value;
+    }
+  }
+  return result;
+}
+
+function withModulePermissionDefaults(raw: any): Record<ModulePermissionKey, ModulePermissionValue> {
+  return { ...MODULE_PERMISSION_DEFAULTS, ...sanitizeModulePermissionPatch(raw) };
+}
+
 function buildUserDocFromData(data: any) {
   const key = slug(data.email || data.name || data.id || Date.now().toString());
   const _id = `user:${key}`;
   const now = new Date().toISOString();
-  const baseModulePerms = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
+  const moduleSource = (typeof data.modulePermissions === "object" && !Array.isArray(data.modulePermissions))
+    ? data.modulePermissions
+    : (!Array.isArray(data.permissions) && typeof data.permissions === "object" ? data.permissions : undefined);
+  const modulePermissions = withModulePermissionDefaults(moduleSource);
+  const permissions = Array.isArray(data.permissions) ? data.permissions : ["read"];
   return {
     _id,
     id: `user_${key}`,
@@ -98,12 +126,8 @@ function buildUserDocFromData(data: any) {
     email: data.email || "",
     password: data.password || "",
     role: data.role || "user",
-    permissions: Array.isArray(data.permissions) ? data.permissions : ["read"],
-    modulePermissions: (typeof data.modulePermissions === "object" && !Array.isArray(data.modulePermissions))
-      ? { ...baseModulePerms, ...data.modulePermissions }
-      : (!Array.isArray(data.permissions) && typeof data.permissions === "object"
-          ? { ...baseModulePerms, ...(data.permissions as any) }
-          : { ...baseModulePerms }),
+    permissions,
+    modulePermissions,
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
     updatedAt: now,
@@ -112,7 +136,7 @@ function buildUserDocFromData(data: any) {
 }
 
 // Elimina campos reservados no permitidos por CouchDB (claves que empiezan por "_"
-// excepto las reconocidas). Evita errores de validación como
+// excepto las reconocidas). Evita errores de validacion como
 // "Bad special document member: ___writePath".
 function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
   const allowed = new Set(["_id", "_rev", "_deleted", "_attachments"]);
@@ -123,6 +147,59 @@ function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
   }
   return out as T;
 }
+async function saveDocViaAdmin(doc: any) {
+  try {
+    const res = await fetch("/api/admin/couch/app-users", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ doc }),
+    });
+    if (!res.ok) {
+      try {
+        const text = await res.text();
+        console.warn("[database] admin save failed", res.status, text);
+      } catch {}
+      return null;
+    }
+    try {
+      const data = await res.json();
+      const couch = (data && (data.couch || data)) || null;
+      const rev = couch?.rev;
+      return { rev, data: couch };
+    } catch {
+      return { rev: undefined, data: null };
+    }
+  } catch (error) {
+    console.warn("[database] admin save error", (error as any)?.message || error);
+    return null;
+  }
+}
+
+async function pushUserDocToRemote(doc: any): Promise<{ rev?: string; path: "remote" | "remote-admin" } | null> {
+  if (remoteDB && typeof (remoteDB as any).put === "function") {
+    try {
+      const res = await (remoteDB as any).put(doc);
+      return { rev: res.rev, path: "remote" };
+    } catch (error: any) {
+      if (error?.status === 409) {
+        throw error;
+      }
+      const adminResult = await saveDocViaAdmin(doc);
+      if (adminResult) {
+        return { rev: adminResult.rev, path: "remote-admin" };
+      }
+      console.warn("[database] remote put failed", (error as any)?.message || error);
+      return null;
+    }
+  }
+  const adminResult = await saveDocViaAdmin(doc);
+  if (adminResult) {
+    return { rev: adminResult.rev, path: "remote-admin" };
+  }
+  return null;
+}
+
 
 /** Abre/crea las bases local y remota */
 export async function openDatabases() {
@@ -151,7 +228,7 @@ export async function openDatabases() {
   return { localDB, remoteDB };
 }
 
-/** Arranca replicación continua (local <-> remote) */
+/** Arranca replicacion continua (local <-> remote) */
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
@@ -169,11 +246,11 @@ export async function startSync() {
   return syncHandler;
 }
 
-/** Detiene replicación */
+/** Detiene replicacion */
 export async function stopSync() {
   try {
     // Evitar cuelgues: no esperar a que cancel() resuelva
-    // Algunos adaptadores de PouchDB no devuelven una Promise resoluble aquí
+    // Algunos adaptadores de PouchDB no devuelven una Promise resoluble aqu
     // y dejar await puede colgar flujos como el login.
     // @ts-ignore
     if (syncHandler?.cancel) {
@@ -204,11 +281,11 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
     );
   } catch (err) {
     console.error("[db] loginOnlineToCouchDB fetch error", err);
-    throw new Error("No hay conexión a internet. Revisa tu conexión e inténtalo nuevamente.");
+    throw new Error("No hay conexin a internet. Revisa tu conexin e intntalo nuevamente.");
   }
   const data = await res.json().catch(() => ({}));
   console.log("[db] loginOnlineToCouchDB response", res.status, data);
-  // Mejor manejo de errores: si el API devolvió error, propagar mensaje claro
+  // Mejor manejo de errores: si el API devolvi error, propagar mensaje claro
   if (!res.ok || !data?.ok) {
     const msg = (data && (data.error || data.reason)) || res.statusText || "login failed";
     throw new Error(String(msg));
@@ -217,7 +294,7 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
   return data as any; // { ok: boolean, user?: string, roles?: string[] }
 }
 
-/** Cierra la sesión del servidor */
+/** Cierra la sesin del servidor */
 export async function logoutOnlineSession() {
   const base = getRemoteBase();
   try {
@@ -230,7 +307,7 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
 
-  // 1) Intentar match exacto por email (más robusto)
+  // 1) Intentar match exacto por email (ms robusto)
   try {
     await ensureUserIndexes();
     const r = await localDB.find({ selector: { type: "user", email: identifier }, limit: 1 });
@@ -304,7 +381,7 @@ export async function guardarUsuarioOffline(user: any) {
    ==========  USERS  =========
    ============================ */
 
-/** Índices para consultas */
+/** ndices para consultas */
 async function ensureUserIndexes() {
   await openDatabases();
   if (!localDB) return;
@@ -367,7 +444,7 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
 }
 
 /**
- * Lista cuentas de CouchDB /_users vía API admin (solo manager/admin).
+ * Lista cuentas de CouchDB /_users va API admin (solo manager/admin).
  * Devuelve usuarios mapeados al shape de la app con permisos derivados.
  */
 export async function getAllUsersAsManager(): Promise<any[]> {
@@ -380,7 +457,7 @@ export async function getAllUsersAsManager(): Promise<any[]> {
     const data = await res.json().catch(() => ({} as any));
     const list = Array.isArray((data as any)?.users) ? (data as any).users : [];
 
-    // Traer también lo local para fusionar metadatos si existen
+    // Traer tambien lo local para fusionar metadatos si existen
     let locals: Record<string, any> = {};
     try {
       const localList = await getAllUsers({ includeInactive: true, limit: 5000 });
@@ -410,9 +487,7 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       const permissions = role === "manager" ? fullPerms.slice() : Array.isArray(local?.permissions) ? local.permissions : ["read"];
       const modulePermissions = role === "manager"
         ? { MOD_A: "FULL", MOD_B: "FULL", MOD_C: "FULL", MOD_D: "FULL" }
-        : (local && local.modulePermissions && typeof local.modulePermissions === "object" && !Array.isArray(local.modulePermissions))
-          ? { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE", ...local.modulePermissions }
-          : { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" };
+        : withModulePermissionDefaults(local?.modulePermissions);
       return {
         _id: `user:${(email || baseName).toLowerCase()}`,
         id: `user_${(email || baseName).toLowerCase()}`,
@@ -478,19 +553,14 @@ function normalizeUserDocShape(u: any) {
     out.permissions = [];
   }
   const mp = out.modulePermissions;
-  const defaults = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" };
-  if (!mp || Array.isArray(mp) || typeof mp !== "object") {
-    // Si permissions venía como objeto v2 (raro), intentar usarlo; si no, valor por defecto
-    out.modulePermissions = (!Array.isArray(u.permissions) && typeof u.permissions === "object" && u.permissions)
-      ? { ...defaults, ...(u.permissions as any) }
-      : { ...defaults };
-  } else {
-    out.modulePermissions = { ...defaults, ...mp };
-  }
+  const moduleSource = (mp && typeof mp === "object" && !Array.isArray(mp))
+    ? mp
+    : (!Array.isArray(u.permissions) && typeof u.permissions === "object" ? u.permissions : undefined);
+  out.modulePermissions = withModulePermissionDefaults(moduleSource);
   return out;
 }
 
-/** Limpia campos inválidos (como ___writePath) de documentos de usuario existentes */
+/** Limpia campos invlidos (como ___writePath) de documentos de usuario existentes */
 export async function cleanupUserDocs(): Promise<number> {
   await openDatabases();
   if (!localDB) return 0;
@@ -533,27 +603,33 @@ export async function cleanupUserDocs(): Promise<number> {
   return cleaned;
 }
 
-/** Crea (o upserta) usuario — LOCAL FIRST */
+/** Crea (o upserta) usuario  LOCAL FIRST */
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
   const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
 
+  const sanitizedDoc = sanitizeForCouch(doc);
+
   if (online) {
     try {
-      const toRemote = sanitizeForCouch(doc);
-      const res = await remoteDB.put(toRemote);
-      doc._rev = res.rev;
-      if (!('remoteCreatedAt' in doc) || !doc.remoteCreatedAt) {
-        (doc as any).remoteCreatedAt = new Date().toISOString();
+      const remoteResult = await pushUserDocToRemote({ ...sanitizedDoc });
+      if (remoteResult) {
+        if (remoteResult.rev) {
+          doc._rev = remoteResult.rev;
+          sanitizedDoc._rev = remoteResult.rev;
+        }
+        if (!('remoteCreatedAt' in doc) || !doc.remoteCreatedAt) {
+          (doc as any).remoteCreatedAt = new Date().toISOString();
+          (sanitizedDoc as any).remoteCreatedAt = (doc as any).remoteCreatedAt;
+        }
+        try { await localDB.put({ ...sanitizedDoc }); } catch {}
+        try {
+          const roles = [doc.role].filter(Boolean) as string[];
+          await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
+        } catch (e) { console.warn("[createUser] _users upsert failed", (e as any)?.message || e); }
+        return { ...doc, ___writePath: remoteResult.path } as any;
       }
-      try { await localDB.put(sanitizeForCouch(doc)); } catch {}
-      // Best-effort: also create a CouchDB _users account so the user can login online
-      try {
-        const roles = [doc.role].filter(Boolean) as string[];
-        await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
-      } catch (e) { console.warn("[createUser] _users upsert failed", (e as any)?.message || e); }
-      return { ...doc, ___writePath: "remote" } as any;
     } catch (err) {
       console.warn("[createUser] remote put failed, falling back to local", err);
     }
@@ -565,7 +641,7 @@ export async function createUser(data: any) {
     doc.createdAt = existing.createdAt || doc.createdAt;
   } catch {}
   const toLocal = sanitizeForCouch(doc);
-  await localDB.put(toLocal); // LOCAL ONLY. La replicación lo sube.
+  await localDB.put(toLocal); // LOCAL ONLY. La replicacion lo sube.
   // If online, still try to create _users auth so the user can login immediately
   try {
     const online2 = typeof navigator !== "undefined" && navigator.onLine;
@@ -576,6 +652,7 @@ export async function createUser(data: any) {
   } catch {}
   return { ...toLocal, ___writePath: "local" } as any;
 }
+
 
 /** Get por id/email/username */
 export async function getUserById(idOrKey: string) {
@@ -589,7 +666,7 @@ export async function getUserById(idOrKey: string) {
   }
 }
 
-/** Actualiza usuario — LOCAL FIRST */
+/** Actualiza usuario  LOCAL FIRST */
 export async function updateUser(idOrPatch: any, maybePatch?: any) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
@@ -609,137 +686,150 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   }
 
   delete patch._id;
-  // No sobreescribir password con cadena vacía desde el formulario de edición
   if (typeof patch.password === "string" && patch.password.trim() === "") {
     delete patch.password;
   }
 
-  // Cargar doc existente; si no existe, crear base a partir del patch para permitir acciones desde listados remotos
   let doc: any;
   try {
     doc = await safeLocalGet(_id);
   } catch (e: any) {
     if (e?.status === 404) {
       doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), ...patch });
-      // No lo guardamos aún; se guardará al final (local o remoto)
     } else {
       throw e;
     }
   }
+
+  const explicitModulePatch: ModulePermissionPatch = (patch.modulePermissions && typeof patch.modulePermissions === "object" && !Array.isArray(patch.modulePermissions))
+    ? sanitizeModulePermissionPatch(patch.modulePermissions)
+    : {};
+  if (patch.modulePermissions) delete patch.modulePermissions;
+
+  let modulePatch: ModulePermissionPatch = { ...explicitModulePatch };
+  if (!Array.isArray(patch.permissions) && typeof patch.permissions === "object") {
+    modulePatch = { ...modulePatch, ...sanitizeModulePermissionPatch(patch.permissions) };
+    delete patch.permissions;
+  }
+
+  if (Object.keys(modulePatch).length === 0) {
+    modulePatch = {};
+  }
+
+  const permissions = Array.isArray(patch.permissions)
+    ? patch.permissions
+    : (Array.isArray(doc.permissions) ? doc.permissions : []);
+
+  const modulePermissions = { ...withModulePermissionDefaults(doc.modulePermissions), ...modulePatch };
+
   const updated = {
     ...doc,
     ...patch,
-    // v2: soportar modulePermissions y permisos estilo objeto (MOD_A: FULL|READ|NONE)
-    ...(patch.modulePermissions && typeof patch.modulePermissions === "object"
-        ? { modulePermissions: { ...(doc.modulePermissions || {}), ...patch.modulePermissions } } : {}),
-    ...(patch.permissions && !Array.isArray(patch.permissions) && typeof patch.permissions === "object"
-        ? { modulePermissions: { ...(doc.modulePermissions || {}), ...(patch.permissions as any) } } : {}),
-    
     _id,
     _rev: doc._rev,
     type: "user",
+    permissions,
+    modulePermissions,
     updatedAt: new Date().toISOString(),
-  };
-  // Asegurar forma correcta: si patch.permissions venía como objeto (v2), no sobreescribir el array
-  if (updated.permissions && !Array.isArray(updated.permissions)) {
-    updated.permissions = Array.isArray(doc.permissions) ? doc.permissions : [];
-  }
-  const wasActive = doc.isActive !== false;
-  const isNowActive = updated.isActive !== false;
-  const oldName = (doc.email || doc.name || "").trim();
-  const newName = (updated.email || updated.name || "").trim();
-  const nameChanged = oldName && newName && oldName !== newName;
+  } as any;
+
   const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+
+  const syncAuthAccount = async (previous: any, current: any) => {
+    try {
+      const roles = [current.role].filter(Boolean) as string[];
+      const prevActive = previous?.isActive !== false;
+      const curActive = current.isActive !== false;
+      const prevIdentity = (previous?.email || previous?.name || "").trim();
+      const currentIdentity = (current.email || current.name || "").trim();
+      const changedIdentity = prevIdentity && currentIdentity && prevIdentity !== currentIdentity;
+
+      if (prevActive !== curActive) {
+        if (!curActive) {
+          await deleteRemoteAuthUser(prevIdentity || currentIdentity);
+        } else {
+          if (changedIdentity) {
+            await deleteRemoteAuthUser(prevIdentity);
+          }
+          await upsertRemoteAuthUser({ name: currentIdentity, password: current.password, roles });
+        }
+      } else if (curActive) {
+        if (changedIdentity) {
+          await deleteRemoteAuthUser(prevIdentity);
+        }
+        await upsertRemoteAuthUser({ name: currentIdentity, password: patch.password, roles });
+      }
+    } catch (error) {
+      console.warn("[updateUser] _users auth sync failed", (error as any)?.message || error);
+    }
+  };
+
+  const baseSanitized = sanitizeForCouch(updated);
+
   if (online) {
     try {
-      const toRemote = sanitizeForCouch(updated);
-      const res = await remoteDB.put(toRemote);
-      updated._rev = res.rev;
-      if (!('remoteCreatedAt' in updated) || !updated.remoteCreatedAt) {
-        (updated as any).remoteCreatedAt = new Date().toISOString();
-      }
-      try { await safeLocalPut(sanitizeForCouch(updated)); } catch {}
-      // Best-effort: sync CouchDB _users according to status and identity changes
-      try {
-        const roles = [updated.role].filter(Boolean) as string[];
-        if (wasActive !== isNowActive) {
-          // Status changed
-          if (!isNowActive) {
-            // Deactivated: remove auth account
-            await deleteRemoteAuthUser(oldName || newName);
-          } else {
-            // Activated: ensure auth account exists with current identity and password
-            if (nameChanged) {
-              await deleteRemoteAuthUser(oldName);
-            }
-            await upsertRemoteAuthUser({ name: newName, password: updated.password, roles });
-          }
-        } else {
-          // Status unchanged
-          if (isNowActive) {
-            // Only sync auth account when active
-            if (nameChanged) {
-              await deleteRemoteAuthUser(oldName);
-            }
-            await upsertRemoteAuthUser({ name: newName, password: patch.password, roles });
-          }
+      const remoteResult = await pushUserDocToRemote({ ...baseSanitized });
+      if (remoteResult) {
+        if (remoteResult.rev) {
+          updated._rev = remoteResult.rev;
+          baseSanitized._rev = remoteResult.rev;
         }
-      } catch (e) { console.warn("[updateUser] _users auth sync failed", (e as any)?.message || e); }
-      return { ...sanitizeForCouch(updated), ___writePath: "remote" } as any;
-    } catch (err) {
-      if ((err as any)?.status === 409) {
+        if (!("remoteCreatedAt" in updated) || !updated.remoteCreatedAt) {
+          (updated as any).remoteCreatedAt = new Date().toISOString();
+          (baseSanitized as any).remoteCreatedAt = (updated as any).remoteCreatedAt;
+        }
         try {
-          const latest = await remoteDB.get(_id);
+          await safeLocalPut({ ...baseSanitized });
+        } catch {}
+        await syncAuthAccount(doc, updated);
+        return { ...baseSanitized, ___writePath: remoteResult.path } as any;
+      }
+    } catch (err: any) {
+      if (err?.status === 409 && remoteDB && typeof (remoteDB as any).get === "function") {
+        try {
+          const latest = await (remoteDB as any).get(_id);
+          const latestModules = withModulePermissionDefaults(latest?.modulePermissions);
+          const mergedModules = { ...latestModules, ...modulePatch };
           const merged = {
             ...latest,
             ...patch,
             _id,
             _rev: latest._rev,
             type: "user",
+            permissions,
+            modulePermissions: mergedModules,
             updatedAt: new Date().toISOString(),
           } as any;
-          if (!('remoteCreatedAt' in merged) || !merged.remoteCreatedAt) {
+          if (!("remoteCreatedAt" in merged) || !merged.remoteCreatedAt) {
             (merged as any).remoteCreatedAt = new Date().toISOString();
           }
-          if (merged.permissions && !Array.isArray(merged.permissions)) {
-            merged.permissions = Array.isArray(latest.permissions) ? latest.permissions : [];
-          }
-          const res2 = await remoteDB.put(sanitizeForCouch(merged));
-          merged._rev = res2.rev;
-          try { await safeLocalPut(sanitizeForCouch(merged)); } catch {}
-          try {
-            const roles = [merged.role].filter(Boolean) as string[];
-            const wasActive2 = (latest.isActive !== false);
-            const isNowActive2 = (merged.isActive !== false);
-            const oldName2 = (latest.email || latest.name || "").trim();
-            const newName2 = (merged.email || merged.name || "").trim();
-            const nameChanged2 = oldName2 && newName2 && oldName2 !== newName2;
-            if (wasActive2 !== isNowActive2) {
-              if (!isNowActive2) {
-                await deleteRemoteAuthUser(oldName2 || newName2);
-              } else {
-                if (nameChanged2) await deleteRemoteAuthUser(oldName2);
-                await upsertRemoteAuthUser({ name: newName2, password: merged.password, roles });
-              }
-            } else if (isNowActive2) {
-              if (nameChanged2) await deleteRemoteAuthUser(oldName2);
-              await upsertRemoteAuthUser({ name: newName2, password: patch.password, roles });
+          const mergedSanitized = sanitizeForCouch(merged);
+          const conflictResult = await pushUserDocToRemote({ ...mergedSanitized });
+          if (conflictResult) {
+            if (conflictResult.rev) {
+              merged._rev = conflictResult.rev;
+              mergedSanitized._rev = conflictResult.rev;
             }
-          } catch (e) { console.warn("[updateUser] _users auth sync (retry) failed", (e as any)?.message || e); }
-          return { ...sanitizeForCouch(merged), ___writePath: "remote" } as any;
+            try {
+              await safeLocalPut({ ...mergedSanitized });
+            } catch {}
+            await syncAuthAccount(latest, merged);
+            return { ...mergedSanitized, ___writePath: conflictResult.path } as any;
+          }
         } catch (e2) {
           console.warn("[updateUser] 409 retry failed, falling back to local", e2);
         }
+      } else {
+        console.warn("[updateUser] remote put failed, falling back to local", err);
       }
-      console.warn("[updateUser] remote put failed, falling back to local", err);
     }
   }
+
   const toLocal = sanitizeForCouch(updated);
-  await safeLocalPut(toLocal); // LOCAL ONLY
+  await safeLocalPut(toLocal);
   return { ...toLocal, ___writePath: "local" } as any;
 }
-
-/** Borrado lógico — LOCAL FIRST */
+/** Borrado logico - LOCAL FIRST */
 // deprecated: no longer used; keep for reference
 /* removed: softDeleteUser(idOrKey: any) {
   await openDatabases();
@@ -750,7 +840,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     doc = await localDB.get(_id);
   } catch (e: any) {
     if (e?.status === 404) {
-      // Crear doc base para permitir desactivación de usuarios listados desde _users
+      // Crear doc base para permitir desactivacion de usuarios listados desde _users
       const email = typeof idOrKey === "object" ? (idOrKey.email || idOrKey.name || "") : (key.includes("@") ? key : "");
       doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email, name: email ? (email.split("@")[0]) : key });
     } else {
@@ -767,13 +857,13 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   return sanitizeForCouch(doc);
 } */
 
-/** Borrado permanente — LOCAL FIRST */
+/** Borrado permanente - LOCAL FIRST */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
   await openDatabases();
   const _id = toUserDocId(idOrKey);
   try {
     const doc = await localDB.get(_id);
-    await localDB.remove(doc); // la sync replicará el delete
+    await localDB.remove(doc); // la sync replicara el delete
     return true;
   } catch (e: any) {
     if (e?.status === 404) return false;
@@ -834,7 +924,7 @@ export async function findUserByEmail(email: string) {
   return null;
 }
 
-/** Watch de cambios del doc de usuario (replicación) */
+/** Watch de cambios del doc de usuario (replicacion) */
 export async function watchUserDocByEmail(
   email: string,
   onUpdate: (doc: any) => void,
@@ -886,7 +976,7 @@ export async function saveUserAvatar(
   let doc: any;
   try { doc = await localDB.get(_id); } catch (e: any) {
     if (e?.status === 404) {
-      // crear base mínima
+      // crear base minima
       doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email });
       try { await localDB.put(sanitizeForCouch(doc)); } catch {}
       doc = await localDB.get(_id);
@@ -894,7 +984,7 @@ export async function saveUserAvatar(
   }
   // putAttachment local-first
   const res = await localDB.putAttachment(_id, "avatar", doc._rev, blob, contentType);
-  // también miniatura 64x64
+  // tambien miniatura 64x64
   try {
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -936,7 +1026,7 @@ export async function saveUserAvatar(
         rdoc = { ...base, _rev: put.rev };
       }
       const r = await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
-      // también miniatura remota
+      // tambien miniatura remota
       try {
         const size = 64;
         const url = URL.createObjectURL(blob);
@@ -1055,3 +1145,157 @@ async function deleteRemoteAuthUser(name?: string) {
   } catch {}
 }
 
+
+
+// =========================
+// ===  PHOTOS (images)  ===
+// =========================
+type PhotoMeta = {
+  owner?: string;
+  lat?: number;
+  lng?: number;
+  tags?: string[];
+};
+
+type PhotoDoc = {
+  _id: string;
+  type: "photo";
+  owner?: string;
+  createdAt: string;
+  lat?: number;
+  lng?: number;
+  tags?: string[];
+  hasOriginal: boolean;
+  hasThumb: boolean;
+  updatedAt?: string;
+};
+
+/** Crea indices para búsqueda de fotos */
+async function ensurePhotoIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "createdAt"] },
+      name: "idx-photo-type-createdAt",
+    });
+  } catch {}
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "owner", "createdAt"] },
+      name: "idx-photo-owner-createdAt",
+    });
+  } catch {}
+}
+
+/** Genera un id corto aleatorio */
+function rid(len = 6) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = "";
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+/** Redimensiona a un maxSide px y devuelve Blob webp/jpeg según soporte */
+async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image/jpeg"="image/jpeg", quality = 0.85): Promise<Blob> {
+  const url = URL.createObjectURL(input);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const ratio = Math.min(1, maxSide / Math.max(w, h));
+    const cw = Math.round(w * ratio);
+    const ch = Math.round(h * ratio);
+    const canvas = document.createElement("canvas");
+    canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no-2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, cw, ch);
+    const mime = as;
+    const dataUrl = canvas.toDataURL(mime, quality);
+    const blob = await (await fetch(dataUrl)).blob();
+    return blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Guarda una foto con attachments (original + thumb) en PouchDB (replica a CouchDB) */
+export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
+  await openDatabases();
+  if (!localDB) throw new Error("DB not ready");
+  const nowIso = new Date().toISOString();
+  const id = `photo:${nowIso}:${rid(4)}`;
+
+  const doc: PhotoDoc = {
+    _id: id,
+    type: "photo",
+    owner: meta.owner,
+    createdAt: nowIso,
+    lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
+    hasOriginal: true,
+    hasThumb: true,
+    updatedAt: nowIso,
+  };
+  // 1) Crear doc base
+  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
+    if (e?.status === 409) {
+      const existing = await (localDB as any).get(id);
+      await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
+    } else { throw e; }
+  }
+
+  // 2) Adjuntar thumb (320px webp)
+  const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
+  let latest = await (localDB as any).get(id);
+  await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
+
+  // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
+  const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
+  latest = await (localDB as any).get(id);
+  await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
+
+  // 4) Update metadata
+  latest = await (localDB as any).get(id);
+  latest.updatedAt = new Date().toISOString();
+  await (localDB as any).put(sanitizeForCouch(latest));
+
+  return { ok: true, _id: id };
+}
+
+/** Devuelve Blob del attachment requerido */
+export async function getPhotoAttachment(id: string, name: "thumb.webp"|"original.jpg") {
+  await openDatabases();
+  return await (localDB as any).getAttachment(id, name);
+}
+
+/** Devuelve URL de objeto para usar en <img> (recuerda revocar cuando dejes de usarla) */
+export async function getPhotoThumbUrl(id: string) {
+  const blob = await getPhotoAttachment(id, "thumb.webp");
+  return URL.createObjectURL(blob);
+}
+
+/** Lista fotos (por owner opcional), ordenadas desc por createdAt */
+export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
+  await ensurePhotoIndexes();
+  const limit = opts?.limit ?? 50;
+  const selector: any = { type: "photo" };
+  if (opts?.owner) selector.owner = opts.owner;
+  const res = await (localDB as any).find({
+    selector,
+    sort: [{ type: "desc" }, { createdAt: "desc" }],
+    limit,
+  });
+  const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
+  return docs as PhotoDoc[];
+}
+
+/** Elimina la foto completa */
+export async function deletePhoto(id: string) {
+  await openDatabases();
+  const doc = await (localDB as any).get(id);
+  await (localDB as any).remove(doc);
+  return { ok: true };
+}

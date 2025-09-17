@@ -1,5 +1,5 @@
-// src/components/providers.tsx
-// Proveedores globales: Redux, autenticación y sincronización
+﻿// src/components/providers.tsx
+// Proveedores globales: Redux, autenticacion y sincronizacion
 "use client";
 
 import React, { useEffect, useRef } from "react";
@@ -17,7 +17,7 @@ import {
   getAllUsersAsManager,
 } from "@/lib/database";
 
-/** Bootstrap de autenticación/sincronización y observador del usuario */
+/** Bootstrap de autenticacion/sincronizacion y observador del usuario */
 function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
@@ -25,7 +25,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const avatarUrlRef = useRef<string | null>(null);
   const warmedRef = useRef<boolean>(false);
 
-  // Rutas a precachear tras login online para navegación offline
+  // Rutas a precachear tras login online para navegacion offline
   const ROUTES_TO_WARM = [
     "/",
     "/auth/login",
@@ -45,10 +45,13 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     const origin = window.location.origin;
     let startCache: Cache | null = null;
     let htmlCache: Cache | null = null;
+    let dataCache: Cache | null = null;
+    const buildId = (window as any)?.__NEXT_DATA__?.buildId || "";
     try {
       if ("caches" in window) {
         try { startCache = await caches.open("start-url"); } catch {}
         try { htmlCache = await caches.open("html-pages"); } catch {}
+        try { dataCache = await caches.open("next-data"); } catch {}
       }
       for (const path of ROUTES_TO_WARM) {
         try {
@@ -62,6 +65,17 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           if ((path === "/" || path === "") && startCache) {
             const startRequest = new Request(target, { credentials: "same-origin" });
             await startCache.put(startRequest, response.clone());
+          }
+          if (dataCache && buildId) {
+            const dataPath = path === "/" ? "/index" : path;
+            const dataUrl = new URL(`/_next/data/${buildId}${dataPath}.json`, origin).toString();
+            try {
+              const dataResponse = await fetch(dataUrl, { credentials: "same-origin" });
+              if (dataResponse && dataResponse.ok) {
+                const dataRequest = new Request(dataUrl, { credentials: "same-origin" });
+                await dataCache.put(dataRequest, dataResponse.clone());
+              }
+            } catch {}
           }
         } catch {}
       }
@@ -78,7 +92,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
-  // Rehidratación de sesión
+  // Rehidratacion de sesion
   useEffect(() => {
     (async () => {
       // @ts-ignore
@@ -88,7 +102,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     })();
   }, [dispatch]);
 
-  // Si hay sesión guardada y hay red → renovar cookie y arrancar sync
+  // Si hay sesion guardada y hay red  renovar cookie y arrancar sync
   useEffect(() => {
     (async () => {
       if (user && typeof navigator !== "undefined" && navigator.onLine) {
@@ -104,7 +118,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           if (email && user.password) {
             await loginOnlineToCouchDB(email, user.password);
             await startSync();
-            // Sembrar caché local de usuarios para panel offline si tiene permisos
+            // Sembrar cache local de usuarios para panel offline si tiene permisos
             try { await getAllUsersAsManager(); } catch {}
             // Precalentar rutas HTML para uso offline tras login online
             try { await warmRoutes(); } catch {}
@@ -118,7 +132,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     })();
   }, [user]);
 
-  // Watcher del documento del usuario (replicación -> actualiza Redux y storage)
+  // Watcher del documento del usuario (replicacion -> actualiza Redux y storage)
   useEffect(() => {
     (async () => {
       if (cancelWatch.current) { cancelWatch.current(); cancelWatch.current = null; }
@@ -192,7 +206,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     if (typeof navigator === "undefined" || !('serviceWorker' in navigator)) return;
     const handler = (event: MessageEvent) => {
       const type = (event && (event as any).data && (event as any).data.type) || "";
-      if (type === 'BG_SYNC_QUEUED') notify.info('Acción encolada. Se enviará al recuperar internet.');
+      if (type === 'BG_SYNC_QUEUED') notify.info('Accion encolada. Se enviara al recuperar internet.');
       else if (type === 'BG_SYNC_SUCCESS') notify.success('Acciones sincronizadas correctamente.');
       else if (type === 'BG_SYNC_FAILURE') notify.warn('No se pudieron sincronizar algunas acciones.');
     };
@@ -211,3 +225,4 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     </ReduxProvider>
   );
 }
+
