@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-// Barra de navegaciÃ³n superior con rol y menÃº de usuario (avatar)
+// Barra de navegación superior con rol y menú de usuario (avatar)
 import { useEffect, useRef, useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { useRouter } from "next/navigation";
@@ -14,10 +14,11 @@ export function Navbar() {
   const router = useRouter();
   const { user } = useAppSelector((state) => state.auth);
 
+  // Controla si el menú desplegable del avatar está visible.
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Cerrar al hacer clic fuera
+  // Cierra el menú al hacer clic fuera del contenedor.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (!open) return;
@@ -28,12 +29,13 @@ export function Navbar() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Cerrar con Esc
+  // Permite cerrar el menú con la tecla Escape.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+  // Gestiona los eventos de instalación de la PWA para mostrar los botones adecuados.
   useEffect(() => {
     const onPrompt = (e: any) => {
       e.preventDefault();
@@ -50,6 +52,7 @@ export function Navbar() {
       window.removeEventListener("appinstalled", onInstalled as any);
     };
   }, []);
+  // Iniciales del usuario para mostrar cuando no hay avatar personalizado.
   const initials = (user?.name || user?.email || "?")
     .split(" ")
     .map((p) => p[0])
@@ -57,6 +60,7 @@ export function Navbar() {
     .slice(0, 2)
     .toUpperCase();
 
+  // Estado local que refleja el modo de tema vigente (claro u oscuro).
   const [dark, setDark] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       return document.documentElement.classList.contains("dark");
@@ -64,6 +68,7 @@ export function Navbar() {
     return false;
   });
 
+  // Cambia entre los temas claro y oscuro sincronizándolo con localStorage.
   const toggleTheme = () => {
     if (typeof document !== "undefined") {
       const html = document.documentElement;
@@ -82,6 +87,8 @@ export function Navbar() {
   const [canInstall, setCanInstall] = useState(false);
   const [deferred, setDeferred] = useState<any>(null);
   const [installed, setInstalled] = useState<boolean>(false);
+
+  // Lanza el diálogo nativo de instalación cuando el navegador lo permite.
   const handleInstall = async () => {
     try {
       if (deferred) {
@@ -91,35 +98,37 @@ export function Navbar() {
           setInstalled(true); setCanInstall(false); setDeferred(null);
         }
       } else {
-        alert("Para instalar, usa el menu del navegador (Anadir a la pantalla de inicio).");
+        alert("Para instalar, usa el menú del navegador (Añadir a la pantalla de inicio).");
       }
     } catch {}
   };
 
-    const handleUninstall = () => {
+  // Explica cómo desinstalar la PWA según la plataforma detectada.
+  const handleUninstall = () => {
     try {
       const ua = (navigator.userAgent || navigator.vendor || (window as any).opera || "").toLowerCase();
-      const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform||"").toLowerCase().includes("mac") && ('ontouchend' in document);
+      const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform || "").toLowerCase().includes("mac") && ('ontouchend' in document);
       const isAndroid = /android/.test(ua);
       const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (navigator as any).standalone;
       if (isIOS) {
-        alert("iOS: Mantenga presionado el icono en la pantalla de inicio y pulse 'Eliminar app'.\nTambien puedes hacerlo desde Ajustes > General > Almacenamiento del iPhone.");
+        alert("iOS: Mantén presionado el icono en la pantalla de inicio y pulsa 'Eliminar app'.\nTambién puedes hacerlo desde Ajustes > General > Almacenamiento del iPhone.");
         return;
       }
       if (isAndroid) {
-        alert("Android: Mantenga presionado el icono y pulse 'Desinstalar'.\nSi la abriste como app, usa el menu de tres puntos en la barra superior > 'Desinstalar app'.");
+        alert("Android: Mantén presionado el icono y pulsa 'Desinstalar'.\nSi la abriste como app, usa el menú de tres puntos en la barra superior > 'Desinstalar app'.");
         return;
       }
       if (isStandalone) {
-        alert("Escritorio: En la ventana de la app, abre el menu (tres puntos) y elige 'Desinstalar app'.\nEn Chrome: Ajustes > Apps > Administrar apps > Eliminar.\nEn Edge: Configuracion > Apps > Eliminar.");
+        alert("Escritorio: En la ventana de la app, abre el menú (tres puntos) y elige 'Desinstalar app'.\nEn Chrome: Ajustes > Apps > Administrar apps > Eliminar.\nEn Edge: Configuración > Apps > Eliminar.");
       } else {
-        alert("Para desinstalar desde escritorio, si instalaste la app: abre el menu del navegador (Chrome/Edge) > Apps > Administrar apps > Eliminar.");
+        alert("Para desinstalar desde escritorio, si instalaste la app: abre el menú del navegador (Chrome/Edge) > Apps > Administrar apps > Eliminar.");
       }
     } catch {
-      alert("Consulta como desinstalar la app desde tu sistema o navegador.");
+      alert("Consulta cómo desinstalar la app desde tu sistema o navegador.");
     }
   };
 
+  // Renderiza la barra superior con el logo, el rol y el menú contextual del usuario.
   return (
     <nav className="bg-background shadow-sm border-b border-border">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

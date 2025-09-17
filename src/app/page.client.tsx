@@ -1,7 +1,7 @@
 "use client";
 
-// PÃ¡gina inicial del proyecto. Su Ãºnica responsabilidad es verificar el
-// estado de autenticaciÃ³n del usuario y redirigirlo a la secciÃ³n
+// Página inicial del proyecto. Su única responsabilidad es verificar el
+// estado de autenticación del usuario y redirigirlo a la sección
 // correspondiente. Mientras decide, muestra un simple "spinner" de carga.
 
 import { useEffect } from "react";
@@ -10,25 +10,25 @@ import { useAppSelector } from "@/lib/hooks";
 import { startSync, stopSync } from "@/lib/database";
 
 export default function HomePage() {
-  // Router de Next.js para navegar programÃ¡ticamente
+  // Router de Next.js utilizado para mover al usuario entre pantallas.
   const router = useRouter();
-  // Extraemos del store si hay sesiÃ³n y si todavÃ­a se estÃ¡ cargando
+  // Obtenemos del estado global si existe sesión activa y si sigue cargando.
   const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth);
 
-  // Cada vez que cambia el estado de autenticaciÃ³n iniciamos o detenemos la
-  // sincronizaciÃ³n con CouchDB.
+  // Cada vez que cambia el estado de autenticación iniciamos o detenemos la
+  // sincronización con CouchDB para mantener los datos locales al día.
   useEffect(() => {
     if (isAuthenticated) {
-      // Usuario autenticado â†’ arrancar replicaciÃ³n
+      // Usuario autenticado → arrancar replicación bidireccional.
       startSync().catch(() => {});
     } else {
-      // Usuario no autenticado â†’ detener replicaciÃ³n
+      // Usuario no autenticado → detener replicación y liberar recursos.
       stopSync().catch(() => {});
     }
   }, [isAuthenticated]);
 
-  // Cuando ya se resolviÃ³ el estado de carga, redirigimos a la ruta adecuada
-  // (panel principal o formulario de login).
+  // Cuando finaliza la carga inicial, redirigimos a la ruta correspondiente
+  // (panel principal o formulario de inicio de sesión).
   useEffect(() => {
     if (!isLoading) {
       if (isAuthenticated) {

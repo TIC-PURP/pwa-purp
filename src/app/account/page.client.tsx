@@ -33,7 +33,7 @@ export default function AccountPage() {
   const [dirty, setDirty] = useState(false);
   const [theme, setTheme] = useState<string>("light");
   const initialAvatarRef = useRef<string | null>(null);
-  const AVATAR_SIZE = 192; // tamaÃ±o final del avatar (px)
+  const AVATAR_SIZE = 192; // tamaño final del avatar (px)
 
   useEffect(() => {
     const curr = (user as any)?.avatarUrl || null;
@@ -61,7 +61,7 @@ export default function AccountPage() {
         const ratio = w && h ? w / h : 1;
 
         const target = AVATAR_SIZE;
-        const needsCrop = ratio > 1.6 || ratio < 0.625; // panorÃ¡mica o muy vertical
+        const needsCrop = ratio > 1.6 || ratio < 0.625; // panorámica o muy vertical
         if (!needsCrop) {
           // Auto center-crop 1:1 y guardar preview; no abrir recortador
           const canvas = document.createElement("canvas");
@@ -101,7 +101,7 @@ export default function AccountPage() {
           setCropOpen(true);
         }
       } catch {
-        // Si falla la carga, abrir recortador como Ãºltimo recurso
+        // Si falla la carga, abrir recortador como último recurso
         setRawImage(src);
         setScale(1);
         setOffset({ x: 0, y: 0 });
@@ -118,7 +118,7 @@ export default function AccountPage() {
     setRawImage(imgSrc);
     setScale(1);
     setOffset({ x: 0, y: 0 });
-    // cerrar overlay con animaciÃ³n y abrir recorte luego
+    // cerrar overlay con animación y abrir recorte luego
     setAvatarActionsOpen(false);
     setAvatarPickerOpen(false);
     setTimeout(() => setCropOpen(true), 200);
@@ -224,11 +224,11 @@ export default function AccountPage() {
     }
   };
 
-  // Guardado automÃƒÂ¡tico cuando cambia la foto y hay cambios
+  // Guardado automático cuando cambia la foto y hay cambios
   useEffect(() => {
     if (!dirty) return;
     if (preview === initialAvatarRef.current) return;
-    // Debounce ligero para evitar mÃƒÂºltiples llamadas
+    // Debounce ligero para evitar múltiples llamadas
     const t = setTimeout(() => { handleSave().catch(() => {}); }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -292,7 +292,7 @@ export default function AccountPage() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    {/* Entradas ocultas: galeriÂ­a y camara (frontal) */}
+                    {/* Entradas ocultas: galeria y camara (frontal) */}
                     <input
                       type="file"
                       accept="image/*"
@@ -329,7 +329,7 @@ export default function AccountPage() {
                 </div>
               </section>
 
-              {/* Guardado automÃƒÂ¡tico; sin botÃƒÂ³n de guardar */}
+              {/* Guardado automático; sin botón de guardar */}
             </CardContent>
           </Card>
           {cropOpen && rawImage && (
@@ -403,7 +403,7 @@ export default function AccountPage() {
                     </span>
                   )}
                 </div>
-                {/* BotÃ³n cerrar */}
+                {/* Botón cerrar */}
                 <button
                   type="button"
                   aria-label="Cerrar"
@@ -442,7 +442,7 @@ export default function AccountPage() {
                         </button>
                         <button
                           type="button"
-                          title="Cambiar desde galerÃ­a"
+                          title="Cambiar desde galería"
                           className="h-10 w-10 rounded-full bg-background/90 backdrop-blur border border-border flex items-center justify-center shadow hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           onClick={() => fileRefGallery.current?.click()}
                         >
@@ -463,7 +463,7 @@ export default function AccountPage() {
                   <div className="absolute bottom-4 inset-x-0 flex justify-center gap-3">
                     <button
                       type="button"
-                      title="Elegir de galerÃ­a"
+                      title="Elegir de galería"
                       className="h-10 w-10 rounded-full bg-background/90 backdrop-blur border border-border flex items-center justify-center shadow hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => fileRefGallery.current?.click()}
                     >

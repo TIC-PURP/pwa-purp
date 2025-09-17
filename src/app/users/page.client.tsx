@@ -1,4 +1,4 @@
-// PÃ¡gina de administraciÃ³n de usuarios protegida por autenticaciÃ³n
+// Página de administración de usuarios protegida por autenticación
 "use client";
 
 import { useState, useEffect } from "react";
@@ -51,17 +51,17 @@ export default function UsersPage() {
   const router = useRouter();
   // Lista de usuarios recuperados
   const [users, setUsers] = useState<User[]>([]);
-  // Controla la visualizaciÃ³n del formulario
+  // Controla la visualización del formulario
   const [showForm, setShowForm] = useState(false);
-  // Usuario seleccionado para ediciÃ³n
+  // Usuario seleccionado para edición
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  // Usuario objetivo de eliminaciÃ³n
+  // Usuario objetivo de eliminación
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
-  // Tipo de eliminaciÃ³n a aplicar
+  // Tipo de eliminación a aplicar
   const [deleteMode, setDeleteMode] = useState<"soft" | "hard" | "activate">(
     "soft",
   );
-  // Indicador de operaciÃ³n en curso
+  // Indicador de operación en curso
   const [isLoading, setIsLoading] = useState(false);
 
   // Cargar usuarios al montar el componente
@@ -79,7 +79,7 @@ export default function UsersPage() {
     })();
   }, []);
 
-  // Al resolver autenticaciÃ³n/cambio de usuario, volver a cargar para intentar el listado manager
+  // Al resolver autenticación/cambio de usuario, volver a cargar para intentar el listado manager
   useEffect(() => {
     if (isAuthenticated) {
       loadUsers();
@@ -88,27 +88,27 @@ export default function UsersPage() {
 
   // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
-    // Intentar listado manager siempre (el API validarÃ¡ por cookie/rol). Tiene fallback a locales.
+    // Intentar listado manager siempre (el API validará por cookie/rol). Tiene fallback a locales.
     const allUsers = await getAllUsersAsManager();
     setUsers(allUsers as any);
   };
 
-  // Crea un nuevo usuario y sincroniza segÃºn la conexiÃ³n
+  // Crea un nuevo usuario y sincroniza según la conexión
   const handleCreateUser = async (data: CreateUserData) => {
     setIsLoading(true);
     try {
       const created: any = await createUser(data);
       const path = created?.___writePath === "remote" ? "remote" : "local";
       if (path === "remote") notify.success("Usuario guardado en la nube");
-      else notify.info("Usuario guardado sin conexiÃ³n. Se sincronizarÃ¡ cuando haya internet");
+      else notify.info("Usuario guardado sin conexión. Se sincronizará cuando haya internet");
 
-      // Mensaje especÃ­fico si se establecieron permisos por mÃ³dulo
+      // Mensaje específico si se establecieron permisos por módulo
       const defMP = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
       const mp = { ...defMP, ...(created?.modulePermissions || (data as any).modulePermissions || {}) } as any;
       const hasModulePerms = [mp.MOD_A, mp.MOD_B, mp.MOD_C, mp.MOD_D].some((v) => v && v !== "NONE");
       if (hasModulePerms) {
-        if (path === "remote") notify.success("Permisos por mÃ³dulo establecidos");
-        else notify.info("Permisos por mÃ³dulo establecidos. Se sincronizarÃ¡n luego");
+        if (path === "remote") notify.success("Permisos por módulo establecidos");
+        else notify.info("Permisos por módulo establecidos. Se sincronizarán luego");
       }
 
       const createdEmail = (created?.email || data.email || "").toLowerCase();
@@ -143,7 +143,7 @@ export default function UsersPage() {
     if (!editingUser) return;
     setIsLoading(true);
     try {
-      // Detectar si solo cambiaron permisos por mÃ³dulo (Aâ€“D)
+      // Detectar si solo cambiaron permisos por módulo (A–D)
       const defMP = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
       const beforeMP = { ...defMP, ...(editingUser.modulePermissions || {}) } as any;
       const afterMP = { ...defMP, ...(data as any).modulePermissions } as any;
@@ -162,10 +162,10 @@ export default function UsersPage() {
       const path = updated?.___writePath === "remote" ? "remote" : "local";
       if (moduleChanged && !nonModuleChanged) {
         if (path === "remote") notify.success("Permisos actualizados en la nube");
-        else notify.info("Permisos actualizados. Se sincronizarÃ¡n luego");
+        else notify.info("Permisos actualizados. Se sincronizarán luego");
       } else {
         if (path === "remote") notify.success("Cambios guardados en la nube");
-        else notify.info("Cambios guardados sin conexiÃ³n. Se sincronizarÃ¡n luego");
+        else notify.info("Cambios guardados sin conexión. Se sincronizarán luego");
       }
       await loadUsers();
       setEditingUser(null);
@@ -177,7 +177,7 @@ export default function UsersPage() {
     }
   };
 
-  // Elimina, desactiva o activa un usuario segÃºn el modo seleccionado
+  // Elimina, desactiva o activa un usuario según el modo seleccionado
   const handleDeleteUser = async () => {
     if (!deletingUser) return;
     setIsLoading(true);
@@ -192,7 +192,7 @@ export default function UsersPage() {
           notify.success("Usuario desactivado");
         else
           notify.info(
-            "Usuario desactivado. Se sincronizarÃ¡ luego",
+            "Usuario desactivado. Se sincronizará luego",
           );
       } else if (deleteMode === "activate") {
         const updated: any = await updateUser({
@@ -203,7 +203,7 @@ export default function UsersPage() {
         if (path === "remote") notify.success("Usuario activado");
         else
           notify.info(
-            "Usuario activado. Se sincronizarÃ¡ luego",
+            "Usuario activado. Se sincronizará luego",
           );
       } else {
         const ok = await hardDeleteUser(
@@ -214,7 +214,7 @@ export default function UsersPage() {
             notify.error("Usuario eliminado para siempre");
           } else {
             notify.info(
-              "Usuario eliminado. Se sincronizarÃ¡ luego",
+              "Usuario eliminado. Se sincronizará luego",
             );
           }
         } else {
@@ -226,13 +226,13 @@ export default function UsersPage() {
       setDeletingUser(null);
     } catch (error) {
       console.error(error);
-      notify.error("No se pudo completar la acciÃ³n.");
+      notify.error("No se pudo completar la acción.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Cambia rÃ¡pidamente el estado activo de un usuario
+  // Cambia rápidamente el estado activo de un usuario
   const handleToggleUserStatus = async (user: User) => {
     setIsLoading(true);
     try {
@@ -246,13 +246,13 @@ export default function UsersPage() {
         if (path === "remote") notify.success("Usuario activado");
         else
           notify.info(
-            "Usuario activado. Se sincronizarÃ¡ luego",
+            "Usuario activado. Se sincronizará luego",
           );
       } else {
         if (path === "remote") notify.warn("Usuario desactivado");
         else
           notify.info(
-            "Usuario desactivado. Se sincronizarÃ¡ luego",
+            "Usuario desactivado. Se sincronizará luego",
           );
       }
       await loadUsers();
@@ -301,7 +301,7 @@ export default function UsersPage() {
                 <h1 className="text-3xl font-bold text-foreground">
                   Panel de control
                 </h1>
-                <p className="mt-2 text-muted-foreground">GestiÃ³n de usuarios</p>
+                <p className="mt-2 text-muted-foreground">Gestión de usuarios</p>
               </div>
               <Button onClick={() => setShowForm(true)}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -384,7 +384,7 @@ export default function UsersPage() {
                       </div>
                       {/* Se retira el bloque de permisos v1 de la tarjeta */}
                       <div>
-                        <span className="text-sm text-muted-foreground">MÃ³dulos:</span>
+                        <span className="text-sm text-muted-foreground">Módulos:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(() => {
                             const mp = (user as any).modulePermissions || {};
@@ -442,17 +442,17 @@ export default function UsersPage() {
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteMode === "soft"
-                  ? "Â¿Desactivar usuario?"
+                  ? "¿Desactivar usuario?"
                   : deleteMode === "activate"
-                    ? "Â¿Activar usuario?"
-                    : "Â¿Eliminar usuario permanentemente?"}
+                    ? "¿Activar usuario?"
+                    : "¿Eliminar usuario permanentemente?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {deleteMode === "soft"
-                  ? `Esta acciÃ³n desactivarÃ¡ al usuario "${deletingUser?.name}". PodrÃ¡s reactivarlo despuÃ©s.`
+                  ? `Esta acción desactivará al usuario "${deletingUser?.name}". Podrás reactivarlo después.`
                   : deleteMode === "activate"
-                    ? `Esta acciÃ³n activarÃ¡ nuevamente al usuario "${deletingUser?.name}".`
-                    : `Esta acciÃ³n eliminarÃ¡ permanentemente al usuario "${deletingUser?.name}". No podrÃ¡s recuperar sus datos.`}
+                    ? `Esta acción activará nuevamente al usuario "${deletingUser?.name}".`
+                    : `Esta acción eliminará permanentemente al usuario "${deletingUser?.name}". No podrás recuperar sus datos.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
