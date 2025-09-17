@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { PhotosTest } from "@/app/mod-b/page";
+import { PhotosTest } from "@/components/mod-b/photos-test";
 import { deletePhoto, getPhotoThumbUrl, listPhotos, savePhoto } from "@/lib/database";
 
 jest.mock("@/lib/database", () => ({
@@ -73,3 +73,4 @@ describe("PhotosTest", () => {
     await waitFor(() => expect(screen.queryByAltText("photo-delete")).toBeNull());
   });
 });
+
