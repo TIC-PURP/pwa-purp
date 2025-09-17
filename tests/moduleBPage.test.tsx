@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import ModuleBPage from "@/app/mod-b/page";
+import ModuleBPage from "@/app/mod-b/page.client";
 import authReducer, { type AuthState } from "@/lib/store/authSlice";
 import type { User } from "@/lib/types";
 import { listPhotos } from "@/lib/database";
@@ -123,3 +123,4 @@ test("redirects away when module access is NONE", async () => {
   });
   expect(screen.queryByText("Modulo B")).not.toBeInTheDocument();
 });
+

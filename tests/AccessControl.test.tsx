@@ -1,8 +1,8 @@
-﻿// Pruebas para validar el acceso a la pagina principal segun el rol del usuario
+// Pruebas para validar el acceso a la pagina principal segun el rol del usuario
 import { render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { store } from "@/lib/store";
-import Dashboard from "@/app/principal/page";
+import Dashboard from "@/app/principal/page.client";
 import { setUser } from "@/lib/store/authSlice";
 import type { User } from "@/lib/types";
 
@@ -71,3 +71,4 @@ describe("Control de acceso por rol", () => {
     expect(screen.queryByText(/Panel de Control/)).not.toBeInTheDocument();
   });
 });
+
