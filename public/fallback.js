@@ -1,31 +1,19 @@
-// Stable offline fallback used by the generated Workbox SW
-// Prefer a cached page (same path) or an app shell before offline.html
-(() => {
-  "use strict";
-  self.fallback = async (req) => {
-    try {
-      const isDoc = req?.destination === "document" || req?.mode === "navigate";
-      if (!isDoc) return Response.error();
-
-      // Intentamos usar exactamente la misma request para maximizar los aciertos
-      const cached = await caches.match(req, { ignoreSearch: true });
-      if (cached) return cached;
-
-      const url = req?.url ? new URL(req.url, self.location.origin) : null;
-      if (url) {
-        const byHref = await caches.match(url.href, { ignoreSearch: true });
-        if (byHref) return byHref;
-        const byPath = await caches.match(url.pathname, { ignoreSearch: true });
-        if (byPath) return byPath;
-      }
-
-      const shell = (await caches.match("/principal")) || (await caches.match("/"));
-      if (shell) return shell;
-
-      return (await caches.match("/offline.html", { ignoreSearch: true })) || Response.error();
-    } catch {
-      return Response.error();
-    }
-  };
-})();
-
+/**
+ * Optional: keep this if your code calls self.fallback(request) from sw.js
+ * Place in /public/fallback.js and import in sw if needed (or inline in sw).
+ */
+self.fallback = async function(request) {
+  try {
+    const cache = await caches.open('html-pages-v3.1.0-offline-appshell');
+    const direct = await cache.match(request);
+    if (direct) return direct;
+    const url = new URL(request.url);
+    const byPath = await cache.match(new Request(url.pathname, { credentials: 'same-origin' }));
+    if (byPath) return byPath;
+    const shell = await cache.match('/') || await cache.match('/principal') || await cache.match('/auth/login');
+    if (shell) return shell;
+    const offline = await cache.match('/offline.html');
+    if (offline) return offline;
+  } catch(e) {}
+  return Response.error();
+};
