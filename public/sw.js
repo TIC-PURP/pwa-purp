@@ -411,6 +411,20 @@ define(["./workbox-bb54ffba"], function (e) {
       "GET",
     ),
     e.registerRoute(
+      ({ url: t }) =>
+        t.origin === self.location.origin &&
+        t.pathname.startsWith("/_next/data/"),
+      new e.NetworkFirst({
+        cacheName: "next-data",
+        networkTimeoutSeconds: 3,
+        plugins: [
+          new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 604800 }),
+        ],
+        matchOptions: { ignoreSearch: true },
+      }),
+      "GET",
+    ),
+    e.registerRoute(
       /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
       new e.NetworkFirst({
         cacheName: "html-pages",
