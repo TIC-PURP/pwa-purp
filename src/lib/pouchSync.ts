@@ -25,9 +25,32 @@ export function startSync(db: PouchDB.Database, remoteUrl: string) {
     }
   };
 
+  const getErrorMessage = (err: unknown) => {
+    if (err instanceof Error) {
+      return err.message;
+    }
+
+    if (typeof err === 'string') {
+      return err;
+    }
+
+    try {
+      return JSON.stringify(err);
+    } catch (jsonError) {
+      console.debug('[sync paused: stringify error]', jsonError);
+      return String(err);
+    }
+  };
+
   const sync = db.sync(remoteUrl, opts)
     .on('change', info => console.debug('[sync change]', info.direction, info.change && info.change.docs && info.change.docs.length))
-    .on('paused', err => err ? console.warn('[sync paused: error]', err?.message || err) : console.debug('[sync paused: up-to-date]'))
+    .on('paused', (err: unknown) => {
+      if (err) {
+        console.warn('[sync paused: error]', getErrorMessage(err));
+      } else {
+        console.debug('[sync paused: up-to-date]');
+      }
+    })
     .on('active', () => console.debug('[sync active]'))
     .on('error', err => console.error('[sync error]', err));
 
