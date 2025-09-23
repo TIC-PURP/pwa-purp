@@ -47,7 +47,7 @@ describe("Control de acceso por rol", () => {
       </Provider>,
     );
 
-    expect(screen.getByText(/Panel de Control/)).toBeInTheDocument();
+    expect(screen.getByText(/Panel de control/i)).toBeInTheDocument();
   });
 
   // Usuarios sin rol manager no deben verlo
@@ -68,7 +68,7 @@ describe("Control de acceso por rol", () => {
       </Provider>,
     );
 
-    expect(screen.queryByText(/Panel de Control/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Panel de control/i)).not.toBeInTheDocument();
   });
 });
 

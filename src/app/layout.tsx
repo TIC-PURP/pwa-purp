@@ -5,13 +5,13 @@
 import dynamic from "next/dynamic";
 import { headers } from "next/headers";
 import type React from "react";
-import { Inter } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 import Providers from "@/components/providers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
-const inter = Inter({ subsets: ["latin"] });
+const sans = GeistSans;
 
 // Cargamos el componente de notificaciones de manera dinamica para evitar
 // incluirlo en el servidor (solo se usa en el cliente).
@@ -52,7 +52,7 @@ export default function RootLayout({
         ) : null}
         <script nonce={nonce} src="/theme-init.js"></script>
       </head>
-      <body className={inter.className}>
+      <body className={sans.className}>
         {/* Proveedores de contexto global (Redux, etc.) */}
         <Providers>
           {/* Captura errores de React y muestra una UI alternativa */}
