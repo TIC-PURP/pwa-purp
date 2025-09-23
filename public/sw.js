@@ -502,39 +502,25 @@ define(["./workbox-bb54ffba"], function (e) {
       new e.NetworkFirst({
         cacheName: "next-data",
         networkTimeoutSeconds: 3,
-        plugins: [
-          new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 604800 }),
-e.registerRoute(
-  ({ url: t }) =>
-    t.origin === self.location.origin &&
-    t.pathname.startsWith("/_next/data/"),
-  new e.NetworkFirst({
-    cacheName: "next-data",
-    networkTimeoutSeconds: 3,
-    plugins: [
-      new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 604800 }),
-      {
-        // Si la red falla, intenta servir la versión cacheada ignorando el querystring
-        handlerDidError: async ({ request }) => {
-          try {
-            const cache = await caches.open("next-data");
-            const cached = await cache.match(request, { ignoreSearch: true });
-            if (cached) return cached;
-          } catch (err) {}
-          // Sin caché disponible, devolvemos un error genérico
-          return Response.error();
-        },
+  plugins: [
+    new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 604800 }),
+    {
+      // Si la red falla, intenta servir la versión cacheada ignorando el querystring
+      handlerDidError: async ({ request }) => {
+        try {
+          const cache = await caches.open("next-data");
+          const cached = await cache.match(request, { ignoreSearch: true });
+          if (cached) return cached;
+        } catch (err) {}
+        // Sin caché disponible, devolvemos un error genérico
+        return Response.error();
       },
-    ],
-    // Importante: que coincida también si cambia el querystring
-    matchOptions: { ignoreSearch: true },
-  }),
-  "GET",
-);
-        ],
-        matchOptions: { ignoreSearch: true },
-      }),
-      "GET",
+    },
+  ],
+  // Importante: que coincida también si cambia el querystring
+  matchOptions: { ignoreSearch: true },
+}),
+"GET",
     ),
     e.registerRoute(
       /^https:\/\/[^/]+\/(auth\/login|principal|)$/i,
