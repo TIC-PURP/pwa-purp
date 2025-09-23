@@ -32,8 +32,8 @@ define(["./workbox-bb54ffba"], function (e) {
   (importScripts("fallback-FPcU97zAzYj99yFn1Sw01.js"),
     self.skipWaiting(),
     e.clientsClaim(),
-    e.precacheAndRoute(
-      [
+    (() => {
+      const PRECACHE_MANIFEST = [
         {
           url: "/_next/app-build-manifest.json",
           revision: "53e948882c70116521c5149ab18d2663",
@@ -331,9 +331,94 @@ define(["./workbox-bb54ffba"], function (e) {
           revision: "8fd70588a1b469ca6e265e299b84013a",
         },
         { url: "/offline.html", revision: "4924d7e98f7fb288d05a504e28d2c1b6" },
-      ],
-      { ignoreURLParametersMatching: [] },
-    ),
+      ];
+      e.precacheAndRoute(PRECACHE_MANIFEST, { ignoreURLParametersMatching: [] });
+      self.__WB_CUSTOM_PRECACHE = PRECACHE_MANIFEST;
+    })(),
+    (() => {
+      const manifest = self.__WB_CUSTOM_PRECACHE || [];
+      const offlinePaths = [
+        "/",
+        "/auth/login",
+        "/principal",
+        "/mod-a",
+        "/mod-b",
+        "/mod-c",
+        "/mod-d",
+        "/users",
+        "/account",
+      ];
+      const normalizePath = (path) => {
+        if (!path) return "/";
+        const trimmed = path.trim();
+        if (!trimmed || trimmed === "/") return "/";
+        const ensured = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+        return ensured.length > 1 && ensured.endsWith("/")
+          ? ensured.slice(0, -1)
+          : ensured;
+      };
+      const uniqueOfflinePaths = Array.from(
+        new Set(offlinePaths.map((path) => normalizePath(path))),
+      );
+      const buildId = (() => {
+        try {
+          for (const entry of manifest) {
+            if (
+              entry?.url &&
+              entry.url.startsWith("/_next/static/") &&
+              entry.url.endsWith("/_buildManifest.js")
+            ) {
+              const segments = entry.url.split("/");
+              return segments.length >= 4 ? segments[3] || "" : "";
+            }
+          }
+        } catch (err) {}
+        return "";
+      })();
+      const pathToDataUrl = (path) => {
+        if (!buildId) return null;
+        const normalized = normalizePath(path);
+        const dataPath = normalized === "/" ? "/index" : normalized;
+        return `/_next/data/${buildId}${dataPath}.json`;
+      };
+      const warmStartUrl = async () => {
+        try {
+          const cache = await caches.open("start-url");
+          await cache.add(new Request("/", { credentials: "include" }));
+        } catch (err) {}
+      };
+      const warmHtmlShell = async () => {
+        try {
+          const cache = await caches.open("html-pages");
+          for (const path of uniqueOfflinePaths) {
+            try {
+              await cache.add(new Request(path, { credentials: "include" }));
+            } catch (err) {}
+          }
+        } catch (err) {}
+      };
+      const warmNextData = async () => {
+        if (!buildId) return;
+        try {
+          const cache = await caches.open("next-data");
+          for (const path of uniqueOfflinePaths) {
+            const dataUrl = pathToDataUrl(path);
+            if (!dataUrl) continue;
+            try {
+              await cache.add(new Request(dataUrl, { credentials: "include" }));
+            } catch (err) {}
+          }
+        } catch (err) {}
+      };
+      const warmAll = async () => {
+        await warmStartUrl();
+        await warmHtmlShell();
+        await warmNextData();
+      };
+      self.addEventListener("install", (event) => {
+        event.waitUntil(warmAll());
+      });
+    })(),
     e.cleanupOutdatedCaches(),
     e.registerRoute(
       "/",
@@ -407,6 +492,32 @@ define(["./workbox-bb54ffba"], function (e) {
           new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 2592e3 }),
           { handlerDidError: async ({ request: e }) => self.fallback(e) },
         ],
+      }),
+      "GET",
+    ),
+    e.registerRoute(
+      ({ url: t }) =>
+        t.origin === self.location.origin &&
+        t.pathname.startsWith("/_next/data/"),
+      new e.NetworkFirst({
+        cacheName: "next-data",
+        networkTimeoutSeconds: 3,
+        plugins: [
+          new e.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 604800 }),
+          {
+            handlerDidError: async ({ request }) => {
+              try {
+                const cache = await caches.open("next-data");
+                const cached = await cache.match(request, {
+                  ignoreSearch: true,
+                });
+                if (cached) return cached;
+              } catch (err) {}
+              return Response.error();
+            },
+          },
+        ],
+        matchOptions: { ignoreSearch: true },
       }),
       "GET",
     ),
