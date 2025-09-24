@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Función genérica que replica la solicitud original al servidor CouchDB
+// Funcion generica que replica la solicitud original al servidor CouchDB
 async function proxy(req: NextRequest, path: string[]) {
   try {
     const targetBase = process.env.COUCH_HOST;
@@ -14,27 +14,30 @@ async function proxy(req: NextRequest, path: string[]) {
     const search = req.nextUrl.search ?? "";
     const target = `${targetBase}/${path.join("/")}${search}`;
 
-    // Transfiere encabezados relevantes
-    const headers: Record<string, string> = {};
-    const ct = req.headers.get("content-type");
-    if (ct) headers["content-type"] = ct;
-    const cookie = req.headers.get("cookie");
-    if (cookie) headers["cookie"] = cookie;
-    // Aceptar JSON por defecto
-    headers["accept"] = headers["accept"] || "application/json";
+    const headers = new Headers();
+    req.headers.forEach((value, key) => {
+      const lower = key.toLowerCase();
+      if (lower === "host" || lower === "connection" || lower === "content-length") {
+        return;
+      }
+      headers.set(key, value);
+    });
 
-    // Inyectar secreto del proxy si está configurado
+    const cookieHeader = headers.get("cookie");
+    if (!headers.has("accept")) {
+      headers.set("accept", "application/json");
+    }
+
     const proxySecret = process.env.COUCHDB_PROXY_SECRET;
-    if (proxySecret) headers["x-proxy-secret"] = proxySecret;
+    if (proxySecret) headers.set("x-proxy-secret", proxySecret);
 
-    // Utilidad para enmascarar valores sensibles de cookies en logs
     const redact = (val?: string | null) => {
       const s = (val || "").toString();
       return s.replace(/(AuthSession=)([^;]+)/gi, (_m, p1, p2) => {
         if (!p2) return p1 + "<empty>";
         const head = p2.slice(0, 6);
         const tail = p2.slice(-4);
-        return `${p1}${head}…${tail}`;
+        return `${p1}${head}***${tail}`;
       });
     };
 
@@ -43,12 +46,26 @@ async function proxy(req: NextRequest, path: string[]) {
       "[couch-proxy] ->",
       method,
       target,
-      "cookie:", redact(cookie),
+      "cookie:", redact(cookieHeader),
       "x-proxy-secret:", proxySecret ? "present" : "absent",
     );
 
     const hasBody = !["GET", "HEAD"].includes(method);
-    const body = hasBody ? await req.text() : undefined;
+    let body: BodyInit | undefined;
+    if (hasBody) {
+      headers.delete("content-length");
+      const contentType = headers.get("content-type") || "";
+      const isTextBody = /^(?:text\/|application\/(?:json|.*\+json|x-www-form-urlencoded))/i.test(contentType);
+      if (isTextBody) {
+        body = await req.text();
+      } else {
+        const buffer = await req.arrayBuffer();
+        body = buffer;
+        if (buffer.byteLength && !headers.has("content-length")) {
+          headers.set("content-length", String(buffer.byteLength));
+        }
+      }
+    }
 
     const res = await fetch(target, {
       method,
@@ -62,7 +79,6 @@ async function proxy(req: NextRequest, path: string[]) {
       statusText: res.statusText,
     });
 
-    // Reenvía cookies y tipo de contenido
     const setCookie = res.headers.get("set-cookie");
     if (setCookie) nextRes.headers.set("set-cookie", setCookie);
     console.log("[couch-proxy] <-", res.status, res.statusText, "set-cookie:", redact(setCookie));
@@ -79,7 +95,8 @@ async function proxy(req: NextRequest, path: string[]) {
   }
 }
 
-// Métodos HTTP soportados, todos usan la función proxy
+
+// Metodos HTTP soportados, todos usan la funcion proxy
 export function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
   return proxy(req, params.path);
 }
@@ -95,3 +112,4 @@ export function DELETE(req: NextRequest, { params }: { params: { path: string[] 
 export function PATCH(req: NextRequest, { params }: { params: { path: string[] } }) {
   return proxy(req, params.path);
 }
+
