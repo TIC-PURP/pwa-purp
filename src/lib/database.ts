@@ -1262,6 +1262,41 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   latest.updatedAt = new Date().toISOString();
   await (localDB as any).put(sanitizeForCouch(latest));
 
+  // Best-effort: subir attachments y metadata al remoto si hay internet.  
+  // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
+  // similar a lo que hace saveUserAvatar(). Si no hay conexión, los adjuntos  
+  // se sincronizarán automáticamente cuando startSync() esté activo.  
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
+      let rdoc: any = null;
+      try { rdoc = await remoteDB.get(id); } catch {}
+      // Si no existe el doc remoto, crearlo con la metadata actual
+      if (!rdoc) {
+        try {
+          const base = sanitizeForCouch(latest);
+          const put = await remoteDB.put(base);
+          rdoc = { ...base, _rev: put.rev };
+        } catch {}
+      }
+      if (rdoc) {
+        // Subir thumb y original, manejando las revisiones
+        try {
+          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
+          rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
+          // Actualizar flags y updatedAt en remoto
+          try {
+            const rlatest = await remoteDB.get(id);
+            rlatest.hasOriginal = true;
+            rlatest.hasThumb = true;
+            rlatest.updatedAt = new Date().toISOString();
+            await remoteDB.put(sanitizeForCouch(rlatest));
+          } catch {}
+        } catch {}
+      }
+    }
+  } catch {}
+
   return { ok: true, _id: id };
 }
 
