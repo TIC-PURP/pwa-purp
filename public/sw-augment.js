@@ -1,13 +1,17 @@
-﻿/* eslint-disable no-restricted-globals */
+/* eslint-disable no-restricted-globals */
 // App-shell augmentation for Workbox-generated service worker.
 
-const APP_SHELL_VERSION = "2024-07-15";
+const APP_SHELL_VERSION = "2024-07-20";
 const APP_SHELL_CACHE_NAME = `app-shell-html-${APP_SHELL_VERSION}`;
 const APP_SHELL_URLS = [
   '/',
   '/auth/login',
   '/principal',
   '/users',
+  '/mod-a',
+  '/mod-b',
+  '/mod-c',
+  '/mod-d',
   '/offline.html',
 ];
 const APP_SHELL_FALLBACKS = ['/principal', '/'];
@@ -170,3 +174,4 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
+
