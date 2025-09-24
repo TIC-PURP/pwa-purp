@@ -52,37 +52,17 @@ function toRole(val: any): Role {
   return val === "admin" || val === "manager" || val === "user" ? val : "user";
 }
 
-export const loadUserFromStorage = createAsyncThunk(
-  "auth/load",
-  async () => {
-    if (typeof window === "undefined") return { user: null, token: null };
-    try {
-      const raw = window.localStorage.getItem("auth");
-      if (!raw) return { user: null, token: null };
-      const parsed = JSON.parse(raw);
-      let user = parsed.user as User;
-      const token = parsed.token as string;
-      // Si hay usuario, intentar cargar su avatar desde PouchDB
-      if (user && (user.email || user.name)) {
-        try {
-          const { openDatabases, getUserAvatarBlob } = await import("@/lib/database");
-          await openDatabases();
-          const blob = await getUserAvatarBlob(user.email || user.name);
-          if (blob) {
-            // Crear un ObjectURL para la imagen del avatar
-            try {
-              const url = URL.createObjectURL(blob);
-              (user as any).avatarUrl = url;
-            } catch {}
-          }
-        } catch {}
-      }
-      return { user, token };
-    } catch {
-      return { user: null, token: null };
-    }
-  },
-);
+export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
+  if (typeof window === "undefined") return { user: null, token: null };
+  try {
+    const raw = window.localStorage.getItem("auth");
+    if (!raw) return { user: null, token: null };
+    const parsed = JSON.parse(raw);
+    return { user: parsed.user as User, token: parsed.token as string };
+  } catch {
+    return { user: null, token: null };
+  }
+});
 
 export const loginUser = createAsyncThunk<
   { user: User; token: string },
