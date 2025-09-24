@@ -1,8 +1,3 @@
-// Import augmentation script for offline-first app shell support.
-// This must be the first statement so that the augment logic is registered
-// before Workbox initializes. Do not remove this import.
-importScripts('/sw-augment.js');
-
 if (!self.define) {
   let e,
     a = {};

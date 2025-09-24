@@ -3,6 +3,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/lib/store";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
@@ -24,6 +25,9 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const cancelWatch = useRef<null | (() => void)>(null);
   const avatarUrlRef = useRef<string | null>(null);
   const warmedRef = useRef<boolean>(false);
+
+  // Router instance for dynamic prefetch in offline-first PWA
+  const router = useRouter();
 
   // Rutas a precachear tras login online para navegacion offline
   const ROUTES_TO_WARM = [
@@ -201,7 +205,18 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("online", onOnline);
   }, [isAuthenticated]);
 
-  // Avisos de Background Sync desde el Service Worker
+    // Prefetch dynamic modules when authenticated and online
+  useEffect(() => {
+    if (isAuthenticated && typeof navigator !== "undefined" && navigator.onLine) {
+      ROUTES_TO_WARM.forEach((route) => {
+        try {
+          router.prefetch(route);
+        } catch (err) {}
+      });
+    }
+  }, [isAuthenticated, router]);
+
+// Avisos de Background Sync desde el Service Worker
   useEffect(() => {
     if (typeof navigator === "undefined" || !('serviceWorker' in navigator)) return;
     const handler = (event: MessageEvent) => {
