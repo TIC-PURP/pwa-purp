@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { updateUser, saveUserAvatar, deleteUserAvatar } from "@/lib/database";
 import { setUser } from "@/lib/store/authSlice";
 import { notify } from "@/lib/notify";
@@ -33,16 +33,38 @@ export default function AccountPage() {
   const [dirty, setDirty] = useState(false);
   const [theme, setTheme] = useState<string>("light");
   const initialAvatarRef = useRef<string | null>(null);
-  const AVATAR_SIZE = 192; // tamaño final del avatar (px)
+  const AVATAR_SIZE = 192; // avatar size (px)
+
+  const syncAvatarToStore = useCallback((value: string | null) => {
+    if (!user) return;
+    const next = { ...(user as any) };
+    if (value) {
+      next.avatarUrl = value;
+    } else {
+      delete (next as any).avatarUrl;
+    }
+    dispatch(setUser(next as any));
+  }, [dispatch, user]);
+
+  const applyPreview = useCallback((value: string | null, markDirty = false) => {
+    setPreview(value);
+    if (markDirty) {
+      setDirty(true);
+    }
+    syncAvatarToStore(value);
+  }, [syncAvatarToStore]);
+
 
   useEffect(() => {
     const curr = (user as any)?.avatarUrl || null;
-    setPreview(curr);
-    initialAvatarRef.current = curr;
+    if (!dirty) {
+      setPreview(curr);
+      initialAvatarRef.current = curr;
+    }
     const stored = (typeof window !== "undefined" && window.localStorage.getItem("theme")) || "";
     const initial = stored || (document.documentElement.classList.contains("dark") ? "dark" : "light");
     setTheme(initial);
-  }, [user]);
+  }, [user, dirty]);
 
   const onFile = (file: File) => {
     const reader = new FileReader();
@@ -61,7 +83,7 @@ export default function AccountPage() {
         const ratio = w && h ? w / h : 1;
 
         const target = AVATAR_SIZE;
-        const needsCrop = ratio > 1.6 || ratio < 0.625; // panorámica o muy vertical
+        const needsCrop = ratio > 1.6 || ratio < 0.625; // panoramic or very vertical
         if (!needsCrop) {
           // Auto center-crop 1:1 y guardar preview; no abrir recortador
           const canvas = document.createElement("canvas");
@@ -77,8 +99,7 @@ export default function AccountPage() {
             let dataUrl = "";
             try { dataUrl = canvas.toDataURL("image/webp", 0.8); if (!dataUrl.startsWith("data:image/webp")) throw new Error(); }
             catch { dataUrl = canvas.toDataURL("image/jpeg", 0.85); }
-            setPreview(dataUrl);
-            setDirty(true);
+            applyPreview(dataUrl, true);
           } else {
             // Fallback: abrir recortador si no hay contexto canvas
             setRawImage(src);
@@ -101,7 +122,7 @@ export default function AccountPage() {
           setCropOpen(true);
         }
       } catch {
-        // Si falla la carga, abrir recortador como último recurso
+        // If loading fails, open the cropper as a fallback
         setRawImage(src);
         setScale(1);
         setOffset({ x: 0, y: 0 });
@@ -118,7 +139,7 @@ export default function AccountPage() {
     setRawImage(imgSrc);
     setScale(1);
     setOffset({ x: 0, y: 0 });
-    // cerrar overlay con animación y abrir recorte luego
+    // Close overlay with animation and open the cropper afterward
     setAvatarActionsOpen(false);
     setAvatarPickerOpen(false);
     setTimeout(() => setCropOpen(true), 200);
@@ -162,8 +183,7 @@ export default function AccountPage() {
     } else {
       dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     }
-    setPreview(dataUrl);
-    setDirty(true);
+    applyPreview(dataUrl, true);
     setCropOpen(false);
     setAvatarPickerOpen(false);
   };
@@ -172,12 +192,14 @@ export default function AccountPage() {
     if (!user) return;
     try {
       await deleteUserAvatar(user.email || user.name);
-      try { (window as any).__avatarUrl && URL.revokeObjectURL((window as any).__avatarUrl); } catch {}
-      const updated = { ...(user as any) };
-      delete (updated as any).avatarUrl;
+      try {
+        if ((window as any).__avatarUrl) {
+          URL.revokeObjectURL((window as any).__avatarUrl);
+        }
+      } catch {}
       try { await updateUser({ ...user, hasAvatar: false }); } catch {}
-      dispatch(setUser(updated as any));
-      setPreview(null);
+      applyPreview(null);
+      (window as any).__avatarUrl = null;
       setAvatarPickerOpen(false);
       setAvatarActionsOpen(false);
       setDirty(false);
@@ -186,6 +208,7 @@ export default function AccountPage() {
       notify.error("No se pudo eliminar el avatar");
     }
   };
+
 
   const onDragStart = (e: React.MouseEvent | React.TouchEvent) => {
     const p = 'touches' in e ? e.touches[0] : (e as any);
@@ -204,16 +227,18 @@ export default function AccountPage() {
     if (!user) return;
     setIsSaving(true);
     try {
-      // Guardar avatar como attachment (local-first y best-effort remoto)
       if (preview) {
-        const blob = await fetch(preview).then(r => r.blob());
+        const blob = await fetch(preview).then((r) => r.blob());
         await saveUserAvatar(user.email || user.name, blob, blob.type || "image/jpeg");
-        // Actualizar store con ObjectURL fresco
-        try { (window as any).__avatarUrl && URL.revokeObjectURL((window as any).__avatarUrl); } catch {}
-        (user as any).avatarUrl = URL.createObjectURL(blob);
-        // Persistir doc (sin avatarUrl) para updatedAt/hasAvatar coherentes
+        try {
+          if ((window as any).__avatarUrl) {
+            URL.revokeObjectURL((window as any).__avatarUrl);
+          }
+        } catch {}
+        const nextAvatarUrl = URL.createObjectURL(blob);
+        (window as any).__avatarUrl = nextAvatarUrl;
         try { await updateUser({ ...user, hasAvatar: true }); } catch {}
-        dispatch(setUser({ ...(user as any), avatarUrl: (user as any).avatarUrl } as any));
+        applyPreview(nextAvatarUrl);
         notify.success("Perfil actualizado");
       }
       setDirty(false);
@@ -224,11 +249,11 @@ export default function AccountPage() {
     }
   };
 
-  // Guardado automático cuando cambia la foto y hay cambios
+  // Auto save when the photo changes
   useEffect(() => {
     if (!dirty) return;
     if (preview === initialAvatarRef.current) return;
-    // Debounce ligero para evitar múltiples llamadas
+    // Light debounce to avoid repeated saves
     const t = setTimeout(() => { handleSave().catch(() => {}); }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -329,7 +354,7 @@ export default function AccountPage() {
                 </div>
               </section>
 
-              {/* Guardado automático; sin botón de guardar */}
+              {/* Auto save enabled; no manual save button */}
             </CardContent>
           </Card>
           {cropOpen && rawImage && (
@@ -403,7 +428,7 @@ export default function AccountPage() {
                     </span>
                   )}
                 </div>
-                {/* Botón cerrar */}
+                {/* Close button */}
                 <button
                   type="button"
                   aria-label="Cerrar"
@@ -442,7 +467,7 @@ export default function AccountPage() {
                         </button>
                         <button
                           type="button"
-                          title="Cambiar desde galería"
+                          title="Cambiar desde galeria"
                           className="h-10 w-10 rounded-full bg-background/90 backdrop-blur border border-border flex items-center justify-center shadow hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           onClick={() => fileRefGallery.current?.click()}
                         >
@@ -463,7 +488,7 @@ export default function AccountPage() {
                   <div className="absolute bottom-4 inset-x-0 flex justify-center gap-3">
                     <button
                       type="button"
-                      title="Elegir de galería"
+                      title="Elegir de galeria"
                       className="h-10 w-10 rounded-full bg-background/90 backdrop-blur border border-border flex items-center justify-center shadow hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => fileRefGallery.current?.click()}
                     >
@@ -487,10 +512,3 @@ export default function AccountPage() {
     </RouteGuard>
   );
 }
-
-
-
-
-
-
-
