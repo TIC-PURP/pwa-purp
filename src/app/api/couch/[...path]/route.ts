@@ -1,4 +1,5 @@
 // Proxy que redirige las peticiones hacia CouchDB manteniendo cookies y headers
+import { Buffer } from "node:buffer";
 import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,10 +21,10 @@ async function proxy(req: NextRequest, path: string[]) {
       if (lower === "host" || lower === "connection" || lower === "content-length") {
         return;
       }
-      headers.set(key, value);
+      headers.append(key, value);
     });
 
-    const cookieHeader = headers.get("cookie");
+    const cookieHeader = headers.get("cookie") || "";
     if (!headers.has("accept")) {
       headers.set("accept", "application/json");
     }
@@ -33,11 +34,11 @@ async function proxy(req: NextRequest, path: string[]) {
 
     const redact = (val?: string | null) => {
       const s = (val || "").toString();
-      return s.replace(/(AuthSession=)([^;]+)/gi, (_m, p1, p2) => {
-        if (!p2) return p1 + "<empty>";
-        const head = p2.slice(0, 6);
-        const tail = p2.slice(-4);
-        return `${p1}${head}***${tail}`;
+      return s.replace(/(AuthSession=)([^;]+)/gi, (_match, prefix, raw) => {
+        if (!raw) return prefix + "<empty>";
+        const head = raw.slice(0, 6);
+        const tail = raw.slice(-4);
+        return `${prefix}${head}***${tail}`;
       });
     };
 
@@ -57,33 +58,52 @@ async function proxy(req: NextRequest, path: string[]) {
       const contentType = headers.get("content-type") || "";
       const isTextBody = /^(?:text\/|application\/(?:json|.*\+json|x-www-form-urlencoded))/i.test(contentType);
       if (isTextBody) {
-        body = await req.text();
+        const text = await req.text();
+        body = text;
+        headers.set("content-length", String(Buffer.byteLength(text)));
       } else {
-        const buffer = await req.arrayBuffer();
-        body = buffer;
-        if (buffer.byteLength && !headers.has("content-length")) {
-          headers.set("content-length", String(buffer.byteLength));
-        }
+        const arrayBuffer = await req.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        body = new Uint8Array(buffer);
+        headers.set("content-length", String(buffer.byteLength));
       }
     }
 
-    const res = await fetch(target, {
+    const fetchInit: RequestInit = {
       method,
       headers,
-      body,
       redirect: "manual",
-    });
+    };
+    if (hasBody && body !== undefined) {
+      // @ts-ignore: duplex is required by undici when streaming PUT/POST bodies
+      fetchInit.duplex = "half";
+      fetchInit.body = body;
+    }
+
+    const res = await fetch(target, fetchInit);
 
     const nextRes = new NextResponse(res.body, {
       status: res.status,
       statusText: res.statusText,
     });
 
-    const setCookie = res.headers.get("set-cookie");
-    if (setCookie) nextRes.headers.set("set-cookie", setCookie);
-    console.log("[couch-proxy] <-", res.status, res.statusText, "set-cookie:", redact(setCookie));
-    const resCT = res.headers.get("content-type");
-    if (resCT) nextRes.headers.set("content-type", resCT);
+    const setCookieHeader = (res.headers as any).getSetCookie?.();
+    if (setCookieHeader && Array.isArray(setCookieHeader)) {
+      for (const value of setCookieHeader) {
+        nextRes.headers.append("set-cookie", value);
+      }
+    } else {
+      const single = res.headers.get("set-cookie");
+      if (single) nextRes.headers.set("set-cookie", single);
+    }
+
+    const passThroughHeaders = ["content-type", "content-length", "etag", "cache-control", "www-authenticate"];
+    for (const headerName of passThroughHeaders) {
+      const value = res.headers.get(headerName);
+      if (value) {
+        nextRes.headers.set(headerName, value);
+      }
+    }
     nextRes.headers.set("Cache-Control", "no-store");
     return nextRes;
   } catch (e: any) {
@@ -94,7 +114,6 @@ async function proxy(req: NextRequest, path: string[]) {
     );
   }
 }
-
 
 // Metodos HTTP soportados, todos usan la funcion proxy
 export function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
@@ -112,4 +131,3 @@ export function DELETE(req: NextRequest, { params }: { params: { path: string[] 
 export function PATCH(req: NextRequest, { params }: { params: { path: string[] } }) {
   return proxy(req, params.path);
 }
-

@@ -355,26 +355,56 @@ export async function guardarUsuarioOffline(user: any) {
 
   const key = slug(user.email || user.name || user.id || "");
   const _id = `user:${key}`;
-  const toSave = {
+  const baseDoc = {
     ...buildUserDocFromData(user),
     _id,
     id: `user_${key}`,
     updatedAt: new Date().toISOString(),
   };
 
+  let existing: any = null;
   try {
-    const existing = await localDB.get(_id);
-    toSave._rev = existing._rev;
-    await localDB.put(toSave);
+    existing = await localDB.get(_id);
   } catch (err: any) {
-    if (err?.status === 404) {
-      await localDB.put(toSave);
-    } else {
+    if (err?.status && err.status !== 404) {
       console.error("guardarUsuarioOffline", err);
       throw err;
     }
   }
+
+  let toSave: any;
+  if (existing) {
+    toSave = {
+      ...existing,
+      ...baseDoc,
+      _id,
+      id: `user_${key}`,
+    };
+    toSave.createdAt = existing.createdAt || baseDoc.createdAt;
+    if (!Object.prototype.hasOwnProperty.call(baseDoc, "hasAvatar") && existing.hasAvatar !== undefined) {
+      toSave.hasAvatar = existing.hasAvatar;
+    }
+    if (existing._attachments && !Object.prototype.hasOwnProperty.call(baseDoc, "_attachments")) {
+      toSave._attachments = existing._attachments;
+    }
+    if (existing._rev) {
+      toSave._rev = existing._rev;
+    }
+  } else {
+    toSave = { ...baseDoc };
+  }
+
+  delete toSave.avatarUrl;
+  const sanitized = sanitizeForCouch(toSave);
+
+  try {
+    await safeLocalPut(sanitized);
+  } catch (error) {
+    console.error("guardarUsuarioOffline", error);
+    throw error;
+  }
 }
+
 
 
 /* ============================
