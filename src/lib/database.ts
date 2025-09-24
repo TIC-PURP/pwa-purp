@@ -355,56 +355,26 @@ export async function guardarUsuarioOffline(user: any) {
 
   const key = slug(user.email || user.name || user.id || "");
   const _id = `user:${key}`;
-  const baseDoc = {
+  const toSave = {
     ...buildUserDocFromData(user),
     _id,
     id: `user_${key}`,
     updatedAt: new Date().toISOString(),
   };
 
-  let existing: any = null;
   try {
-    existing = await localDB.get(_id);
+    const existing = await localDB.get(_id);
+    toSave._rev = existing._rev;
+    await localDB.put(toSave);
   } catch (err: any) {
-    if (err?.status && err.status !== 404) {
+    if (err?.status === 404) {
+      await localDB.put(toSave);
+    } else {
       console.error("guardarUsuarioOffline", err);
       throw err;
     }
   }
-
-  let toSave: any;
-  if (existing) {
-    toSave = {
-      ...existing,
-      ...baseDoc,
-      _id,
-      id: `user_${key}`,
-    };
-    toSave.createdAt = existing.createdAt || baseDoc.createdAt;
-    if (!Object.prototype.hasOwnProperty.call(baseDoc, "hasAvatar") && existing.hasAvatar !== undefined) {
-      toSave.hasAvatar = existing.hasAvatar;
-    }
-    if (existing._attachments && !Object.prototype.hasOwnProperty.call(baseDoc, "_attachments")) {
-      toSave._attachments = existing._attachments;
-    }
-    if (existing._rev) {
-      toSave._rev = existing._rev;
-    }
-  } else {
-    toSave = { ...baseDoc };
-  }
-
-  delete toSave.avatarUrl;
-  const sanitized = sanitizeForCouch(toSave);
-
-  try {
-    await safeLocalPut(sanitized);
-  } catch (error) {
-    console.error("guardarUsuarioOffline", error);
-    throw error;
-  }
 }
-
 
 
 /* ============================
@@ -1234,93 +1204,30 @@ function rid(len = 6) {
   return s;
 }
 
-function ensureCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("canvas-ctx-unavailable");
-  }
-  // @ts-ignore older browsers may not type this property
-  ctx.imageSmoothingQuality = "high";
-  return { canvas, ctx };
-}
-
-async function loadImageFromBlob(input: Blob): Promise<HTMLImageElement> {
+/** Redimensiona a un maxSide px y devuelve Blob webp/jpeg según soporte */
+async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image/jpeg"="image/jpeg", quality = 0.85): Promise<Blob> {
   const url = URL.createObjectURL(input);
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image();
-      element.onload = () => resolve(element);
-      element.onerror = reject;
-      element.src = url;
-    });
-    return img;
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const ratio = Math.min(1, maxSide / Math.max(w, h));
+    const cw = Math.round(w * ratio);
+    const ch = Math.round(h * ratio);
+    const canvas = document.createElement("canvas");
+    canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no-2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, cw, ch);
+    const mime = as;
+    const dataUrl = canvas.toDataURL(mime, quality);
+    const blob = await (await fetch(dataUrl)).blob();
+    return blob;
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-async function canvasToBlobSafe(
-  canvas: HTMLCanvasElement,
-  preferredType: string,
-  fallbackType: string,
-  quality: number,
-): Promise<Blob> {
-  const toBlob = (type: string) => new Promise<Blob | null>((resolve) => {
-    try {
-      if (canvas.toBlob) {
-        canvas.toBlob((blob) => resolve(blob), type, quality);
-      } else {
-        resolve(null);
-      }
-    } catch {
-      resolve(null);
-    }
-  });
-
-  let blob = await toBlob(preferredType);
-  if (!blob && fallbackType && fallbackType !== preferredType) {
-    blob = await toBlob(fallbackType);
-  }
-  if (blob) return blob;
-
-  const mime = fallbackType || preferredType || "image/jpeg";
-  const dataUrl = canvas.toDataURL(mime, quality);
-  const fetched = await fetch(dataUrl);
-  return await fetched.blob();
-}
-
-async function createPhotoVariants(file: Blob): Promise<{ thumb: Blob; original: Blob }> {
-  if (typeof document === "undefined") {
-    throw new Error("no-dom");
-  }
-  const img = await loadImageFromBlob(file);
-  const width = img.naturalWidth || img.width || 1;
-  const height = img.naturalHeight || img.height || 1;
-
-  const renderVariant = async (
-    maxSide: number,
-    preferredType: string,
-    fallbackType: string,
-    quality: number,
-  ) => {
-    const ratio = Math.min(1, maxSide / Math.max(width, height));
-    const targetW = Math.max(1, Math.round(width * ratio));
-    const targetH = Math.max(1, Math.round(height * ratio));
-    const { canvas, ctx } = ensureCanvas();
-    canvas.width = targetW;
-    canvas.height = targetH;
-    ctx.clearRect(0, 0, targetW, targetH);
-    ctx.drawImage(img, 0, 0, targetW, targetH);
-    return await canvasToBlobSafe(canvas, preferredType, fallbackType, quality);
-  };
-
-  const [original, thumb] = await Promise.all([
-    renderVariant(1600, "image/jpeg", "image/jpeg", 0.9),
-    renderVariant(320, "image/webp", "image/jpeg", 0.75),
-  ]);
-
-  return { original, thumb };
 }
 
 /** Guarda una foto con attachments (original + thumb) en PouchDB (replica a CouchDB) */
@@ -1335,115 +1242,71 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     type: "photo",
     owner: meta.owner,
     createdAt: nowIso,
-    lat: meta.lat,
-    lng: meta.lng,
-    tags: meta.tags || [],
+    lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
     hasOriginal: true,
     hasThumb: true,
     updatedAt: nowIso,
   };
-
-  try {
-    await (localDB as any).put(sanitizeForCouch(doc));
-  } catch (e: any) {
+  // 1) Crear doc base
+  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
     if (e?.status === 409) {
       const existing = await (localDB as any).get(id);
       await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
-    } else {
-      throw e;
-    }
+    } else { throw e; }
   }
 
-  const { thumb, original } = await createPhotoVariants(file);
-
+  // 2) Adjuntar thumb (320px webp)
+  const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
   let latest = await (localDB as any).get(id);
-  await (localDB as any).putAttachment(
-    id,
-    "thumb.webp",
-    latest._rev,
-    thumb,
-    thumb.type || "image/webp",
-  );
+  await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
 
+  // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
+  const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
   latest = await (localDB as any).get(id);
-  await (localDB as any).putAttachment(
-    id,
-    "original.jpg",
-    latest._rev,
-    original,
-    original.type || "image/jpeg",
-  );
+  await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
 
+  // 4) Update metadata
   latest = await (localDB as any).get(id);
   latest.updatedAt = new Date().toISOString();
-  latest.hasOriginal = true;
-  latest.hasThumb = true;
   await (localDB as any).put(sanitizeForCouch(latest));
 
-  const finalDoc = await (localDB as any).get(id);
-
-  const pushRemote = async () => {
-    try {
-      if (!remoteDB) {
-        try { await startSync(); } catch {}
-        return;
-      }
-
+  // Best-effort: subir attachments y metadata al remoto.  
+  // Siempre intentamos la operación si existe remoteDB; si no, los adjuntos se 
+  // sincronizarán automáticamente cuando startSync() esté activo.  
+  try {
+    const canRemote = !!remoteDB;
+    if (canRemote) {
       let rdoc: any = null;
       try { rdoc = await remoteDB.get(id); } catch {}
-
+      // Si no existe el doc remoto, crearlo con la metadata actual
       if (!rdoc) {
         try {
-          const base = sanitizeForCouch(finalDoc);
-          delete base._attachments;
-          const putRes = await remoteDB.put(base);
-          rdoc = { ...base, _rev: putRes.rev };
-        } catch (error) {
-          console.warn("[database] remote photo doc create failed", (error as any)?.message || error);
-        }
-      }
-
-      if (!rdoc) {
-        try { await startSync(); } catch {}
-        return;
-      }
-
-      try {
-        let rev = rdoc._rev;
-        const thumbRes = await remoteDB.putAttachment(
-          id,
-          "thumb.webp",
-          rev,
-          thumb,
-          thumb.type || "image/webp",
-        );
-        rev = thumbRes.rev;
-        const originalRes = await remoteDB.putAttachment(
-          id,
-          "original.jpg",
-          rev,
-          original,
-          original.type || "image/jpeg",
-        );
-        rev = originalRes.rev;
-        try {
-          const rlatest = await remoteDB.get(id);
-          rlatest.hasOriginal = true;
-          rlatest.hasThumb = true;
-          rlatest.updatedAt = new Date().toISOString();
-          await remoteDB.put(sanitizeForCouch(rlatest));
+          const base = sanitizeForCouch(latest);
+          const put = await remoteDB.put(base);
+          rdoc = { ...base, _rev: put.rev };
         } catch {}
-      } catch (error) {
-        console.warn("[database] remote photo attachment failed", (error as any)?.message || error);
       }
-
-      try { await startSync(); } catch {}
-    } catch (error) {
-      console.warn("[database] remote photo sync error", (error as any)?.message || error);
+      if (rdoc) {
+        // Subir thumb y original, manejando las revisiones
+        try {
+          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
+          rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
+          // Actualizar flags y updatedAt en remoto
+          try {
+            const rlatest = await remoteDB.get(id);
+            rlatest.hasOriginal = true;
+            rlatest.hasThumb = true;
+            rlatest.updatedAt = new Date().toISOString();
+            await remoteDB.put(sanitizeForCouch(rlatest));
+          } catch {}
+        } catch {}
+      }
     }
-  };
-
-  void pushRemote();
+    // Siempre iniciar replicación para asegurar que los adjuntos lleguen al remoto
+    try {
+      await startSync();
+    } catch {}
+  } catch {}
 
   return { ok: true, _id: id };
 }
