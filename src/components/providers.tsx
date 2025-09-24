@@ -166,12 +166,19 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             const { getUserAvatarBlob } = await import("@/lib/database");
             const blob = await getUserAvatarBlob(updated.email || user.email);
             if (blob) {
+              // Si hay un avatar disponible como blob, crear un nuevo ObjectURL
               try {
                 if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current);
                 const url = URL.createObjectURL(blob);
                 (updated as any).avatarUrl = url;
                 avatarUrlRef.current = url;
               } catch {}
+            } else {
+              // Si no se obtuvo blob, conservar la URL previa del avatar, si existe
+              const prev = (user as any)?.avatarUrl || (updated as any)?.avatarUrl;
+              if (prev) {
+                (updated as any).avatarUrl = prev;
+              }
             }
           } catch {}
           // Guardar doc sin avatarUrl para no inflar el documento
