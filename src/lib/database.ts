@@ -827,6 +827,11 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
 
   const toLocal = sanitizeForCouch(updated);
   await safeLocalPut(toLocal);
+  // After saving locally, start replication to push updates to CouchDB.
+  // We ignore errors here because the replicator may already be running
+  try {
+    await startSync();
+  } catch {}
   return { ...toLocal, ___writePath: "local" } as any;
 }
 /** Borrado logico - LOCAL FIRST */

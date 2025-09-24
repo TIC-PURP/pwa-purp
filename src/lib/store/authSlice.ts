@@ -53,36 +53,12 @@ function toRole(val: any): Role {
 }
 
 export const loadUserFromStorage = createAsyncThunk("auth/load", async () => {
-  // Recuperar usuario y token de localStorage, e intentar cargar su avatar desde PouchDB
   if (typeof window === "undefined") return { user: null, token: null };
   try {
     const raw = window.localStorage.getItem("auth");
     if (!raw) return { user: null, token: null };
     const parsed = JSON.parse(raw);
-    let user = parsed.user as User;
-    const token = parsed.token as string;
-    // Si hay usuario, intentar abrir las bases y cargar el avatar (attachment)
-    if (user && user.email) {
-      try {
-        const db = await import("../database");
-        if (typeof db.openDatabases === "function") {
-          await db.openDatabases();
-        }
-        if (typeof db.getUserAvatarBlob === "function") {
-          const blob = await db.getUserAvatarBlob(user.email);
-          if (blob) {
-            try {
-              const url = URL.createObjectURL(blob);
-              // Adjuntar avatarUrl al usuario; la interfaz revocará el URL cuando corresponda
-              (user as any) = { ...user, avatarUrl: url };
-            } catch {}
-          }
-        }
-      } catch {
-        // Ignorar errores al cargar avatar; seguiremos con usuario sin avatar
-      }
-    }
-    return { user, token };
+    return { user: parsed.user as User, token: parsed.token as string };
   } catch {
     return { user: null, token: null };
   }
