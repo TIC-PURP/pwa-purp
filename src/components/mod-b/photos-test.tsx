@@ -1,18 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { listPhotos, savePhoto, getPhotoThumbUrl, deletePhoto } from "@/lib/database";
+import { useAppSelector } from "@/lib/hooks";
 
 export function PhotosTest() {
   const [photos, setPhotos] = useState<any[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
 
+  const { user } = useAppSelector((s) => s.auth);
+  const ownerId = useMemo(() => user?._id || user?.id || "", [user]);
+  const moduleId = "MOD_B";
+
   const camRef = useRef<HTMLInputElement | null>(null);
   const galRef = useRef<HTMLInputElement | null>(null);
 
-  const refresh = async () => {
-    const list = await listPhotos({});
+  const refresh = useCallback(async () => {
+    if (!ownerId) return;
+    const list = await listPhotos({ owner: ownerId, module: moduleId });
     setPhotos(list);
     const map: Record<string, string> = {};
     for (const p of list) {
@@ -21,15 +27,15 @@ export function PhotosTest() {
       } catch {}
     }
     setUrls(map);
-  };
+  }, [moduleId, ownerId]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const onPick = async (f?: File | null) => {
     if (!f) return;
-    await savePhoto(f, {});
+    await savePhoto(f, { owner: ownerId, module: moduleId });
     await refresh();
   };
 
@@ -56,8 +62,12 @@ export function PhotosTest() {
           className="hidden"
           onChange={(e) => onPick(e.target.files?.[0] ?? null)}
         />
-        <Button onClick={() => camRef.current?.click()}>Tomar foto</Button>
-        <Button variant="secondary" onClick={() => galRef.current?.click()}>Subir desde galeria</Button>
+        <Button onClick={() => camRef.current?.click()} disabled={!ownerId}>
+          Tomar foto
+        </Button>
+        <Button variant="secondary" onClick={() => galRef.current?.click()} disabled={!ownerId}>
+          Subir desde galeria
+        </Button>
       </div>
       <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
         {photos.map((p) => (

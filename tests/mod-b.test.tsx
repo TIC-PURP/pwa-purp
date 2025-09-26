@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PhotosTest } from "@/components/mod-b/photos-test";
 import { deletePhoto, getPhotoThumbUrl, listPhotos, savePhoto } from "@/lib/database";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
+import authReducer from "@/lib/store/authSlice";
 
 jest.mock("@/lib/database", () => ({
   listPhotos: jest.fn(),
@@ -14,6 +17,39 @@ const mockSavePhoto = savePhoto as jest.MockedFunction<typeof savePhoto>;
 const mockGetPhotoThumbUrl = getPhotoThumbUrl as jest.MockedFunction<typeof getPhotoThumbUrl>;
 const mockDeletePhoto = deletePhoto as jest.MockedFunction<typeof deletePhoto>;
 
+const renderWithUser = () => {
+  const store = configureStore({
+    reducer: { auth: authReducer },
+    preloadedState: {
+      auth: {
+        user: {
+          _id: "user:demo",
+          id: "user_demo",
+          name: "Demo",
+          email: "demo@example.com",
+          password: "secret",
+          role: "user",
+          permissions: [],
+          modulePermissions: { MOD_A: "NONE", MOD_B: "FULL", MOD_C: "NONE", MOD_D: "NONE" },
+          isActive: true,
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+        token: "token",
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      },
+    },
+  });
+
+  return render(
+    <Provider store={store}>
+      <PhotosTest />
+    </Provider>,
+  );
+};
+
 describe("PhotosTest", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -25,10 +61,10 @@ describe("PhotosTest", () => {
     ]);
     mockGetPhotoThumbUrl.mockResolvedValueOnce("blob:photo-1");
 
-    render(<PhotosTest />);
+    renderWithUser();
 
     expect(await screen.findByAltText("photo-1")).toBeInTheDocument();
-    expect(mockListPhotos).toHaveBeenCalledTimes(1);
+    expect(mockListPhotos).toHaveBeenCalledWith({ owner: "user:demo", module: "MOD_B" });
     expect(mockGetPhotoThumbUrl).toHaveBeenCalledWith("photo-1");
   });
 
@@ -40,7 +76,7 @@ describe("PhotosTest", () => {
     mockGetPhotoThumbUrl.mockResolvedValueOnce("blob:photo-new");
     mockSavePhoto.mockResolvedValue({ ok: true, _id: "photo-new" } as any);
 
-    const { container } = render(<PhotosTest />);
+    const { container } = renderWithUser();
 
     await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(1));
 
@@ -49,7 +85,9 @@ describe("PhotosTest", () => {
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    await waitFor(() => expect(mockSavePhoto).toHaveBeenCalledWith(file, {}));
+    await waitFor(() =>
+      expect(mockSavePhoto).toHaveBeenCalledWith(file, { owner: "user:demo", module: "MOD_B" }),
+    );
     await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(2));
     expect(await screen.findByAltText("photo-new")).toBeInTheDocument();
   });
@@ -62,7 +100,7 @@ describe("PhotosTest", () => {
     mockGetPhotoThumbUrl.mockResolvedValueOnce("blob:photo-delete");
     mockDeletePhoto.mockResolvedValue({ ok: true } as any);
 
-    render(<PhotosTest />);
+    renderWithUser();
 
     const deleteButton = await screen.findByRole("button", { name: /eliminar/i });
 
