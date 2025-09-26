@@ -6,6 +6,7 @@ const isClient = typeof window !== "undefined";
 let PouchDB: any = null;
 let localDB: any = null;
 let remoteDB: any = null;
+let remoteUsersDB: any = null;
 let syncHandler: any = null;
 
 export type CouchEnv = {
@@ -72,6 +73,108 @@ async function ensurePouch() {
   PouchDB.plugin(find);
 }
 
+async function ensureRemoteUsersDB() {
+  if (!isClient) return null;
+  await ensurePouch();
+  if (remoteUsersDB) return remoteUsersDB;
+  const remoteBase = getRemoteBase();
+  remoteUsersDB = new PouchDB(`${remoteBase}/_users`, {
+    skip_setup: true,
+    fetch: (url: RequestInfo, opts: any = {}) => {
+      opts = opts || {};
+      opts.credentials = "include";
+      return (window as any).fetch(url as any, opts);
+    },
+    ajax: { withCredentials: true },
+  });
+  return remoteUsersDB;
+}
+
+async function createSquareThumbnail(blob: Blob, size = 64): Promise<Blob | null> {
+  if (!isClient) return null;
+  try {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = url;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      // @ts-ignore
+      ctx.imageSmoothingQuality = "high";
+      const ratio = Math.max(size / img.width, size / img.height);
+      const dw = img.width * ratio;
+      const dh = img.height * ratio;
+      const dx = (size - dw) / 2;
+      const dy = (size - dh) / 2;
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, dx, dy, dw, dh);
+      let dataUrl = "";
+      try {
+        dataUrl = canvas.toDataURL("image/webp", 0.8);
+        if (!dataUrl.startsWith("data:image/webp")) throw new Error("webp unsupported");
+      } catch {
+        dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+      }
+      const response = await fetch(dataUrl);
+      return await response.blob();
+    } finally {
+      try { URL.revokeObjectURL(url); } catch {}
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function putAttachmentWithRetry(
+  db: any,
+  docId: string,
+  attachmentId: string,
+  rev: string,
+  data: Blob,
+  type: string,
+) {
+  try {
+    const res = await db.putAttachment(docId, attachmentId, rev, data, type);
+    return res.rev;
+  } catch (err: any) {
+    if (err?.status === 409) {
+      const latest = await db.get(docId);
+      const res = await db.putAttachment(docId, attachmentId, latest._rev, data, type);
+      return res.rev;
+    }
+    throw err;
+  }
+}
+
+async function removeAttachmentWithRetry(
+  db: any,
+  docId: string,
+  attachmentId: string,
+  rev: string,
+) {
+  try {
+    const res = await db.removeAttachment(docId, attachmentId, rev);
+    return res.rev;
+  } catch (err: any) {
+    if (err?.status === 409) {
+      const latest = await db.get(docId);
+      const res = await db.removeAttachment(docId, attachmentId, latest._rev);
+      return res.rev;
+    }
+    if (err?.status === 404) {
+      return rev;
+    }
+    throw err;
+  }
+}
+
 /** Helpers de IDs / normalizacion */
 function slug(s: string) {
   return (s || "")
@@ -84,6 +187,11 @@ function toUserDocId(input: string) {
   if (input.includes(":")) return input;           // user:xxx
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
   return `user:${slug(input)}`;                    // email o username
+}
+function toUsersDbDocId(input: string) {
+  const raw = (input || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("org.couchdb.user:") ? raw : `org.couchdb.user:${raw}`;
 }
 const MODULE_PERMISSION_DEFAULTS = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
 
@@ -989,31 +1097,21 @@ export async function saveUserAvatar(
   }
   // putAttachment local-first
   const res = await localDB.putAttachment(_id, "avatar", doc._rev, blob, contentType);
-  // tambien miniatura 64x64
-  try {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
-    URL.revokeObjectURL(url);
-    const size = 64;
-    const canvas = document.createElement("canvas");
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      // @ts-ignore
-      ctx.imageSmoothingQuality = "high";
-      const r = Math.max(size / img.width, size / img.height);
-      const dw = img.width * r, dh = img.height * r;
-      const dx = (size - dw) / 2, dy = (size - dh) / 2;
-      ctx.drawImage(img, dx, dy, dw, dh);
-      let d = "";
-      try { d = canvas.toDataURL("image/webp", 0.8); if (!d.startsWith("data:image/webp")) throw new Error(); }
-      catch { d = canvas.toDataURL("image/jpeg", 0.8); }
-      const thumb = await (await fetch(d)).blob();
-      const latest0 = await localDB.get(_id);
-      await localDB.putAttachment(_id, "avatar_64", latest0._rev, thumb, thumb.type || "image/jpeg");
+  const thumbBlob = await createSquareThumbnail(blob);
+  if (thumbBlob) {
+    try {
+      await putAttachmentWithRetry(
+        localDB,
+        _id,
+        "avatar_64",
+        res?.rev || doc._rev,
+        thumbBlob,
+        thumbBlob.type || "image/jpeg",
+      );
+    } catch (err) {
+      console.warn("[avatar] local thumb save failed", err);
     }
-  } catch {}
+  }
   // marcar bandera y updatedAt
   const latest = await localDB.get(_id);
   latest.hasAvatar = true;
@@ -1030,37 +1128,61 @@ export async function saveUserAvatar(
         const put = await remoteDB.put(base);
         rdoc = { ...base, _rev: put.rev };
       }
-      const r = await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
-      // tambien miniatura remota
-      try {
-        const size = 64;
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
-        URL.revokeObjectURL(url);
-        const canvas = document.createElement("canvas");
-        canvas.width = size; canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          // @ts-ignore
-          ctx.imageSmoothingQuality = "high";
-          const r2 = Math.max(size / img.width, size / img.height);
-          const dw2 = img.width * r2, dh2 = img.height * r2;
-          const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
-          ctx.drawImage(img, dx2, dy2, dw2, dh2);
-          let d2 = "";
-          try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
-          catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
-          const thumb2 = await (await fetch(d2)).blob();
-          const rlatest0 = await remoteDB.get(_id);
-          await remoteDB.putAttachment(_id, "avatar_64", rlatest0._rev, thumb2, thumb2.type || "image/jpeg");
+      let remoteRev = await putAttachmentWithRetry(remoteDB, _id, "avatar", rdoc._rev, blob, contentType);
+      if (thumbBlob) {
+        try {
+          remoteRev = await putAttachmentWithRetry(
+            remoteDB,
+            _id,
+            "avatar_64",
+            remoteRev,
+            thumbBlob,
+            thumbBlob.type || "image/jpeg",
+          );
+        } catch (err) {
+          console.warn("[avatar] remote thumb save failed", err);
         }
-      } catch {}
+      }
       // actualizar doc remoto con bandera por coherencia
       const rlatest = await remoteDB.get(_id);
       rlatest.hasAvatar = true;
       rlatest.updatedAt = new Date().toISOString();
       await remoteDB.put(sanitizeForCouch(rlatest));
+    }
+    // Guardar en _users (best-effort)
+    try {
+      const usersDb = await ensureRemoteUsersDB();
+      const authId = toUsersDbDocId(email);
+      if (usersDb && authId) {
+        const authDoc = await usersDb.get(authId).catch(() => null);
+        if (authDoc) {
+          let authRev = await putAttachmentWithRetry(usersDb, authId, "avatar.png", authDoc._rev, blob, contentType);
+          if (thumbBlob) {
+            try {
+              authRev = await putAttachmentWithRetry(
+                usersDb,
+                authId,
+                "avatar_64",
+                authRev,
+                thumbBlob,
+                thumbBlob.type || "image/jpeg",
+              );
+            } catch (err) {
+              console.warn("[avatar] _users thumb save failed", err);
+            }
+          }
+          try {
+            const latestAuth = await usersDb.get(authId);
+            latestAuth.hasAvatar = true;
+            latestAuth.avatarUpdatedAt = new Date().toISOString();
+            await usersDb.put(latestAuth);
+          } catch (err) {
+            console.warn("[avatar] _users doc update failed", err);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[avatar] remote _users upload deferred", err);
     }
     // Iniciar replicación para asegurar que los adjuntos lleguen al remoto
     try {
@@ -1077,8 +1199,8 @@ export async function deleteUserAvatar(email: string) {
   const _id = toUserDocId(email);
   try {
     let rev = (await localDB.get(_id))._rev;
-    try { const r1 = await localDB.removeAttachment(_id, "avatar", rev); rev = r1.rev; } catch {}
-    try { const r2 = await localDB.removeAttachment(_id, "avatar_64", rev); rev = r2.rev; } catch {}
+    try { rev = await removeAttachmentWithRetry(localDB, _id, "avatar", rev); } catch {}
+    try { rev = await removeAttachmentWithRetry(localDB, _id, "avatar_64", rev); } catch {}
     const latest = await localDB.get(_id);
     latest.hasAvatar = false;
     latest.updatedAt = new Date().toISOString();
@@ -1090,21 +1212,46 @@ export async function deleteUserAvatar(email: string) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (rdoc) {
         let rrev = rdoc._rev;
-        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", rrev); rrev = rr1.rev; } catch {}
-        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", rrev); rrev = rr2.rev; } catch {}
+        try { rrev = await removeAttachmentWithRetry(remoteDB, _id, "avatar", rrev); } catch {}
+        try { rrev = await removeAttachmentWithRetry(remoteDB, _id, "avatar_64", rrev); } catch {}
         const rlatest = await remoteDB.get(_id);
         rlatest.hasAvatar = false;
         rlatest.updatedAt = new Date().toISOString();
         await remoteDB.put(sanitizeForCouch(rlatest));
       }
     }
-    // Iniciar replicación para asegurar que los adjuntos se reflejen en el remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
-  return { ok: true } as const;
-}export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
+  try {
+    const usersDb = await ensureRemoteUsersDB();
+    const authId = toUsersDbDocId(email);
+    if (usersDb && authId) {
+      const authDoc = await usersDb.get(authId).catch(() => null);
+      if (authDoc) {
+        let authRev = authDoc._rev;
+        try { authRev = await removeAttachmentWithRetry(usersDb, authId, "avatar.png", authRev); } catch {}
+        try { authRev = await removeAttachmentWithRetry(usersDb, authId, "avatar_64", authRev); } catch {}
+        try {
+          const latestAuth = await usersDb.get(authId);
+          latestAuth.hasAvatar = false;
+          latestAuth.avatarUpdatedAt = new Date().toISOString();
+          await usersDb.put(latestAuth);
+        } catch (err) {
+          console.warn("[avatar] _users doc update failed", err);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[avatar] remote _users delete deferred", err);
+  }
+  try {
+    const canRemote = !!remoteDB;
+    if (canRemote) {
+      await startSync();
+    }
+  } catch {}
+}
+
+export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
   await openDatabases();
   if (!localDB) return null;
   const _id = toUserDocId(email);
