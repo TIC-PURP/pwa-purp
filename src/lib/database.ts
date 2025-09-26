@@ -215,7 +215,7 @@ export async function openDatabases() {
   if (!remoteDB) {
     const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
     remoteDB = new PouchDB(remoteUrl, {
-      skip_setup: true,
+      skip_setup: false,
       fetch: (url: RequestInfo, opts: any = {}) => {
         opts = opts || {};
         opts.credentials = "include"; // enviar cookie AuthSession
