@@ -24,6 +24,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAppSelector((s) => s.auth);
   const cancelWatch = useRef<null | (() => void)>(null);
   const avatarUrlRef = useRef<string | null>(null);
+  const userRef = useRef<typeof user>(user);
   const warmedRef = useRef<boolean>(false);
 
   // Router instance for dynamic prefetch in offline-first PWA
@@ -96,6 +97,23 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
+  // Mantener referencia al usuario ms reciente para callbacks asncronos
+  useEffect(() => {
+    const prevUrl = avatarUrlRef.current;
+    userRef.current = user;
+    if (user?.avatarUrl) {
+      if (prevUrl && prevUrl !== user.avatarUrl && prevUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(prevUrl); } catch {}
+      }
+      avatarUrlRef.current = user.avatarUrl;
+    } else {
+      if (prevUrl && prevUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(prevUrl); } catch {}
+      }
+      avatarUrlRef.current = user?.avatarUrl ?? null;
+    }
+  }, [user]);
+
   // Rehidratacion de sesion
   useEffect(() => {
     (async () => {
@@ -142,45 +160,49 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       if (cancelWatch.current) { cancelWatch.current(); cancelWatch.current = null; }
       if (isAuthenticated && user?.email) {
         const stop = await watchUserDocByEmail(user.email, async (doc) => {
+          const currentUser = userRef.current;
           const defaults = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
           const mpDoc =
             doc.modulePermissions && typeof doc.modulePermissions === "object" && !Array.isArray(doc.modulePermissions)
               ? doc.modulePermissions
-              : (user as any).modulePermissions;
+              : (currentUser as any)?.modulePermissions;
           const mergedMP = { ...defaults, ...(mpDoc || {}) } as any;
           const updated = {
             _id: doc._id ?? user._id,
-            id: doc.id ?? user.id,
-            name: doc.name ?? user.name,
-            email: doc.email ?? user.email,
-            password: doc.password ?? user.password,
-            role: doc.role ?? user.role,
-            permissions: Array.isArray(doc.permissions) ? doc.permissions : user.permissions,
+            id: doc.id ?? currentUser?.id ?? user.id,
+            name: doc.name ?? currentUser?.name ?? user.name,
+            email: doc.email ?? currentUser?.email ?? user.email,
+            password: doc.password ?? currentUser?.password ?? user.password,
+            role: doc.role ?? currentUser?.role ?? user.role,
+            permissions: Array.isArray(doc.permissions) ? doc.permissions : currentUser?.permissions ?? user.permissions,
             modulePermissions: mergedMP,
             isActive: doc.isActive !== false,
-            createdAt: doc.createdAt ?? user.createdAt,
+            createdAt: doc.createdAt ?? currentUser?.createdAt ?? user.createdAt,
             updatedAt: doc.updatedAt ?? new Date().toISOString(),
           } as any;
           // Cargar avatar (attachment)
           try {
             const { getUserAvatarBlob } = await import("@/lib/database");
-            const blob = await getUserAvatarBlob(updated.email || user.email);
+            const blob = await getUserAvatarBlob(updated.email || currentUser?.email || user.email);
             if (blob) {
               // Si hay un avatar disponible como blob, crear un nuevo ObjectURL
               try {
-                if (avatarUrlRef.current) URL.revokeObjectURL(avatarUrlRef.current);
-                const url = URL.createObjectURL(blob);
-                (updated as any).avatarUrl = url;
-                avatarUrlRef.current = url;
+                const nextUrl = URL.createObjectURL(blob);
+                if (avatarUrlRef.current && avatarUrlRef.current !== nextUrl) {
+                  URL.revokeObjectURL(avatarUrlRef.current);
+                }
+                (updated as any).avatarUrl = nextUrl;
+                avatarUrlRef.current = nextUrl;
               } catch {}
-            } else {
-              // Si no se obtuvo blob, conservar la URL previa del avatar, si existe
-              const prev = (user as any)?.avatarUrl || (updated as any)?.avatarUrl;
-              if (prev) {
-                (updated as any).avatarUrl = prev;
-              }
             }
           } catch {}
+          if (!(updated as any).avatarUrl) {
+            const fallback = avatarUrlRef.current || (currentUser as any)?.avatarUrl || (updated as any)?.avatarUrl;
+            if (fallback) {
+              (updated as any).avatarUrl = fallback;
+              avatarUrlRef.current = fallback;
+            }
+          }
           // Guardar doc sin avatarUrl para no inflar el documento
           try {
             const toSave = { ...(updated as any) };
