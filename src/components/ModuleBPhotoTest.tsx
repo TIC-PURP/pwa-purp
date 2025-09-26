@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import PouchDB from 'pouchdb-browser';
 import { getAppLocalDB, getAppRemoteDB } from '@/lib/db/appDB';
 
@@ -7,8 +7,57 @@ type PhotoDoc = {
   _id: string;
   type: 'modB_test';
   createdAt: string;
-  status?: 'local'|'synced'|'error';
+  status?: 'local' | 'synced' | 'error';
   note?: string;
+};
+
+type RawPhotoDoc =
+  | (PouchDB.Core.Document<Record<string, unknown>> & Partial<PhotoDoc>)
+  | undefined;
+
+type AttachmentValue = Blob | ArrayBuffer | ArrayBufferView | string;
+
+const isValidStatus = (value: unknown): value is NonNullable<PhotoDoc['status']> =>
+  value === 'local' || value === 'synced' || value === 'error';
+
+const isAttachmentValue = (value: unknown): value is AttachmentValue =>
+  value instanceof Blob ||
+  typeof value === 'string' ||
+  value instanceof ArrayBuffer ||
+  ArrayBuffer.isView(value);
+
+const attachmentToBlob = (value: AttachmentValue): Blob => {
+  if (value instanceof Blob) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    return new Blob([value]);
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return new Blob([value]);
+  }
+
+  const { buffer, byteOffset, byteLength } = value;
+  const source = new Uint8Array(buffer, byteOffset, byteLength);
+  const copy = new Uint8Array(byteLength);
+  copy.set(source);
+  return new Blob([copy.buffer]);
+};
+
+const normalizePhotoDoc = (doc: RawPhotoDoc): PhotoDoc | null => {
+  if (!doc || doc.type !== 'modB_test') {
+    return null;
+  }
+
+  return {
+    _id: doc._id,
+    type: 'modB_test',
+    createdAt: typeof doc.createdAt === 'string' ? doc.createdAt : '',
+    status: isValidStatus(doc.status) ? doc.status : undefined,
+    note: typeof doc.note === 'string' ? doc.note : undefined,
+  };
 };
 
 export default function ModuleBPhotoTest() {
@@ -49,7 +98,10 @@ export default function ModuleBPhotoTest() {
 
   const refresh = async () => {
     const res = await localDB.allDocs({ include_docs: true, startkey: 'modB:', endkey: 'modB:\ufff0' });
-    const list = res.rows.map(r => r.doc as PhotoDoc).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+    const list = res.rows
+      .map((r) => normalizePhotoDoc(r.doc as RawPhotoDoc))
+      .filter((doc): doc is PhotoDoc => doc !== null)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     setDocs(list);
   };
 
@@ -105,7 +157,11 @@ export default function ModuleBPhotoTest() {
 
   const openFile = (id: string) => async () => {
     try {
-      const blob = await localDB.getAttachment(id, 'photo');
+      const file = await localDB.getAttachment(id, 'photo');
+      if (!isAttachmentValue(file)) {
+        throw new Error('Unsupported attachment format');
+      }
+      const blob = attachmentToBlob(file);
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
