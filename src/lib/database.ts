@@ -1400,6 +1400,7 @@ async function deleteRemoteAuthUser(name?: string) {
 // =========================
 type PhotoMeta = {
   owner?: string;
+  module?: string;
   lat?: number;
   lng?: number;
   tags?: string[];
@@ -1409,6 +1410,7 @@ type PhotoDoc = {
   _id: string;
   type: "photo";
   owner?: string;
+  module?: string;
   createdAt: string;
   lat?: number;
   lng?: number;
@@ -1438,6 +1440,12 @@ async function ensurePhotoIndexes() {
       await (localDB as any).createIndex({
         index: { fields: ["type", "owner", "createdAt"] },
         name: "idx-photo-owner-createdAt",
+      });
+    } catch {}
+    try {
+      await (localDB as any).createIndex({
+        index: { fields: ["type", "module", "owner", "createdAt"] },
+        name: "idx-photo-module-owner-createdAt",
       });
     } catch {}
     photoIndexesReady = true;
@@ -1489,11 +1497,14 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   if (!localDB) throw new Error("DB not ready");
   const nowIso = new Date().toISOString();
   const id = `photo:${nowIso}:${rid(4)}`;
+  const owner = meta.owner ? String(meta.owner).trim() : undefined;
+  const moduleId = meta.module ? String(meta.module).trim() : undefined;
 
   const doc: PhotoDoc = {
     _id: id,
     type: "photo",
-    owner: meta.owner,
+    ...(owner ? { owner } : {}),
+    ...(moduleId ? { module: moduleId } : {}),
     createdAt: nowIso,
     lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
     hasOriginal: true,
@@ -1577,14 +1588,14 @@ export async function getPhotoThumbUrl(id: string) {
 }
 
 /** Lista fotos (por owner opcional), ordenadas desc por createdAt */
-export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
+export async function listPhotos(opts?: { owner?: string; module?: string; limit?: number; }) {
   await ensurePhotoIndexes();
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
+  if (opts?.module) selector.module = opts.module;
   const res = await (localDB as any).find({
     selector,
-    sort: [{ type: "desc" }, { createdAt: "desc" }],
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
