@@ -226,6 +226,12 @@ function buildUserDocFromData(data: any) {
     : (!Array.isArray(data.permissions) && typeof data.permissions === "object" ? data.permissions : undefined);
   const modulePermissions = withModulePermissionDefaults(moduleSource);
   const permissions = Array.isArray(data.permissions) ? data.permissions : ["read"];
+  const extra = (data && typeof data.extra === "object" && data.extra) ? { ...data.extra } : {};
+  if (extra && typeof extra === "object" && "avatarUrl" in extra) {
+    delete (extra as any).avatarUrl;
+  }
+  const hasAvatar = typeof data.hasAvatar === "boolean" ? data.hasAvatar : undefined;
+  const avatarUpdatedAt = typeof data.avatarUpdatedAt === "string" ? data.avatarUpdatedAt : undefined;
   return {
     _id,
     id: `user_${key}`,
@@ -239,7 +245,9 @@ function buildUserDocFromData(data: any) {
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
     updatedAt: now,
-    ...data.extra,
+    ...(typeof hasAvatar === "boolean" ? { hasAvatar } : {}),
+    ...(avatarUpdatedAt ? { avatarUpdatedAt } : {}),
+    ...extra,
   };
 }
 
@@ -665,6 +673,18 @@ function normalizeUserDocShape(u: any) {
     ? mp
     : (!Array.isArray(u.permissions) && typeof u.permissions === "object" ? u.permissions : undefined);
   out.modulePermissions = withModulePermissionDefaults(moduleSource);
+  if (typeof out.hasAvatar !== "boolean") {
+    const attachments = out._attachments;
+    const hasAttachment = attachments && typeof attachments === "object"
+      && ("avatar" in attachments || "avatar_64" in attachments);
+    out.hasAvatar = Boolean(hasAttachment);
+  }
+  if (typeof out.avatarUpdatedAt !== "string") {
+    delete out.avatarUpdatedAt;
+  }
+  if ("avatarUrl" in out) {
+    delete out.avatarUrl;
+  }
   return out;
 }
 
@@ -794,6 +814,9 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   }
 
   delete patch._id;
+  if ("avatarUrl" in patch) {
+    delete patch.avatarUrl;
+  }
   if (typeof patch.password === "string" && patch.password.trim() === "") {
     delete patch.password;
   }
@@ -807,6 +830,10 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     } else {
       throw e;
     }
+  }
+
+  if (doc && typeof doc === "object" && "avatarUrl" in doc) {
+    delete doc.avatarUrl;
   }
 
   const explicitModulePatch: ModulePermissionPatch = (patch.modulePermissions && typeof patch.modulePermissions === "object" && !Array.isArray(patch.modulePermissions))
@@ -1067,6 +1094,25 @@ export async function watchUserDocByEmail(
     .on("error", (err: any) => {
       console.warn("[watchUserDocByEmail] error", err?.message || err);
     });
+
+  // Emit the current document snapshot immediately so the UI has data before the first change
+  try {
+    for (const id of ids) {
+      try {
+        const doc = await localDB.get(id);
+        if (doc) {
+          await Promise.resolve(onUpdate(doc));
+          break;
+        }
+      } catch (e: any) {
+        if (e?.status !== 404) {
+          console.warn("[watchUserDocByEmail] initial load failed", e?.message || e);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[watchUserDocByEmail] initial emit error", (err as any)?.message || err);
+  }
 
   return () => {
     try { /* @ts-ignore */ feed?.cancel?.(); } catch {}
