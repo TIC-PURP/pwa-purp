@@ -8,6 +8,17 @@ let localDB: any = null;
 let remoteDB: any = null;
 let remoteUsersDB: any = null;
 let syncHandler: any = null;
+let userIndexesReady = false;
+let photoIndexesReady = false;
+let userIndexesPromise: Promise<void> | null = null;
+let photoIndexesPromise: Promise<void> | null = null;
+
+function resetIndexState() {
+  userIndexesReady = false;
+  photoIndexesReady = false;
+  userIndexesPromise = null;
+  photoIndexesPromise = null;
+}
 
 export type CouchEnv = {
   serverBase: string;
@@ -51,14 +62,31 @@ function isClosingError(err: any) {
 async function safeLocalGet(id: string) {
   try { return await (localDB as any).get(id); }
   catch (e) {
-    if (isClosingError(e)) { try { /* force reopen */ /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).get(id); }
+    if (isClosingError(e)) {
+      try {
+        /* force reopen */
+        /* @ts-ignore */
+        localDB = null;
+        resetIndexState();
+      } catch {}
+      await openDatabases();
+      return await (localDB as any).get(id);
+    }
     throw e;
   }
 }
 async function safeLocalPut(doc: any) {
   try { return await (localDB as any).put(doc); }
   catch (e) {
-    if (isClosingError(e)) { try { /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).put(doc); }
+    if (isClosingError(e)) {
+      try {
+        /* @ts-ignore */
+        localDB = null;
+        resetIndexState();
+      } catch {}
+      await openDatabases();
+      return await (localDB as any).put(doc);
+    }
     throw e;
   }
 }
@@ -326,6 +354,7 @@ export async function openDatabases() {
 
   if (!localDB) {
     localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
+    resetIndexState();
   }
 
   if (!remoteDB) {
@@ -501,18 +530,31 @@ export async function guardarUsuarioOffline(user: any) {
 async function ensureUserIndexes() {
   await openDatabases();
   if (!localDB) return;
+  if (userIndexesReady) return;
+  if (userIndexesPromise) {
+    await userIndexesPromise;
+    return;
+  }
+  userIndexesPromise = (async () => {
+    try {
+      await localDB.createIndex({
+        index: { fields: ["type", "updatedAt"] },
+        name: "idx-type-updatedAt",
+      });
+    } catch {}
+    try {
+      await localDB.createIndex({
+        index: { fields: ["email"] },
+        name: "idx-email",
+      });
+    } catch {}
+    userIndexesReady = true;
+  })();
   try {
-    await localDB.createIndex({
-      index: { fields: ["type", "updatedAt"] },
-      name: "idx-type-updatedAt",
-    });
-  } catch {}
-  try {
-    await localDB.createIndex({
-      index: { fields: ["email"] },
-      name: "idx-email",
-    });
-  } catch {}
+    await userIndexesPromise;
+  } finally {
+    userIndexesPromise = null;
+  }
 }
 
 /** Lista usuarios (activos por defecto) */
@@ -1380,18 +1422,31 @@ type PhotoDoc = {
 async function ensurePhotoIndexes() {
   await openDatabases();
   if (!localDB) return;
+  if (photoIndexesReady) return;
+  if (photoIndexesPromise) {
+    await photoIndexesPromise;
+    return;
+  }
+  photoIndexesPromise = (async () => {
+    try {
+      await (localDB as any).createIndex({
+        index: { fields: ["type", "createdAt"] },
+        name: "idx-photo-type-createdAt",
+      });
+    } catch {}
+    try {
+      await (localDB as any).createIndex({
+        index: { fields: ["type", "owner", "createdAt"] },
+        name: "idx-photo-owner-createdAt",
+      });
+    } catch {}
+    photoIndexesReady = true;
+  })();
   try {
-    await (localDB as any).createIndex({
-      index: { fields: ["type", "createdAt"] },
-      name: "idx-photo-type-createdAt",
-    });
-  } catch {}
-  try {
-    await (localDB as any).createIndex({
-      index: { fields: ["type", "owner", "createdAt"] },
-      name: "idx-photo-owner-createdAt",
-    });
-  } catch {}
+    await photoIndexesPromise;
+  } finally {
+    photoIndexesPromise = null;
+  }
 }
 
 /** Genera un id corto aleatorio */
