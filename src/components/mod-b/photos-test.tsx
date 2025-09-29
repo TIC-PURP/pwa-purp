@@ -5,14 +5,18 @@ import { Button } from "@/components/ui/button";
 import { listPhotos, savePhoto, getPhotoThumbUrl, deletePhoto } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
 
-const enablePhotoLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true";
+const enablePhotoLogs =
+  typeof process !== "undefined"
+    ? process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true" ||
+      (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS !== "false")
+    : false;
 
 function logPhotoUI(label: string, payload?: unknown) {
   if (!enablePhotoLogs) return;
   if (typeof payload === "undefined") {
-    console.debug(`[photos-ui] ${label}`);
+    console.log(`[photos-ui] ${label}`);
   } else {
-    console.debug(`[photos-ui] ${label}`, payload);
+    console.log(`[photos-ui] ${label}`, payload);
   }
 }
 
