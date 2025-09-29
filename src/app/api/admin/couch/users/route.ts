@@ -12,6 +12,7 @@ type UpsertBody = {
   email?: string; // optional alias; if present and name is missing, use email
   password?: string;
   roles?: string[]; // couch roles
+  metadata?: Record<string, unknown>;
 };
 
 async function getOrigin(req: NextRequest) {
@@ -76,6 +77,14 @@ function toUserId(name: string) {
   return `org.couchdb.user:${name}`;
 }
 
+function sanitizeMetadata(raw: any) {
+  const out: Record<string, any> = {};
+  if (raw && typeof raw === "object") {
+    if (typeof raw.isActive === "boolean") out.isActive = raw.isActive;
+  }
+  return out;
+}
+
 async function adminFetch(path: string, init: RequestInit & { method: string }) {
   const auth = getAdminAuthHeader();
   if (!auth) {
@@ -108,6 +117,7 @@ export async function POST(req: NextRequest) {
   const name = (body.name || body.email || "").trim();
   const password = (body.password || "").trim();
   const roles = Array.isArray(body.roles) ? body.roles.filter(Boolean) : [];
+  const metadata = sanitizeMetadata(body.metadata);
   if (!name || !password) {
     return NextResponse.json({ ok: false, error: "name/email and password required" }, { status: 400 });
   }
@@ -117,6 +127,7 @@ export async function POST(req: NextRequest) {
     type: "user",
     roles,
     password,
+    ...metadata,
   };
   // CouchDB creates with PUT to specific id
   return adminFetch(`/${encodeURIComponent(doc._id)}`, { method: "PUT", body: JSON.stringify(doc) });
@@ -130,6 +141,7 @@ export async function PUT(req: NextRequest) {
   if (!name) return NextResponse.json({ ok: false, error: "name/email required" }, { status: 400 });
   const password = (body.password || "").trim();
   const roles = Array.isArray(body.roles) ? body.roles.filter(Boolean) : undefined;
+  const metadata = sanitizeMetadata(body.metadata);
 
   // Load existing to get _rev
   const getRes = await adminFetch(`/${encodeURIComponent(toUserId(name))}`, { method: "GET" });
@@ -140,6 +152,7 @@ export async function PUT(req: NextRequest) {
   const patch: any = { ...existing };
   if (roles) patch.roles = roles;
   if (password) patch.password = password; // CouchDB will hash it
+  Object.assign(patch, metadata);
 
   return adminFetch(`/${encodeURIComponent(patch._id)}`, { method: "PUT", body: JSON.stringify(patch) });
 }

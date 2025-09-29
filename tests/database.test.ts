@@ -281,4 +281,110 @@ describe('database', () => {
     });
     expect(adminCall).toBeTruthy();
   });
+
+  it('updateUser al desactivar conserva la cuenta remota y marca isActive=false', async () => {
+    const PouchDBMock = require('pouchdb').default as jest.Mock;
+    const existing = {
+      _id: 'user:john',
+      _rev: '3-local',
+      type: 'user',
+      name: 'John',
+      email: 'john@example.com',
+      password: 'Secret123*',
+      role: 'manager',
+      permissions: ['read'],
+      modulePermissions: { MOD_A: 'READ', MOD_B: 'NONE', MOD_C: 'NONE', MOD_D: 'NONE' },
+      isActive: true,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    } as any;
+    const store: Record<string, any> = { [existing._id]: { ...existing } };
+    const localDB = {
+      get: jest.fn(async (id: string) => ({ ...store[id] })),
+      put: jest.fn(async (doc: any) => {
+        store[doc._id] = doc;
+        return { ok: true };
+      }),
+      sync: jest.fn(),
+    };
+    const remoteDB = {
+      put: jest.fn(async () => ({ ok: true, rev: '4-remote' })),
+    };
+    PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
+
+    const fetchMock = (global as any).fetch as jest.Mock;
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' });
+
+    const { updateUser } = await import('@/lib/database');
+    await updateUser(existing._id, {
+      isActive: false,
+    });
+
+    const deleteCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes('/api/admin/couch/users') && (opts as any)?.method === 'DELETE');
+    expect(deleteCall).toBeUndefined();
+
+    const putCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes('/api/admin/couch/users') && (opts as any)?.method === 'PUT');
+    expect(putCall).toBeTruthy();
+    const body = putCall ? JSON.parse((putCall[1] as any).body) : null;
+    expect(body).toBeTruthy();
+    expect(body.isActive).toBe(false);
+    expect(Array.isArray(body.roles) ? body.roles : []).toContain('inactive');
+  });
+
+  it('deleteUserById handles email and legacy identifiers', async () => {
+    const PouchDBMock = require('pouchdb').default as jest.Mock;
+    const store: Record<string, any> = {
+      'user:john@example.com': { _id: 'user:john@example.com', type: 'user' },
+      'user:jane-example.com': { _id: 'user:jane-example.com', type: 'user' },
+    };
+    const removed: string[] = [];
+    const localDB = {
+      get: jest.fn(async (id: string) => {
+        if (store[id]) return store[id];
+        throw { status: 404 };
+      }),
+      remove: jest.fn(async (doc: any) => {
+        removed.push(doc._id);
+        delete store[doc._id];
+        return { ok: true };
+      }),
+      find: jest.fn(),
+    };
+    const remoteDB = {};
+    PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
+
+    const { deleteUserById, openDatabases } = await import('@/lib/database');
+    await openDatabases();
+
+    await expect(deleteUserById('john@example.com')).resolves.toBe(true);
+    await expect(deleteUserById('user:jane-example.com')).resolves.toBe(true);
+
+    expect(localDB.get).toHaveBeenCalledWith('user:john-example.com');
+    expect(localDB.get).toHaveBeenCalledWith('user:jane-example.com');
+    expect(removed).toEqual(['user:john@example.com', 'user:jane-example.com']);
+  });
+
+  it('deleteUserById falls back to find lookup', async () => {
+    const PouchDBMock = require('pouchdb').default as jest.Mock;
+    const store: Record<string, any> = {
+      legacy123: { _id: 'legacy123', type: 'user', email: 'legacy@example.com' },
+    };
+    const localDB = {
+      get: jest.fn(async () => { throw { status: 404 }; }),
+      remove: jest.fn(async (doc: any) => {
+        delete store[doc._id];
+        return { ok: true };
+      }),
+      find: jest.fn(async () => ({ docs: [store.legacy123] })),
+    };
+    const remoteDB = {};
+    PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
+
+    const { deleteUserById, openDatabases } = await import('@/lib/database');
+    await openDatabases();
+
+    await expect(deleteUserById('legacy@example.com')).resolves.toBe(true);
+    expect(localDB.find).toHaveBeenCalledWith({ selector: { type: 'user', email: 'legacy@example.com' }, limit: 1 });
+    expect(localDB.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: 'legacy123' }));
+  });
 });

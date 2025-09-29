@@ -483,16 +483,21 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       const baseName = email.includes("@") ? email.split("@")[0] : email;
       const role = toRole(Array.isArray(a?.roles) ? a.roles : []);
       const local = locals[email.toLowerCase()];
+      const identitySource = email || baseName || String(a?._id || "");
+      const key = slug(identitySource || "");
+      const docId = toUserDocId(identitySource || key || baseName || Date.now().toString());
+      const legacyId = docId.replace(":", "_");
+      const displayName = local?.name ?? (email ? baseName : identitySource || baseName);
       // Para manager, asegurar permisos completos coherentes con validaciones
       const permissions = role === "manager" ? fullPerms.slice() : Array.isArray(local?.permissions) ? local.permissions : ["read"];
       const modulePermissions = role === "manager"
         ? { MOD_A: "FULL", MOD_B: "FULL", MOD_C: "FULL", MOD_D: "FULL" }
         : withModulePermissionDefaults(local?.modulePermissions);
       return {
-        _id: `user:${(email || baseName).toLowerCase()}`,
-        id: `user_${(email || baseName).toLowerCase()}`,
-        name: local?.name ?? baseName,
-        email,
+        _id: docId,
+        id: legacyId,
+        name: displayName,
+        email: email || local?.email || "",
         password: local?.password ?? "", // nunca devolvemos real; solo display
         role,
         permissions,
@@ -626,7 +631,12 @@ export async function createUser(data: any) {
         try { await localDB.put({ ...sanitizedDoc }); } catch {}
         try {
           const roles = [doc.role].filter(Boolean) as string[];
-          await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
+          await upsertRemoteAuthUser({
+            name: doc.email || doc.name,
+            password: doc.password,
+            roles,
+            metadata: { isActive: doc.isActive !== false },
+          });
         } catch (e) { console.warn("[createUser] _users upsert failed", (e as any)?.message || e); }
         return { ...doc, ___writePath: remoteResult.path } as any;
       }
@@ -647,7 +657,12 @@ export async function createUser(data: any) {
     const online2 = typeof navigator !== "undefined" && navigator.onLine;
     if (online2) {
       const roles = [doc.role].filter(Boolean) as string[];
-      await upsertRemoteAuthUser({ name: doc.email || doc.name, password: doc.password, roles });
+      await upsertRemoteAuthUser({
+        name: doc.email || doc.name,
+        password: doc.password,
+        roles,
+        metadata: { isActive: doc.isActive !== false },
+      });
     }
   } catch {}
   return { ...toLocal, ___writePath: "local" } as any;
@@ -742,23 +757,36 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
       const curActive = current.isActive !== false;
       const prevIdentity = (previous?.email || previous?.name || "").trim();
       const currentIdentity = (current.email || current.name || "").trim();
-      const changedIdentity = prevIdentity && currentIdentity && prevIdentity !== currentIdentity;
+      const targetIdentity = currentIdentity || prevIdentity;
+      if (!targetIdentity) return;
 
-      if (prevActive !== curActive) {
-        if (!curActive) {
-          await deleteRemoteAuthUser(prevIdentity || currentIdentity);
-        } else {
-          if (changedIdentity) {
-            await deleteRemoteAuthUser(prevIdentity);
-          }
-          await upsertRemoteAuthUser({ name: currentIdentity, password: current.password, roles });
-        }
-      } else if (curActive) {
-        if (changedIdentity) {
-          await deleteRemoteAuthUser(prevIdentity);
-        }
-        await upsertRemoteAuthUser({ name: currentIdentity, password: patch.password, roles });
+      const changedIdentity = prevIdentity && currentIdentity && prevIdentity !== currentIdentity;
+      if (changedIdentity && prevIdentity) {
+        await deleteRemoteAuthUser(prevIdentity);
       }
+
+      const roleSet = new Set((roles || []).map((r) => String(r || "").trim()).filter(Boolean));
+      if (!curActive) {
+        roleSet.add("inactive");
+      } else {
+        roleSet.delete("inactive");
+      }
+      const desiredRoles = Array.from(roleSet);
+
+      const nextPassword = (() => {
+        const patched = typeof patch.password === "string" ? patch.password.trim() : "";
+        if (!curActive) return undefined;
+        if (patched) return patched;
+        if (changedIdentity && current.password) return current.password;
+        return undefined;
+      })();
+
+      await upsertRemoteAuthUser({
+        name: targetIdentity,
+        password: nextPassword,
+        roles: desiredRoles,
+        metadata: { isActive: curActive },
+      });
     } catch (error) {
       console.warn("[updateUser] _users auth sync failed", (error as any)?.message || error);
     }
@@ -860,15 +888,67 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
 /** Borrado permanente - LOCAL FIRST */
 export async function deleteUserById(idOrKey: string): Promise<boolean> {
   await openDatabases();
-  const _id = toUserDocId(idOrKey);
-  try {
-    const doc = await localDB.get(_id);
-    await localDB.remove(doc); // la sync replicara el delete
-    return true;
-  } catch (e: any) {
-    if (e?.status === 404) return false;
-    throw e;
+  const getCandidates = (): string[] => {
+    const raw = String(idOrKey || "").trim();
+    const out = new Set<string>();
+    if (!raw) return Array.from(out);
+
+    const push = (value: string | null | undefined) => {
+      if (value && typeof value === "string") out.add(value);
+    };
+
+    // If already looks like a doc id, keep it and try colon/underscore variants
+    if (raw.startsWith("user:")) {
+      push(raw);
+      push(`user_${raw.slice(5)}`);
+    }
+    if (raw.startsWith("user_")) {
+      push(raw);
+      push(`user:${raw.slice(5)}`);
+    }
+
+    // Canonical slugged identifier
+    push(toUserDocId(raw));
+
+    const lowered = raw.toLowerCase();
+    if (lowered.includes("@")) {
+      push(`user:${lowered}`);
+      push(`user_${lowered}`);
+      push(`user:${slug(lowered)}`);
+      push(`user_${slug(lowered)}`);
+    } else {
+      push(`user:${slug(lowered)}`);
+      push(`user_${slug(lowered)}`);
+    }
+
+    return Array.from(out);
+  };
+
+  const candidates = getCandidates();
+  for (const candidate of candidates) {
+    try {
+      const doc = await localDB.get(candidate);
+      await localDB.remove(doc); // la sync replicara el delete
+      return true;
+    } catch (err: any) {
+      if (err?.status === 404) continue;
+      throw err;
+    }
   }
+
+  // Fallback: buscar por email/username con find
+  try {
+    if (localDB && typeof localDB.find === "function") {
+      const res = await localDB.find({ selector: { type: "user", email: idOrKey }, limit: 1 });
+      const doc = res?.docs?.[0];
+      if (doc && doc._id) {
+        await localDB.remove(doc);
+        return true;
+      }
+    }
+  } catch {}
+
+  return false;
 }
 
 /** Alias para realizar borrado permanente */
@@ -1106,27 +1186,57 @@ export async function deleteUserAvatar(email: string) {
 // ===========================
 // _users helpers (client-side)
 // ===========================
-async function upsertRemoteAuthUser({ name, password, roles }: { name?: string; password?: string; roles?: string[] }) {
+type AuthMetadata = { isActive?: boolean };
+
+function sanitizeAuthMetadata(raw: any): AuthMetadata {
+  const extra: AuthMetadata = {};
+  if (raw && typeof raw === "object") {
+    if (typeof raw.isActive === "boolean") extra.isActive = raw.isActive;
+  }
+  return extra;
+}
+
+async function upsertRemoteAuthUser({
+  name,
+  password,
+  roles,
+  metadata,
+}: {
+  name?: string;
+  password?: string;
+  roles?: string[];
+  metadata?: AuthMetadata;
+}) {
   const n = (name || "").trim();
   if (!n) return;
   try {
+    const extra = sanitizeAuthMetadata(metadata);
     // Try create; if exists, update.
     if (password) {
+      const payload: Record<string, any> = {
+        name: n,
+        password,
+        roles: Array.isArray(roles) ? roles : [],
+        ...extra,
+      };
       const createRes = await fetch(`/api/admin/couch/users`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ name: n, password, roles: roles || [] }),
+        body: JSON.stringify(payload),
       });
       if (createRes.ok || createRes.status === 201) return;
       if (createRes.status !== 409) return; // other error, give up silently
     }
     // Update roles/password if provided
+    const updatePayload: Record<string, any> = { name: n, ...extra };
+    if (typeof password === "string" && password.trim()) updatePayload.password = password;
+    if (Array.isArray(roles)) updatePayload.roles = roles;
     await fetch(`/api/admin/couch/users`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ name: n, password, roles }),
+      body: JSON.stringify(updatePayload),
     });
   } catch (e) {
     // ignore, UI already indicates local/remote path
