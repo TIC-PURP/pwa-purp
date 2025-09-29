@@ -1309,11 +1309,15 @@ async function ensurePhotoIndexes() {
     });
   } catch {}
 }
-const enablePhotoLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true";
+const enablePhotoLogs =
+  typeof process !== "undefined"
+    ? process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true" ||
+      (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS !== "false")
+    : false;
 
 function logPhotoDb(label: string, payload?: unknown, level: "debug" | "error" = "debug") {
   if (!enablePhotoLogs) return;
-  const logger = level === "error" ? console.error : console.debug;
+  const logger = level === "error" ? console.error : console.log;
   if (typeof payload === "undefined") {
     logger(`[photos-db] ${label}`);
   } else {
