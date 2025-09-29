@@ -1262,6 +1262,8 @@ async function deleteRemoteAuthUser(name?: string) {
 // =========================
 type PhotoMeta = {
   owner?: string;
+  ownerName?: string;
+  ownerEmail?: string;
   lat?: number;
   lng?: number;
   tags?: string[];
@@ -1271,6 +1273,8 @@ type PhotoDoc = {
   _id: string;
   type: "photo";
   owner?: string;
+  ownerName?: string;
+  ownerEmail?: string;
   createdAt: string;
   lat?: number;
   lng?: number;
@@ -1336,6 +1340,7 @@ async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image
 export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   await openDatabases();
   if (!localDB) throw new Error("DB not ready");
+  if (!meta.owner) throw new Error("owner id is required to save photo");
   const nowIso = new Date().toISOString();
   const id = `photo:${nowIso}:${rid(4)}`;
 
@@ -1343,6 +1348,8 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     _id: id,
     type: "photo",
     owner: meta.owner,
+    ownerName: meta.ownerName,
+    ownerEmail: meta.ownerEmail,
     createdAt: nowIso,
     lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
     hasOriginal: true,
@@ -1428,9 +1435,12 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
+  const sort = opts?.owner
+    ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
+    : [{ type: "asc" }, { createdAt: "desc" }];
   const res = await (localDB as any).find({
     selector,
-    sort: [{ type: "desc" }, { createdAt: "desc" }],
+    sort,
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1442,5 +1452,11 @@ export async function deletePhoto(id: string) {
   await openDatabases();
   const doc = await (localDB as any).get(id);
   await (localDB as any).remove(doc);
+  try {
+    if (remoteDB) {
+      const remoteDoc = await (remoteDB as any).get(id);
+      await (remoteDB as any).remove(remoteDoc);
+    }
+  } catch {}
   return { ok: true };
 }
