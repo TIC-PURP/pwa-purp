@@ -88,6 +88,7 @@ describe("PhotosTest", () => {
     jest.clearAllMocks();
   });
 
+
   it("carga y muestra las fotos existentes del usuario", async () => {
     mockListPhotos.mockResolvedValueOnce([
       { _id: "photo-1", createdAt: "2024-01-05T10:00:00.000Z", ownerName: baseUser.name } as any,
@@ -120,6 +121,13 @@ describe("PhotosTest", () => {
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
+    expect(mockSavePhoto).not.toHaveBeenCalled();
+
+    const saveButton = await screen.findByRole("button", { name: /guardar 1 foto/i });
+    expect(saveButton).toBeEnabled();
+
+    fireEvent.click(saveButton);
+
     await waitFor(() => expect(mockSavePhoto).toHaveBeenCalledWith(file, {
       owner: baseUser.id,
       ownerName: baseUser.name,
@@ -127,6 +135,7 @@ describe("PhotosTest", () => {
     }));
     await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(2));
     expectOwnerCall(baseUser.id);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /guardar 1 foto/i })).toBeNull());
     expect(await screen.findByAltText("photo-new")).toBeInTheDocument();
   });
 
@@ -149,6 +158,27 @@ describe("PhotosTest", () => {
     expectOwnerCall(baseUser.id);
     await waitFor(() => expect(screen.queryByAltText("photo-delete")).toBeNull());
   });
+  it("permite descartar fotos pendientes antes de guardar", async () => {
+    mockListPhotos.mockResolvedValueOnce([]);
+
+    const { container } = renderWithStore();
+
+    await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(1));
+    const fileInput = container.querySelectorAll("input[type='file']")[0] as HTMLInputElement;
+    const file = new File(["contenido"], "pendiente.jpg", { type: "image/jpeg" });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const discardButton = await screen.findByRole("button", { name: /descartar pendientes/i });
+    expect(discardButton).toBeEnabled();
+    expect(await screen.findByText(/vista previa no disponible/i)).toBeInTheDocument();
+
+    fireEvent.click(discardButton);
+
+    await waitFor(() => expect(screen.queryByText(/vista previa no disponible/i)).toBeNull());
+    expect(mockSavePhoto).not.toHaveBeenCalled();
+  });
+
   it("en modo lectura solo permite visualizar las fotos", async () => {
     mockListPhotos.mockResolvedValueOnce([
       { _id: "photo-read", createdAt: "2024-01-05T09:00:00.000Z", ownerName: baseUser.name } as any,
@@ -170,7 +200,8 @@ describe("PhotosTest", () => {
     const file = new File(['contenido'], 'read-only.jpg', { type: 'image/jpeg' });
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    await waitFor(() => expect(mockSavePhoto).not.toHaveBeenCalled());
+    expect(mockSavePhoto).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /guardar/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /eliminar/i })).toBeNull();
     expect(mockDeletePhoto).not.toHaveBeenCalled();
   });

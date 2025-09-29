@@ -5,6 +5,17 @@ import { Button } from "@/components/ui/button";
 import { listPhotos, savePhoto, getPhotoThumbUrl, deletePhoto } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
 
+const enablePhotoLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true";
+
+function logPhotoUI(label: string, payload?: unknown) {
+  if (!enablePhotoLogs) return;
+  if (typeof payload === "undefined") {
+    console.debug(`[photos-ui] ${label}`);
+  } else {
+    console.debug(`[photos-ui] ${label}`, payload);
+  }
+}
+
 type PhotoDoc = {
   _id: string;
   ownerName?: string;
@@ -16,6 +27,14 @@ type PhotosTestProps = {
   readOnly?: boolean;
 };
 
+type PendingPhoto = {
+  id: string;
+  file: File;
+  url: string;
+  name: string;
+  size: number;
+};
+
 export function PhotosTest({ readOnly = false }: PhotosTestProps) {
   const user = useAppSelector((s) => s.auth.user);
   const ownerId = user?._id ?? user?.id ?? null;
@@ -24,40 +43,56 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
 
   const [photos, setPhotos] = useState<PhotoDoc[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<PendingPhoto[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const camRef = useRef<HTMLInputElement | null>(null);
   const galRef = useRef<HTMLInputElement | null>(null);
 
-  const revokeUrls = useCallback((map: Record<string, string>) => {
-    if (typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") {
-      return;
-    }
-    for (const value of Object.values(map)) {
-      if (value) URL.revokeObjectURL(value);
-    }
+  const revokeUrl = useCallback((value: string) => {
+    if (!value) return;
+    if (typeof URL === "undefined") return;
+    if (typeof URL.revokeObjectURL !== "function") return;
+    try {
+      URL.revokeObjectURL(value);
+    } catch {}
   }, []);
 
+  const revokeUrls = useCallback((map: Record<string, string>) => {
+    if (!map) return;
+    for (const value of Object.values(map)) {
+      revokeUrl(value);
+    }
+  }, [revokeUrl]);
+
   const refresh = useCallback(async () => {
+    logPhotoUI("refresh:start", { ownerId });
     if (!ownerId) {
       setPhotos([]);
       setUrls((prev) => {
         revokeUrls(prev);
         return {};
       });
+      logPhotoUI("refresh:skip", "no owner id");
       return;
     }
     const list = await listPhotos({ owner: ownerId });
+    logPhotoUI("refresh:list", { count: list.length });
     setPhotos(list as PhotoDoc[]);
     const map: Record<string, string> = {};
     for (const p of list) {
       try {
         map[p._id] = await getPhotoThumbUrl(p._id);
-      } catch {}
+      } catch (error) {
+        logPhotoUI("refresh:thumb-error", { id: p._id, error });
+      }
     }
     setUrls((prev) => {
       revokeUrls(prev);
       return map;
     });
+    logPhotoUI("refresh:done", { ownerId });
   }, [ownerId, revokeUrls]);
 
   useEffect(() => {
@@ -66,25 +101,147 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
 
   useEffect(() => () => revokeUrls(urls), [revokeUrls, urls]);
 
-  const onPick = useCallback(async (f?: File | null) => {
-    if (!f || !ownerId || readOnly) return;
-    await savePhoto(f, {
-      owner: ownerId,
-      ownerName,
-      ownerEmail,
+  useEffect(() => {
+    if (!ownerId || readOnly) {
+      setPending((prev) => {
+        if (!prev.length) return prev;
+        prev.forEach((item) => revokeUrl(item.url));
+        return [];
+      });
+    }
+  }, [ownerId, readOnly, revokeUrl]);
+
+  useEffect(() => {
+    return () => {
+      pending.forEach((item) => revokeUrl(item.url));
+    };
+  }, [pending, revokeUrl]);
+
+  const onPick = useCallback((file?: File | null) => {
+    if (!file) {
+      logPhotoUI("pick:skip", { reason: "no file" });
+      return;
+    }
+    if (!ownerId) {
+      logPhotoUI("pick:skip", { reason: "no owner" });
+      return;
+    }
+    if (readOnly) {
+      logPhotoUI("pick:skip", { reason: "read only" });
+      return;
+    }
+    if (isSaving) {
+      logPhotoUI("pick:skip", { reason: "saving in progress" });
+      return;
+    }
+    logPhotoUI("pick:file", { name: file.name, size: file.size, type: file.type });
+    let url = "";
+    try {
+      if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+        url = URL.createObjectURL(file);
+      }
+    } catch (error) {
+      console.error("onPick error", error);
+      logPhotoUI("pick:error", error);
+      setErrorMsg("No se pudo preparar la foto, intenta nuevamente.");
+    }
+    const id = `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const item: PendingPhoto = {
+      id,
+      file,
+      url,
+      name: file.name,
+      size: file.size,
+    };
+    setPending((prev) => [...prev, item]);
+    logPhotoUI("pending:add", { id: item.id, name: item.name, size: item.size });
+    setErrorMsg(null);
+  }, [isSaving, ownerId, readOnly]);
+
+  const removePending = useCallback((id: string) => {
+    if (isSaving) return;
+    logPhotoUI("pending:remove", { id });
+    setPending((prev) => {
+      const next: PendingPhoto[] = [];
+      for (const item of prev) {
+        if (item.id === id) {
+          revokeUrl(item.url);
+          continue;
+        }
+        next.push(item);
+      }
+      return next;
     });
-    await refresh();
-  }, [ownerEmail, ownerId, ownerName, readOnly, refresh]);
+  }, [isSaving, revokeUrl]);
+
+  const discardPending = useCallback(() => {
+    if (isSaving) return;
+    setPending((prev) => {
+      if (!prev.length) return prev;
+      logPhotoUI("pending:discard-all", { count: prev.length });
+      prev.forEach((item) => revokeUrl(item.url));
+      return [];
+    });
+    setErrorMsg(null);
+  }, [isSaving, revokeUrl]);
+
+  const handleSave = useCallback(async () => {
+    if (!ownerId || readOnly || isSaving || pending.length === 0) return;
+    logPhotoUI("save:begin", { pending: pending.length });
+    setIsSaving(true);
+    setErrorMsg(null);
+    const queue = pending.slice();
+    const savedIds = new Set<string>();
+
+    try {
+      for (const item of queue) {
+        const result = await savePhoto(item.file, {
+          owner: ownerId,
+          ownerName,
+          ownerEmail,
+        });
+        savedIds.add(item.id);
+        logPhotoUI("save:success", { pendingId: item.id, docId: result?._id });
+      }
+      setPending((prev) => prev.filter((item) => {
+        const shouldKeep = !savedIds.has(item.id);
+        if (!shouldKeep) revokeUrl(item.url);
+        return shouldKeep;
+      }));
+      await refresh();
+      logPhotoUI("save:refresh-done", { remainingPending: pending.length - savedIds.size });
+    } catch (err) {
+      console.error(err);
+      logPhotoUI("save:error", err);
+      setErrorMsg("No se pudieron guardar todas las fotos. Inténtalo nuevamente.");
+      setPending((prev) => prev.filter((item) => {
+        const shouldKeep = !savedIds.has(item.id);
+        if (!shouldKeep) revokeUrl(item.url);
+        return shouldKeep;
+      }));
+    } finally {
+      setIsSaving(false);
+      logPhotoUI("save:end");
+    }
+  }, [isSaving, ownerEmail, ownerId, ownerName, pending, readOnly, refresh, revokeUrl]);
 
   const onDelete = useCallback(async (id: string) => {
-    if (readOnly) return;
+    if (readOnly || isSaving) return;
+    logPhotoUI("delete:start", { id });
     await deletePhoto(id);
+    logPhotoUI("delete:done", { id });
     await refresh();
-  }, [readOnly, refresh]);
+  }, [isSaving, readOnly, refresh]);
+
+  const hasPending = pending.length > 0;
+  const disableCapture = !ownerId || readOnly || isSaving;
+  const saveLabel = pending.length === 1 ? "Guardar 1 foto" : `Guardar ${pending.length} fotos`;
+  const disableSave = readOnly || !ownerId || !hasPending || isSaving;
+  const disableDiscard = !hasPending || isSaving;
 
   return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
         <input
           ref={camRef}
           type="file"
@@ -100,19 +257,70 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
           className="hidden"
           onChange={(e) => onPick(e.target.files?.[0] ?? null)}
         />
-        <Button disabled={!ownerId || readOnly} onClick={() => camRef.current?.click()}>Tomar foto</Button>
+        <Button disabled={disableCapture} onClick={() => camRef.current?.click()}>Tomar foto</Button>
         <Button
-          disabled={!ownerId || readOnly}
+          disabled={disableCapture}
           variant="secondary"
           onClick={() => galRef.current?.click()}
         >
           Subir desde galeria
         </Button>
+        {hasPending && (
+          <>
+            <Button disabled={disableSave} onClick={() => void handleSave()}>
+              {isSaving ? "Guardando..." : saveLabel}
+            </Button>
+            <Button
+              disabled={disableDiscard}
+              onClick={discardPending}
+              variant="outline"
+            >
+              Descartar
+            </Button>
+          </>
+        )}
       </div>
-      {(!ownerId || readOnly) && (
+      {errorMsg && (
+        <p className="text-sm text-destructive">{errorMsg}</p>
+      )}
+      {(!ownerId || readOnly) && !hasPending && (
         <p className="text-sm text-muted-foreground">
           {!ownerId ? "Debes iniciar sesion para capturar o ver tus fotos." : "Tus permisos actuales son de solo lectura."}
         </p>
+      )}
+      {hasPending && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">
+            Pendientes por guardar ({pending.length})
+          </p>
+          <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {pending.map((item) => (
+              <li key={item.id} className="relative group">
+                {item.url ? (
+                  <img
+                    src={item.url}
+                    alt={item.name || item.id}
+                    className="w-full h-32 object-cover rounded-xl border"
+                  />
+                ) : (
+                  <div className="w-full h-32 flex items-center justify-center rounded-xl border bg-muted text-xs text-muted-foreground">
+                    Vista previa no disponible
+                  </div>
+                )}
+                <div className="absolute inset-x-0 bottom-0 p-2 text-xs bg-black/40 text-white rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
+                  <p className="truncate">{item.name || "Foto pendiente"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removePending(item.id)}
+                  className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-xs bg-muted text-foreground px-2 py-1 rounded"
+                >
+                  Quitar
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
         {photos.map((p) => (
@@ -140,4 +348,3 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
     </div>
   );
 }
-

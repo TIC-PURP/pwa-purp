@@ -229,6 +229,14 @@ export async function openDatabases() {
 }
 
 /** Arranca replicacion continua (local <-> remote) */
+const enableSyncLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_SYNC === "true";
+
+function logSyncEvent(label: string, payload?: unknown) {
+  if (!enableSyncLogs) return;
+  const logger = label === "error" ? console.error : console.debug;
+  logger(`[sync] ${label}`, payload);
+}
+
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
@@ -239,10 +247,10 @@ export async function startSync() {
   const opts: any = { live: true, retry: true, heartbeat: 25000, timeout: 55000 };
   syncHandler = localDB.sync(remoteDB, opts);
   syncHandler
-    .on("change", (i: any) => console.log("[sync] change", i.direction))
-    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
-    .on("active", () => console.log("[sync] active"))
-    .on("error", (e: any) => console.error("[sync] error", e));
+    .on("change", (i: any) => logSyncEvent("change", i.direction))
+    .on("paused", (e: any) => logSyncEvent("paused", e?.message || "ok"))
+    .on("active", () => logSyncEvent("active"))
+    .on("error", (e: any) => logSyncEvent("error", e));
   return syncHandler;
 }
 
@@ -1301,6 +1309,18 @@ async function ensurePhotoIndexes() {
     });
   } catch {}
 }
+const enablePhotoLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true";
+
+function logPhotoDb(label: string, payload?: unknown, level: "debug" | "error" = "debug") {
+  if (!enablePhotoLogs) return;
+  const logger = level === "error" ? console.error : console.debug;
+  if (typeof payload === "undefined") {
+    logger(`[photos-db] ${label}`);
+  } else {
+    logger(`[photos-db] ${label}`, payload);
+  }
+}
+
 
 /** Genera un id corto aleatorio */
 function rid(len = 6) {
