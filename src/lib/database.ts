@@ -215,7 +215,7 @@ export async function openDatabases() {
   if (!remoteDB) {
     const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
     remoteDB = new PouchDB(remoteUrl, {
-      skip_setup: false,
+      skip_setup: true,
       fetch: (url: RequestInfo, opts: any = {}) => {
         opts = opts || {};
         opts.credentials = "include"; // enviar cookie AuthSession
@@ -827,11 +827,6 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
 
   const toLocal = sanitizeForCouch(updated);
   await safeLocalPut(toLocal);
-  // After saving locally, start replication to push updates to CouchDB.
-  // We ignore errors here because the replicator may already be running
-  try {
-    await startSync();
-  } catch {}
   return { ...toLocal, ___writePath: "local" } as any;
 }
 /** Borrado logico - LOCAL FIRST */
@@ -1020,10 +1015,10 @@ export async function saveUserAvatar(
   latest.updatedAt = new Date().toISOString();
   await localDB.put(sanitizeForCouch(latest));
 
-  // Best-effort: subir a remoto si existe remoteDB
+  // Best-effort: subir a remoto si hay internet
   try {
-    const canRemote = !!remoteDB;
-    if (canRemote) {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (!rdoc) {
         const base = sanitizeForCouch(latest);
@@ -1062,10 +1057,6 @@ export async function saveUserAvatar(
       rlatest.updatedAt = new Date().toISOString();
       await remoteDB.put(sanitizeForCouch(rlatest));
     }
-    // Iniciar replicación para asegurar que los adjuntos lleguen al remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
 
   return { ok: true, _id, _rev: res?.rev };
@@ -1085,8 +1076,8 @@ export async function deleteUserAvatar(email: string) {
     await localDB.put(sanitizeForCouch(latest));
   } catch {}
   try {
-    const canRemote = !!remoteDB;
-    if (canRemote) {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (rdoc) {
         let rrev = rdoc._rev;
@@ -1098,10 +1089,6 @@ export async function deleteUserAvatar(email: string) {
         await remoteDB.put(sanitizeForCouch(rlatest));
       }
     }
-    // Iniciar replicación para asegurar que los adjuntos se reflejen en el remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
   return { ok: true } as const;
 }export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
@@ -1275,12 +1262,13 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   latest.updatedAt = new Date().toISOString();
   await (localDB as any).put(sanitizeForCouch(latest));
 
-  // Best-effort: subir attachments y metadata al remoto.  
-  // Siempre intentamos la operación si existe remoteDB; si no, los adjuntos se 
-  // sincronizarán automáticamente cuando startSync() esté activo.  
+  // Best-effort: subir attachments y metadata al remoto si hay internet.  
+  // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
+  // similar a lo que hace saveUserAvatar(). Si no hay conexión, los adjuntos  
+  // se sincronizarán automáticamente cuando startSync() esté activo.  
   try {
-    const canRemote = !!remoteDB;
-    if (canRemote) {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
       let rdoc: any = null;
       try { rdoc = await remoteDB.get(id); } catch {}
       // Si no existe el doc remoto, crearlo con la metadata actual
@@ -1307,10 +1295,6 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
         } catch {}
       }
     }
-    // Siempre iniciar replicación para asegurar que los adjuntos lleguen al remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
 
   return { ok: true, _id: id };

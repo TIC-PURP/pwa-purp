@@ -130,12 +130,3 @@ pwa-purp/
 - Usa Redux y soporta Redux DevTools para depuración.
 - UI construida con TailwindCSS y componentes reutilizables.
 
-
-
-## Avatar
-Componente: `src/components/AvatarPicker.tsx`. Requiere login previo (/_session) y el proxy `/api/couch`.
-
-
-## Módulo B (Pruebas)
-Ruta: `/modulo-b/pruebas`.
-Guarda fotos en local (PouchDB) y sincroniza con remoto `/api/couch/pwa-purp`.
