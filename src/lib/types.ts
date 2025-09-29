@@ -18,9 +18,6 @@ export interface User {
   role: Role; // Rol asignado
   permissions: Permission[]; // Lista de permisos
   modulePermissions?: ModulePermissions; // Permisos por modulo (v2)
-  hasAvatar?: boolean; // Bandera si el usuario tiene avatar almacenado
-  avatarUpdatedAt?: string; // Marca de tiempo del ultimo cambio del avatar
-  avatarUrl?: string | null; // URL temporal del avatar cargado desde IndexedDB (solo cliente)
   isActive: boolean; // Estado del usuario
   createdAt: string; // Fecha de creacion
   updatedAt: string; // Fecha de ultima actualizacion

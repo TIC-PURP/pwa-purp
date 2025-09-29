@@ -36,11 +36,7 @@ export interface LoginCredentials {
 function persistSession(user: User | null, token: string | null) {
   if (typeof window === "undefined") return;
   if (user && token) {
-    const toStore: any = { ...user };
-    if ("avatarUrl" in toStore) {
-      delete toStore.avatarUrl;
-    }
-    window.localStorage.setItem("auth", JSON.stringify({ user: toStore, token }));
+    window.localStorage.setItem("auth", JSON.stringify({ user, token }));
   } else {
     window.localStorage.removeItem("auth");
   }
@@ -263,11 +259,7 @@ const authSlice = createSlice({
       state.isAuthenticated = true;
       if (typeof window !== "undefined") {
         const token = state.token ?? "cookie-session";
-        const toStore: any = { ...action.payload };
-        if ("avatarUrl" in toStore) {
-          delete toStore.avatarUrl;
-        }
-        window.localStorage.setItem("auth", JSON.stringify({ user: toStore, token }));
+        window.localStorage.setItem("auth", JSON.stringify({ user: action.payload, token }));
       }
     },
     clearError(state) {

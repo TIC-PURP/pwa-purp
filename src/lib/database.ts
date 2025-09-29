@@ -6,19 +6,7 @@ const isClient = typeof window !== "undefined";
 let PouchDB: any = null;
 let localDB: any = null;
 let remoteDB: any = null;
-let remoteUsersDB: any = null;
 let syncHandler: any = null;
-let userIndexesReady = false;
-let photoIndexesReady = false;
-let userIndexesPromise: Promise<void> | null = null;
-let photoIndexesPromise: Promise<void> | null = null;
-
-function resetIndexState() {
-  userIndexesReady = false;
-  photoIndexesReady = false;
-  userIndexesPromise = null;
-  photoIndexesPromise = null;
-}
 
 export type CouchEnv = {
   serverBase: string;
@@ -62,31 +50,14 @@ function isClosingError(err: any) {
 async function safeLocalGet(id: string) {
   try { return await (localDB as any).get(id); }
   catch (e) {
-    if (isClosingError(e)) {
-      try {
-        /* force reopen */
-        /* @ts-ignore */
-        localDB = null;
-        resetIndexState();
-      } catch {}
-      await openDatabases();
-      return await (localDB as any).get(id);
-    }
+    if (isClosingError(e)) { try { /* force reopen */ /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).get(id); }
     throw e;
   }
 }
 async function safeLocalPut(doc: any) {
   try { return await (localDB as any).put(doc); }
   catch (e) {
-    if (isClosingError(e)) {
-      try {
-        /* @ts-ignore */
-        localDB = null;
-        resetIndexState();
-      } catch {}
-      await openDatabases();
-      return await (localDB as any).put(doc);
-    }
+    if (isClosingError(e)) { try { /* @ts-ignore */ localDB = null; } catch {} await openDatabases(); return await (localDB as any).put(doc); }
     throw e;
   }
 }
@@ -101,108 +72,6 @@ async function ensurePouch() {
   PouchDB.plugin(find);
 }
 
-async function ensureRemoteUsersDB() {
-  if (!isClient) return null;
-  await ensurePouch();
-  if (remoteUsersDB) return remoteUsersDB;
-  const remoteBase = getRemoteBase();
-  remoteUsersDB = new PouchDB(`${remoteBase}/_users`, {
-    skip_setup: true,
-    fetch: (url: RequestInfo, opts: any = {}) => {
-      opts = opts || {};
-      opts.credentials = "include";
-      return (window as any).fetch(url as any, opts);
-    },
-    ajax: { withCredentials: true },
-  });
-  return remoteUsersDB;
-}
-
-async function createSquareThumbnail(blob: Blob, size = 64): Promise<Blob | null> {
-  if (!isClient) return null;
-  try {
-    const url = URL.createObjectURL(blob);
-    try {
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = reject;
-        img.src = url;
-      });
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return null;
-      // @ts-ignore
-      ctx.imageSmoothingQuality = "high";
-      const ratio = Math.max(size / img.width, size / img.height);
-      const dw = img.width * ratio;
-      const dh = img.height * ratio;
-      const dx = (size - dw) / 2;
-      const dy = (size - dh) / 2;
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(img, dx, dy, dw, dh);
-      let dataUrl = "";
-      try {
-        dataUrl = canvas.toDataURL("image/webp", 0.8);
-        if (!dataUrl.startsWith("data:image/webp")) throw new Error("webp unsupported");
-      } catch {
-        dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-      }
-      const response = await fetch(dataUrl);
-      return await response.blob();
-    } finally {
-      try { URL.revokeObjectURL(url); } catch {}
-    }
-  } catch {
-    return null;
-  }
-}
-
-async function putAttachmentWithRetry(
-  db: any,
-  docId: string,
-  attachmentId: string,
-  rev: string,
-  data: Blob,
-  type: string,
-) {
-  try {
-    const res = await db.putAttachment(docId, attachmentId, rev, data, type);
-    return res.rev;
-  } catch (err: any) {
-    if (err?.status === 409) {
-      const latest = await db.get(docId);
-      const res = await db.putAttachment(docId, attachmentId, latest._rev, data, type);
-      return res.rev;
-    }
-    throw err;
-  }
-}
-
-async function removeAttachmentWithRetry(
-  db: any,
-  docId: string,
-  attachmentId: string,
-  rev: string,
-) {
-  try {
-    const res = await db.removeAttachment(docId, attachmentId, rev);
-    return res.rev;
-  } catch (err: any) {
-    if (err?.status === 409) {
-      const latest = await db.get(docId);
-      const res = await db.removeAttachment(docId, attachmentId, latest._rev);
-      return res.rev;
-    }
-    if (err?.status === 404) {
-      return rev;
-    }
-    throw err;
-  }
-}
-
 /** Helpers de IDs / normalizacion */
 function slug(s: string) {
   return (s || "")
@@ -215,11 +84,6 @@ function toUserDocId(input: string) {
   if (input.includes(":")) return input;           // user:xxx
   if (input.startsWith("user_")) return `user:${slug(input.slice(5))}`;
   return `user:${slug(input)}`;                    // email o username
-}
-function toUsersDbDocId(input: string) {
-  const raw = (input || "").trim();
-  if (!raw) return "";
-  return raw.startsWith("org.couchdb.user:") ? raw : `org.couchdb.user:${raw}`;
 }
 const MODULE_PERMISSION_DEFAULTS = { MOD_A: "NONE", MOD_B: "NONE", MOD_C: "NONE", MOD_D: "NONE" } as const;
 
@@ -254,12 +118,6 @@ function buildUserDocFromData(data: any) {
     : (!Array.isArray(data.permissions) && typeof data.permissions === "object" ? data.permissions : undefined);
   const modulePermissions = withModulePermissionDefaults(moduleSource);
   const permissions = Array.isArray(data.permissions) ? data.permissions : ["read"];
-  const extra = (data && typeof data.extra === "object" && data.extra) ? { ...data.extra } : {};
-  if (extra && typeof extra === "object" && "avatarUrl" in extra) {
-    delete (extra as any).avatarUrl;
-  }
-  const hasAvatar = typeof data.hasAvatar === "boolean" ? data.hasAvatar : undefined;
-  const avatarUpdatedAt = typeof data.avatarUpdatedAt === "string" ? data.avatarUpdatedAt : undefined;
   return {
     _id,
     id: `user_${key}`,
@@ -273,9 +131,7 @@ function buildUserDocFromData(data: any) {
     isActive: data.isActive !== false,
     createdAt: data.createdAt || now,
     updatedAt: now,
-    ...(typeof hasAvatar === "boolean" ? { hasAvatar } : {}),
-    ...(avatarUpdatedAt ? { avatarUpdatedAt } : {}),
-    ...extra,
+    ...data.extra,
   };
 }
 
@@ -354,7 +210,6 @@ export async function openDatabases() {
 
   if (!localDB) {
     localDB = new PouchDB(`${dbName}_local`, { auto_compaction: true });
-    resetIndexState();
   }
 
   if (!remoteDB) {
@@ -530,31 +385,18 @@ export async function guardarUsuarioOffline(user: any) {
 async function ensureUserIndexes() {
   await openDatabases();
   if (!localDB) return;
-  if (userIndexesReady) return;
-  if (userIndexesPromise) {
-    await userIndexesPromise;
-    return;
-  }
-  userIndexesPromise = (async () => {
-    try {
-      await localDB.createIndex({
-        index: { fields: ["type", "updatedAt"] },
-        name: "idx-type-updatedAt",
-      });
-    } catch {}
-    try {
-      await localDB.createIndex({
-        index: { fields: ["email"] },
-        name: "idx-email",
-      });
-    } catch {}
-    userIndexesReady = true;
-  })();
   try {
-    await userIndexesPromise;
-  } finally {
-    userIndexesPromise = null;
-  }
+    await localDB.createIndex({
+      index: { fields: ["type", "updatedAt"] },
+      name: "idx-type-updatedAt",
+    });
+  } catch {}
+  try {
+    await localDB.createIndex({
+      index: { fields: ["email"] },
+      name: "idx-email",
+    });
+  } catch {}
 }
 
 /** Lista usuarios (activos por defecto) */
@@ -715,18 +557,6 @@ function normalizeUserDocShape(u: any) {
     ? mp
     : (!Array.isArray(u.permissions) && typeof u.permissions === "object" ? u.permissions : undefined);
   out.modulePermissions = withModulePermissionDefaults(moduleSource);
-  if (typeof out.hasAvatar !== "boolean") {
-    const attachments = out._attachments;
-    const hasAttachment = attachments && typeof attachments === "object"
-      && ("avatar" in attachments || "avatar_64" in attachments);
-    out.hasAvatar = Boolean(hasAttachment);
-  }
-  if (typeof out.avatarUpdatedAt !== "string") {
-    delete out.avatarUpdatedAt;
-  }
-  if ("avatarUrl" in out) {
-    delete out.avatarUrl;
-  }
   return out;
 }
 
@@ -856,9 +686,6 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   }
 
   delete patch._id;
-  if ("avatarUrl" in patch) {
-    delete patch.avatarUrl;
-  }
   if (typeof patch.password === "string" && patch.password.trim() === "") {
     delete patch.password;
   }
@@ -872,10 +699,6 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     } else {
       throw e;
     }
-  }
-
-  if (doc && typeof doc === "object" && "avatarUrl" in doc) {
-    delete doc.avatarUrl;
   }
 
   const explicitModulePatch: ModulePermissionPatch = (patch.modulePermissions && typeof patch.modulePermissions === "object" && !Array.isArray(patch.modulePermissions))
@@ -1132,25 +955,6 @@ export async function watchUserDocByEmail(
       console.warn("[watchUserDocByEmail] error", err?.message || err);
     });
 
-  // Emit the current document snapshot immediately so the UI has data before the first change
-  try {
-    for (const id of ids) {
-      try {
-        const doc = await localDB.get(id);
-        if (doc) {
-          await Promise.resolve(onUpdate(doc));
-          break;
-        }
-      } catch (e: any) {
-        if (e?.status !== 404) {
-          console.warn("[watchUserDocByEmail] initial load failed", e?.message || e);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[watchUserDocByEmail] initial emit error", (err as any)?.message || err);
-  }
-
   return () => {
     try { /* @ts-ignore */ feed?.cancel?.(); } catch {}
   };
@@ -1180,21 +984,31 @@ export async function saveUserAvatar(
   }
   // putAttachment local-first
   const res = await localDB.putAttachment(_id, "avatar", doc._rev, blob, contentType);
-  const thumbBlob = await createSquareThumbnail(blob);
-  if (thumbBlob) {
-    try {
-      await putAttachmentWithRetry(
-        localDB,
-        _id,
-        "avatar_64",
-        res?.rev || doc._rev,
-        thumbBlob,
-        thumbBlob.type || "image/jpeg",
-      );
-    } catch (err) {
-      console.warn("[avatar] local thumb save failed", err);
+  // tambien miniatura 64x64
+  try {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+    URL.revokeObjectURL(url);
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      // @ts-ignore
+      ctx.imageSmoothingQuality = "high";
+      const r = Math.max(size / img.width, size / img.height);
+      const dw = img.width * r, dh = img.height * r;
+      const dx = (size - dw) / 2, dy = (size - dh) / 2;
+      ctx.drawImage(img, dx, dy, dw, dh);
+      let d = "";
+      try { d = canvas.toDataURL("image/webp", 0.8); if (!d.startsWith("data:image/webp")) throw new Error(); }
+      catch { d = canvas.toDataURL("image/jpeg", 0.8); }
+      const thumb = await (await fetch(d)).blob();
+      const latest0 = await localDB.get(_id);
+      await localDB.putAttachment(_id, "avatar_64", latest0._rev, thumb, thumb.type || "image/jpeg");
     }
-  }
+  } catch {}
   // marcar bandera y updatedAt
   const latest = await localDB.get(_id);
   latest.hasAvatar = true;
@@ -1211,31 +1025,38 @@ export async function saveUserAvatar(
         const put = await remoteDB.put(base);
         rdoc = { ...base, _rev: put.rev };
       }
-      let remoteRev = await putAttachmentWithRetry(remoteDB, _id, "avatar", rdoc._rev, blob, contentType);
-      if (thumbBlob) {
-        try {
-          remoteRev = await putAttachmentWithRetry(
-            remoteDB,
-            _id,
-            "avatar_64",
-            remoteRev,
-            thumbBlob,
-            thumbBlob.type || "image/jpeg",
-          );
-        } catch (err) {
-          console.warn("[avatar] remote thumb save failed", err);
+      const r = await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
+      // tambien miniatura remota
+      try {
+        const size = 64;
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+        URL.revokeObjectURL(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // @ts-ignore
+          ctx.imageSmoothingQuality = "high";
+          const r2 = Math.max(size / img.width, size / img.height);
+          const dw2 = img.width * r2, dh2 = img.height * r2;
+          const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
+          ctx.drawImage(img, dx2, dy2, dw2, dh2);
+          let d2 = "";
+          try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
+          catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
+          const thumb2 = await (await fetch(d2)).blob();
+          const rlatest0 = await remoteDB.get(_id);
+          await remoteDB.putAttachment(_id, "avatar_64", rlatest0._rev, thumb2, thumb2.type || "image/jpeg");
         }
-      }
+      } catch {}
       // actualizar doc remoto con bandera por coherencia
       const rlatest = await remoteDB.get(_id);
       rlatest.hasAvatar = true;
       rlatest.updatedAt = new Date().toISOString();
       await remoteDB.put(sanitizeForCouch(rlatest));
     }
-    // Iniciar replicación para asegurar que los adjuntos lleguen al remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
 
   return { ok: true, _id, _rev: res?.rev };
@@ -1247,8 +1068,8 @@ export async function deleteUserAvatar(email: string) {
   const _id = toUserDocId(email);
   try {
     let rev = (await localDB.get(_id))._rev;
-    try { rev = await removeAttachmentWithRetry(localDB, _id, "avatar", rev); } catch {}
-    try { rev = await removeAttachmentWithRetry(localDB, _id, "avatar_64", rev); } catch {}
+    try { const r1 = await localDB.removeAttachment(_id, "avatar", rev); rev = r1.rev; } catch {}
+    try { const r2 = await localDB.removeAttachment(_id, "avatar_64", rev); rev = r2.rev; } catch {}
     const latest = await localDB.get(_id);
     latest.hasAvatar = false;
     latest.updatedAt = new Date().toISOString();
@@ -1260,18 +1081,14 @@ export async function deleteUserAvatar(email: string) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (rdoc) {
         let rrev = rdoc._rev;
-        try { rrev = await removeAttachmentWithRetry(remoteDB, _id, "avatar", rrev); } catch {}
-        try { rrev = await removeAttachmentWithRetry(remoteDB, _id, "avatar_64", rrev); } catch {}
+        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", rrev); rrev = rr1.rev; } catch {}
+        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", rrev); rrev = rr2.rev; } catch {}
         const rlatest = await remoteDB.get(_id);
         rlatest.hasAvatar = false;
         rlatest.updatedAt = new Date().toISOString();
         await remoteDB.put(sanitizeForCouch(rlatest));
       }
     }
-    // Iniciar replicación para asegurar que los adjuntos se reflejen en el remoto
-    try {
-      await startSync();
-    } catch {}
   } catch {}
   return { ok: true } as const;
 }export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
@@ -1335,7 +1152,6 @@ async function deleteRemoteAuthUser(name?: string) {
 // =========================
 type PhotoMeta = {
   owner?: string;
-  module?: string;
   lat?: number;
   lng?: number;
   tags?: string[];
@@ -1345,7 +1161,6 @@ type PhotoDoc = {
   _id: string;
   type: "photo";
   owner?: string;
-  module?: string;
   createdAt: string;
   lat?: number;
   lng?: number;
@@ -1359,37 +1174,18 @@ type PhotoDoc = {
 async function ensurePhotoIndexes() {
   await openDatabases();
   if (!localDB) return;
-  if (photoIndexesReady) return;
-  if (photoIndexesPromise) {
-    await photoIndexesPromise;
-    return;
-  }
-  photoIndexesPromise = (async () => {
-    try {
-      await (localDB as any).createIndex({
-        index: { fields: ["type", "createdAt"] },
-        name: "idx-photo-type-createdAt",
-      });
-    } catch {}
-    try {
-      await (localDB as any).createIndex({
-        index: { fields: ["type", "owner", "createdAt"] },
-        name: "idx-photo-owner-createdAt",
-      });
-    } catch {}
-    try {
-      await (localDB as any).createIndex({
-        index: { fields: ["type", "module", "owner", "createdAt"] },
-        name: "idx-photo-module-owner-createdAt",
-      });
-    } catch {}
-    photoIndexesReady = true;
-  })();
   try {
-    await photoIndexesPromise;
-  } finally {
-    photoIndexesPromise = null;
-  }
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "createdAt"] },
+      name: "idx-photo-type-createdAt",
+    });
+  } catch {}
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "owner", "createdAt"] },
+      name: "idx-photo-owner-createdAt",
+    });
+  } catch {}
 }
 
 /** Genera un id corto aleatorio */
@@ -1432,14 +1228,11 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   if (!localDB) throw new Error("DB not ready");
   const nowIso = new Date().toISOString();
   const id = `photo:${nowIso}:${rid(4)}`;
-  const owner = meta.owner ? String(meta.owner).trim() : undefined;
-  const moduleId = meta.module ? String(meta.module).trim() : undefined;
 
   const doc: PhotoDoc = {
     _id: id,
     type: "photo",
-    ...(owner ? { owner } : {}),
-    ...(moduleId ? { module: moduleId } : {}),
+    owner: meta.owner,
     createdAt: nowIso,
     lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
     hasOriginal: true,
@@ -1520,14 +1313,14 @@ export async function getPhotoThumbUrl(id: string) {
 }
 
 /** Lista fotos (por owner opcional), ordenadas desc por createdAt */
-export async function listPhotos(opts?: { owner?: string; module?: string; limit?: number; }) {
+export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
   await ensurePhotoIndexes();
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
-  if (opts?.module) selector.module = opts.module;
   const res = await (localDB as any).find({
     selector,
+    sort: [{ type: "desc" }, { createdAt: "desc" }],
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
