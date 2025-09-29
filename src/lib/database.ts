@@ -1376,11 +1376,21 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     hasThumb: true,
     updatedAt: nowIso,
   };
+  logPhotoDb("save:start", {
+    id,
+    owner: meta.owner,
+    ownerName: meta.ownerName,
+    ownerEmail: meta.ownerEmail,
+    size: (file as any)?.size ?? null,
+    type: (file as any)?.type ?? null,
+  });
   // 1) Crear doc base
-  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
+  try { await (localDB as any).put(sanitizeForCouch(doc)); logPhotoDb("save:local-put", { id }); } catch (e: any) {
+    logPhotoDb("save:local-put-error", { id, error: e }, "error");
     if (e?.status === 409) {
       const existing = await (localDB as any).get(id);
       await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
+      logPhotoDb("save:local-put-conflict-resolved", { id });
     } else { throw e; }
   }
 
@@ -1388,16 +1398,19 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
   let latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
+  logPhotoDb("save:local-thumb", { id });
 
   // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
   const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
   latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
+  logPhotoDb("save:local-original", { id });
 
   // 4) Update metadata
   latest = await (localDB as any).get(id);
   latest.updatedAt = new Date().toISOString();
   await (localDB as any).put(sanitizeForCouch(latest));
+  logPhotoDb("save:local-meta", { id });
 
   // Best-effort: subir attachments y metadata al remoto si hay internet.  
   // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
@@ -1405,22 +1418,29 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   // se sincronizarán automáticamente cuando startSync() esté activo.  
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    logPhotoDb("save:remote-check", { id, online: Boolean(online) });
     if (online) {
       let rdoc: any = null;
-      try { rdoc = await remoteDB.get(id); } catch {}
+      try { rdoc = await remoteDB.get(id); } catch (error) {
+        logPhotoDb("save:remote-get-miss", { id, error });
+      }
       // Si no existe el doc remoto, crearlo con la metadata actual
       if (!rdoc) {
         try {
           const base = sanitizeForCouch(latest);
           const put = await remoteDB.put(base);
           rdoc = { ...base, _rev: put.rev };
-        } catch {}
+          logPhotoDb("save:remote-base-created", { id });
+        } catch (error) {
+          logPhotoDb("save:remote-base-error", { id, error }, "error");
+        }
       }
       if (rdoc) {
         // Subir thumb y original, manejando las revisiones
         try {
           let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
           rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
+          logPhotoDb("save:remote-attachments", { id });
           // Actualizar flags y updatedAt en remoto
           try {
             const rlatest = await remoteDB.get(id);
@@ -1428,11 +1448,20 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
             rlatest.hasThumb = true;
             rlatest.updatedAt = new Date().toISOString();
             await remoteDB.put(sanitizeForCouch(rlatest));
-          } catch {}
-        } catch {}
+            logPhotoDb("save:remote-meta", { id });
+          } catch (error) {
+            logPhotoDb("save:remote-meta-error", { id, error }, "error");
+          }
+        } catch (error) {
+          logPhotoDb("save:remote-attachments-error", { id, error }, "error");
+        }
       }
     }
-  } catch {}
+  } catch (error) {
+    logPhotoDb("save:remote-unexpected-error", { id, error }, "error");
+  }
+
+  logPhotoDb("save:done", { id });
 
   return { ok: true, _id: id };
 }
@@ -1455,6 +1484,7 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
+  logPhotoDb("list:query", { selector, limit });
   const sort = opts?.owner
     ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
     : [{ type: "asc" }, { createdAt: "desc" }];
@@ -1464,19 +1494,25 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
+  logPhotoDb("list:result", { count: docs.length });
   return docs as PhotoDoc[];
 }
 
 /** Elimina la foto completa */
 export async function deletePhoto(id: string) {
   await openDatabases();
+  logPhotoDb("delete:start", { id });
   const doc = await (localDB as any).get(id);
   await (localDB as any).remove(doc);
   try {
     if (remoteDB) {
       const remoteDoc = await (remoteDB as any).get(id);
       await (remoteDB as any).remove(remoteDoc);
+      logPhotoDb("delete:remote", { id });
     }
-  } catch {}
+  } catch (error) {
+    logPhotoDb("delete:remote-error", { id, error }, "error");
+  }
+  logPhotoDb("delete:done", { id });
   return { ok: true };
 }
