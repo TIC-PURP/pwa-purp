@@ -8,18 +8,35 @@ function getAdminAuthHeader(): string | null {
   return `Basic ${token}`;
 }
 
+/**
+ * Determina el nombre de la base de datos de CouchDB a partir de la URL pública
+ * o de la variable de entorno COUCHDB_DB.
+ *
+ * Cuando NEXT_PUBLIC_COUCHDB_URL incluye el nombre de la base como último
+ * segmento del path (por ejemplo "https://host/dbname"), lo devuelve. Si
+ * no hay ningún segmento (por ejemplo cuando es la raíz del host), usa el
+ * valor de COUCHDB_DB.  Si no se puede determinar, lanza un error.
+ */
 function getCouchDbName(): string {
-  const raw = process.env.NEXT_PUBLIC_COUCHDB_URL || "";
-  if (!raw) {
-    throw new Error("Missing NEXT_PUBLIC_COUCHDB_URL env");
+  const envDb = (process.env.COUCHDB_DB || "").trim();
+  const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
+  if (raw) {
+    try {
+      const url = new URL(raw);
+      const parts = url.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+      const dbCandidate = parts.pop();
+      // Si el último segmento no comienza con "_" lo consideramos nombre de DB
+      if (dbCandidate && !dbCandidate.startsWith("_")) {
+        return dbCandidate;
+      }
+    } catch {
+      // Ignorar errores de URL y continuar con envDb
+    }
   }
-  const url = new URL(raw);
-  const parts = url.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-  const dbName = parts.pop();
-  if (!dbName) {
-    throw new Error("Unable to derive CouchDB database name from NEXT_PUBLIC_COUCHDB_URL");
+  if (envDb) {
+    return envDb;
   }
-  return dbName;
+  throw new Error("Unable to derive CouchDB database name from NEXT_PUBLIC_COUCHDB_URL or COUCHDB_DB");
 }
 
 function getCouchHost(): string {
