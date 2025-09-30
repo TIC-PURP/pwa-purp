@@ -483,6 +483,21 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
+
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const errJson = await res.clone().json();
+        detail = String((errJson as any)?.error || (errJson as any)?.message || "").trim();
+      } catch {
+        try {
+          detail = String(await res.clone().text()).trim();
+        } catch {}
+      }
+      const statusInfo = `${res.status || ""}${res.statusText ? ` ${res.statusText}` : ""}`.trim();
+      throw new Error(`Remote users request failed${statusInfo ? ` (${statusInfo})` : ""}${detail ? `: ${detail}` : ""}`);
+    }
+
     const data = await res.json().catch(() => ({} as any));
     const list = Array.isArray((data as any)?.users) ? (data as any).users : [];
 
