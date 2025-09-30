@@ -49,31 +49,56 @@ export function getCouchEnv(): CouchEnv {
   const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
   if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no esta definido");
 
-  const url = new URL(raw);
-  const cleanPath = url.pathname.replace(/\/+$/, "");
-  const parts = cleanPath.split("/").filter(Boolean);
+  // Nombre de la base proporcionado explícitamente vía entorno
   const envDb = (process.env.COUCHDB_DB || "").trim();
 
-  let dbCandidate: string | undefined;
-  if (parts.length > 0) {
-    const last = parts[parts.length - 1];
-    if (!last.startsWith("_")) {
-      dbCandidate = last;
+  // Cuando el valor es una URL absoluta utilizamos la API URL estándar
+  // para extraer host, origin y pathname.  Si es una ruta relativa (como
+  // "/api/couch") new URL lanzará una excepción; en ese caso hacemos un
+  // parseo manual para derivar el nombre de la base y el path base.
+  try {
+    const url = new URL(raw);
+    const cleanPath = url.pathname.replace(/\/+$/, "");
+    const parts = cleanPath.split("/").filter(Boolean);
+
+    let dbCandidate: string | undefined;
+    if (parts.length > 0) {
+      const last = parts[parts.length - 1];
+      if (!last.startsWith("_")) {
+        dbCandidate = last;
+      }
     }
+
+    const dbName = (envDb || dbCandidate || "pwa-purp").trim();
+    if (!dbName) {
+      throw new Error("No se pudo determinar el nombre de la base de CouchDB");
+    }
+
+    const hasDbInUrl = Boolean(dbCandidate && dbCandidate === dbName);
+    const baseParts = hasDbInUrl ? parts.slice(0, -1) : parts;
+    const basePath = baseParts.join("/");
+    const origin = url.origin || `${url.protocol}//${url.host}`;
+    const serverBase = `${origin}${basePath ? `/${basePath}` : ""}`.replace(/\/+$/, "");
+
+    return { serverBase, dbName };
+  } catch {
+    // Ruta relativa: eliminar barras iniciales/finales y analizar partes
+    const clean = raw.replace(/^\/+/g, '').replace(/\/+$/g, '');
+    const parts = clean.split('/').filter(Boolean);
+    let dbCandidate: string | undefined;
+    if (parts.length > 0) {
+      const last = parts[parts.length - 1];
+      if (!last.startsWith('_')) {
+        dbCandidate = last;
+      }
+    }
+    const dbName = (envDb || dbCandidate || 'pwa-purp').trim();
+    // En rutas relativas no podemos derivar un origin; utilizamos el valor raw
+    // tal cual para serverBase.  Esto es adecuado porque en cliente el
+    // servidor remoto lo determinará getRemoteBase() devolviendo "/api/couch".
+    const serverBase = raw.replace(/\/+$/, '');
+    return { serverBase, dbName };
   }
-
-  const dbName = (envDb || dbCandidate || "pwa-purp").trim();
-  if (!dbName) {
-    throw new Error("No se pudo determinar el nombre de la base de CouchDB");
-  }
-
-  const hasDbInUrl = Boolean(dbCandidate && dbCandidate === dbName);
-  const baseParts = hasDbInUrl ? parts.slice(0, -1) : parts;
-  const basePath = baseParts.join("/");
-  const origin = url.origin || `${url.protocol}//${url.host}`;
-  const serverBase = `${origin}${basePath ? `/${basePath}` : ""}`.replace(/\/+$/, "");
-
-  return { serverBase, dbName };
 }
 
 /** Cuando corre en el navegador usamos el proxy /couchdb (same-origin con cookie); en SSR va directo */
