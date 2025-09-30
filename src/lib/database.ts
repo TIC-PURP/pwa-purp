@@ -270,7 +270,7 @@ export async function stopSync() {
 
 /** Login online contra /api/auth/login */
 export async function loginOnlineToCouchDB(email: string, password: string) {
-  console.log("[db] loginOnlineToCouchDB start", { email });
+  console.log("[db] loginOnlineToCouchDB inicio", { email });
   const body = JSON.stringify({ email, password });
   let res: Response;
   try {
@@ -292,7 +292,7 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
     throw new Error("No hay conexin a internet. Revisa tu conexin e intntalo nuevamente.");
   }
   const data = await res.json().catch(() => ({}));
-  console.log("[db] loginOnlineToCouchDB response", res.status, data);
+  console.log("[db] loginOnlineToCouchDB respuesta", res.status, data);
   // Mejor manejo de errores: si el API devolvi error, propagar mensaje claro
   if (!res.ok || !data?.ok) {
     const msg = (data && (data.error || data.reason)) || res.statusText || "login failed";
@@ -1309,11 +1309,15 @@ async function ensurePhotoIndexes() {
     });
   } catch {}
 }
-const enablePhotoLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true";
+const enablePhotoLogs =
+  typeof process !== "undefined"
+    ? process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true" ||
+      (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS !== "false")
+    : false;
 
 function logPhotoDb(label: string, payload?: unknown, level: "debug" | "error" = "debug") {
   if (!enablePhotoLogs) return;
-  const logger = level === "error" ? console.error : console.debug;
+  const logger = level === "error" ? console.error : console.log;
   if (typeof payload === "undefined") {
     logger(`[photos-db] ${label}`);
   } else {
@@ -1376,11 +1380,21 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     hasThumb: true,
     updatedAt: nowIso,
   };
+  logPhotoDb("guardar:inicio", {
+    id,
+    owner: meta.owner,
+    ownerName: meta.ownerName,
+    ownerEmail: meta.ownerEmail,
+    size: (file as any)?.size ?? null,
+    type: (file as any)?.type ?? null,
+  });
   // 1) Crear doc base
-  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
+  try { await (localDB as any).put(sanitizeForCouch(doc)); logPhotoDb("guardar:local-insertar", { id }); } catch (e: any) {
+    logPhotoDb("guardar:local-error-insertar", { id, error: e }, "error");
     if (e?.status === 409) {
       const existing = await (localDB as any).get(id);
       await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
+      logPhotoDb("guardar:local-conflicto-resuelto", { id });
     } else { throw e; }
   }
 
@@ -1388,16 +1402,19 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
   let latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
+  logPhotoDb("guardar:miniatura-local", { id });
 
   // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
   const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
   latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
+  logPhotoDb("guardar:original-local", { id });
 
   // 4) Update metadata
   latest = await (localDB as any).get(id);
   latest.updatedAt = new Date().toISOString();
   await (localDB as any).put(sanitizeForCouch(latest));
+  logPhotoDb("guardar:meta-local", { id });
 
   // Best-effort: subir attachments y metadata al remoto si hay internet.  
   // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
@@ -1405,22 +1422,30 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   // se sincronizarán automáticamente cuando startSync() esté activo.  
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    if (online) {
+    const isOnline = Boolean(online);
+    logPhotoDb("guardar:remoto-verificar", { id, enLinea: isOnline });
+    if (isOnline) {
       let rdoc: any = null;
-      try { rdoc = await remoteDB.get(id); } catch {}
+      try { rdoc = await remoteDB.get(id); } catch (error) {
+        logPhotoDb("guardar:remoto-no-encontrado", { id, error });
+      }
       // Si no existe el doc remoto, crearlo con la metadata actual
       if (!rdoc) {
         try {
           const base = sanitizeForCouch(latest);
           const put = await remoteDB.put(base);
           rdoc = { ...base, _rev: put.rev };
-        } catch {}
+          logPhotoDb("guardar:remoto-base-creada", { id });
+        } catch (error) {
+          logPhotoDb("guardar:remoto-error-base", { id, error }, "error");
+        }
       }
       if (rdoc) {
         // Subir thumb y original, manejando las revisiones
         try {
           let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
           rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
+          logPhotoDb("guardar:remoto-adjuntos", { id });
           // Actualizar flags y updatedAt en remoto
           try {
             const rlatest = await remoteDB.get(id);
@@ -1428,11 +1453,35 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
             rlatest.hasThumb = true;
             rlatest.updatedAt = new Date().toISOString();
             await remoteDB.put(sanitizeForCouch(rlatest));
-          } catch {}
-        } catch {}
+            logPhotoDb("guardar:remoto-meta", { id });
+          } catch (error) {
+            logPhotoDb("guardar:remoto-error-meta", { id, error }, "error");
+          }
+        } catch (error) {
+          logPhotoDb("guardar:remoto-error-adjuntos", { id, error }, "error");
+        }
       }
+      try {
+        const confirmation = await remoteDB.get(id, { attachments: false });
+        const attachmentKeys = confirmation?._attachments
+          ? Object.keys(confirmation._attachments)
+          : [];
+        logPhotoDb("guardar:remoto-confirmacion", {
+          id,
+          rev: confirmation?._rev,
+          attachments: attachmentKeys,
+        });
+      } catch (error) {
+        logPhotoDb("guardar:remoto-error-confirmacion", { id, error }, "error");
+      }
+    } else {
+      logPhotoDb("guardar:remoto-omitir", { id, motivo: "fuera-de-linea" });
     }
-  } catch {}
+  } catch (error) {
+    logPhotoDb("guardar:remoto-error-inesperado", { id, error }, "error");
+  }
+
+  logPhotoDb("guardar:fin", { id });
 
   return { ok: true, _id: id };
 }
@@ -1455,6 +1504,7 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
+  logPhotoDb("listar:consulta", { selector, limite: limit });
   const sort = opts?.owner
     ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
     : [{ type: "asc" }, { createdAt: "desc" }];
@@ -1464,19 +1514,25 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
+  logPhotoDb("listar:resultado", { cantidad: docs.length });
   return docs as PhotoDoc[];
 }
 
 /** Elimina la foto completa */
 export async function deletePhoto(id: string) {
   await openDatabases();
+  logPhotoDb("eliminar:inicio", { id });
   const doc = await (localDB as any).get(id);
   await (localDB as any).remove(doc);
   try {
     if (remoteDB) {
       const remoteDoc = await (remoteDB as any).get(id);
       await (remoteDB as any).remove(remoteDoc);
+      logPhotoDb("eliminar:remoto", { id });
     }
-  } catch {}
+  } catch (error) {
+    logPhotoDb("eliminar:remoto-error", { id, error }, "error");
+  }
+  logPhotoDb("eliminar:fin", { id });
   return { ok: true };
 }
