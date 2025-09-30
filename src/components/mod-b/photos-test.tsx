@@ -275,6 +275,7 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
               {isSaving ? "Guardando..." : saveLabel}
             </Button>
             <Button
+              aria-label="Descartar pendientes"
               disabled={disableDiscard}
               onClick={discardPending}
               variant="outline"
