@@ -21,18 +21,24 @@ export function getCouchEnv(): CouchEnv {
   const url = new URL(raw);
   const cleanPath = url.pathname.replace(/\/+$/, "");
   const parts = cleanPath.split("/").filter(Boolean);
-  let dbName = parts.pop();
+  const envDb = (process.env.COUCHDB_DB || "").trim();
 
-  if (!dbName) {
-    const envDb = (process.env.COUCHDB_DB || "").trim();
-    dbName = envDb || "pwa-purp";
+  let dbCandidate: string | undefined;
+  if (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    if (!last.startsWith("_")) {
+      dbCandidate = last;
+    }
   }
 
+  const dbName = (envDb || dbCandidate || "pwa-purp").trim();
   if (!dbName) {
     throw new Error("No se pudo determinar el nombre de la base de CouchDB");
   }
 
-  const basePath = parts.join("/");
+  const hasDbInUrl = Boolean(dbCandidate && dbCandidate === dbName);
+  const baseParts = hasDbInUrl ? parts.slice(0, -1) : parts;
+  const basePath = baseParts.join("/");
   const origin = url.origin || `${url.protocol}//${url.host}`;
   const serverBase = `${origin}${basePath ? `/${basePath}` : ""}`.replace(/\/+$/, "");
 
