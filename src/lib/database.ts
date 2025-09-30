@@ -1743,3 +1743,234 @@ export async function deletePhoto(id: string) {
   logPhotoDb("delete:done", { id });
   return { ok: true };
 }
+
+// =======================
+// ===  FILES (generic) ===
+// =======================
+
+/**
+ * Meta información para un archivo genérico. Incluye datos opcionales
+ * como nombre, tipo MIME y propietario. El campo `owner` es obligatorio
+ * para asegurar que sólo el usuario propietario pueda listar o eliminar
+ * el archivo.
+ */
+export type FileMeta = {
+  owner?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  /** Nombre original del archivo, útil para mostrar y descargar */
+  fileName?: string;
+  /** Tipo MIME declarado al subir el archivo */
+  mimeType?: string;
+  /** Etiquetas opcionales para clasificar los documentos */
+  tags?: string[];
+};
+
+/**
+ * Documento de archivo. Los documentos de tipo `file` almacenan un único
+ * attachment arbitrario (cualquier tipo de archivo). Se incluye metadatos
+ * como nombre, tipo, propietario y fecha de creación. La bandera
+ * `hasAttachment` se establece en true para indicar que el documento
+ * contiene un attachment guardado por medio de PouchDB.
+ */
+export type FileDoc = {
+  _id: string;
+  type: "file";
+  owner?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  createdAt: string;
+  /** Nombre original del archivo */
+  fileName?: string;
+  /** Tipo MIME del archivo */
+  mimeType?: string;
+  /** Etiquetas opcionales */
+  tags?: string[];
+  hasAttachment: boolean;
+  updatedAt?: string;
+};
+
+/**
+ * Crea índices para búsqueda de archivos. Permite buscar por
+ * `type` y ordenar por `createdAt`, así como buscar por `owner`.
+ */
+async function ensureFileIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "createdAt"] },
+      name: "idx-file-type-createdAt",
+    });
+  } catch {}
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "owner", "createdAt"] },
+      name: "idx-file-owner-createdAt",
+    });
+  } catch {}
+}
+
+/**
+ * Guarda un archivo genérico como attachment en la base local (PouchDB) y
+ * replica a la base remota si es posible. A diferencia de savePhoto, no se
+ * realiza redimensionamiento ni compresión; el archivo se guarda tal cual.
+ *
+ * @param file Blob del archivo a guardar
+ * @param meta Metadatos que incluyen el id del propietario y opcionalmente nombre y tipo
+ * @returns Objeto con ok y _id
+ */
+export async function saveFileDoc(file: Blob, meta: FileMeta = {}) {
+  await openDatabases();
+  if (!localDB) throw new Error("DB not ready");
+  if (!meta.owner) throw new Error("owner id is required to save file");
+  const nowIso = new Date().toISOString();
+  const id = `file:${nowIso}:${rid(4)}`;
+  const fileName = meta.fileName || (typeof (file as any).name === "string" && (file as any).name) || undefined;
+  const mimeType = meta.mimeType || (file && typeof file.type === "string" && file.type) || undefined;
+  const doc: FileDoc = {
+    _id: id,
+    type: "file",
+    owner: meta.owner,
+    ownerName: meta.ownerName,
+    ownerEmail: meta.ownerEmail,
+    createdAt: nowIso,
+    fileName,
+    mimeType,
+    tags: meta.tags || [],
+    hasAttachment: true,
+    updatedAt: nowIso,
+  };
+
+  // 1) Crear documento base local
+  try {
+    await (localDB as any).put(sanitizeForCouch(doc));
+  } catch (e: any) {
+    if (e?.status === 409) {
+      const existing = await (localDB as any).get(id);
+      await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
+    } else {
+      throw e;
+    }
+  }
+
+  // 2) Adjuntar el archivo (sin modificaciones). Usamos el nombre original o "file".
+  let latest = await (localDB as any).get(id);
+  const attName = fileName || "file";
+  const contentType = mimeType || "application/octet-stream";
+  await (localDB as any).putAttachment(id, attName, latest._rev, file, contentType);
+
+  // 3) Actualizar metadata (updatedAt)
+  latest = await (localDB as any).get(id);
+  latest.updatedAt = new Date().toISOString();
+  await (localDB as any).put(sanitizeForCouch(latest));
+
+  // 4) Mejor esfuerzo: subir attachment y metadata al remoto si hay conexión y sesión
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
+      await runWithRemoteAuth(async () => {
+        // Obtener doc remoto o crearlo base
+        let remoteDoc: any = null;
+        try {
+          remoteDoc = await remoteDB.get(id);
+        } catch {}
+        if (!remoteDoc) {
+          const base = sanitizeForCouch(latest);
+          const put = await remoteDB.put(base);
+          remoteDoc = { ...base, _rev: put.rev };
+        }
+        let currentRev = remoteDoc?._rev;
+        if (!currentRev) {
+          const fallback = await remoteDB.get(id).catch(() => null);
+          currentRev = fallback?._rev;
+        }
+        if (!currentRev) throw new Error("missing-remote-rev");
+        // Subir attachment remoto
+        const attRes = await remoteDB.putAttachment(id, attName, currentRev, file, contentType);
+        const rlatest = await remoteDB.get(id);
+        rlatest.hasAttachment = true;
+        rlatest.updatedAt = new Date().toISOString();
+        await remoteDB.put(sanitizeForCouch(rlatest));
+        return true;
+      });
+    }
+  } catch (error) {
+    // Si falla la subida remota, simplemente registramos en consola. La replicación
+    // continua levantará el cambio cuando haya conexión y sesión.
+    console.warn("[db] saveFileDoc remote sync failed", (error as any)?.message || error);
+  }
+  return { ok: true, _id: id };
+}
+
+/**
+ * Devuelve el Blob del attachment principal de un documento tipo file. Usa
+ * la metadata del documento para determinar el nombre y tipo del attachment.
+ */
+export async function getFileAttachment(id: string) {
+  await openDatabases();
+  if (!localDB) throw new Error("DB not ready");
+  const doc = await (localDB as any).get(id);
+  const fileName = doc?.fileName || "file";
+  const blob = await (localDB as any).getAttachment(id, fileName);
+  return { blob, fileName, mimeType: doc?.mimeType || blob.type };
+}
+
+/**
+ * Devuelve una URL de objeto para un archivo, adecuada para <a href> o descarga.
+ * Recuerda revocar con URL.revokeObjectURL cuando ya no se necesite.
+ */
+export async function getFileUrl(id: string) {
+  const { blob } = await getFileAttachment(id);
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Lista documentos de tipo file. Si se especifica owner, filtra por propietario.
+ * Devuelve la lista ordenada descendentemente por fecha de creación.
+ */
+export async function listFiles(opts?: { owner?: string; limit?: number; }) {
+  await ensureFileIndexes();
+  const limit = opts?.limit ?? 50;
+  const selector: any = { type: "file" };
+  if (opts?.owner) selector.owner = opts.owner;
+  const sort = opts?.owner
+    ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
+    : [{ type: "asc" }, { createdAt: "desc" }];
+  const res = await (localDB as any).find({ selector, sort, limit });
+  const docs = (res.docs || []).sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return docs as FileDoc[];
+}
+
+/**
+ * Elimina un documento tipo file local y, si es posible, remoto. Similar a
+ * deletePhoto.
+ */
+export async function deleteFile(id: string) {
+  await openDatabases();
+  if (!localDB) throw new Error("DB not ready");
+  // Eliminar localmente
+  let doc;
+  try {
+    doc = await (localDB as any).get(id);
+  } catch (e: any) {
+    // Si no existe localmente, no hay nada que eliminar
+    return { ok: true };
+  }
+  await (localDB as any).remove(doc);
+  // Best-effort: eliminar en remoto
+  try {
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (online) {
+      await runWithRemoteAuth(async () => {
+        const remoteDoc = await remoteDB.get(id).catch(() => null);
+        if (!remoteDoc) return null;
+        await remoteDB.remove(remoteDoc);
+        return true as const;
+      });
+    }
+  } catch (error) {
+    console.warn("[db] deleteFile remote sync failed", (error as any)?.message || error);
+  }
+  return { ok: true };
+}

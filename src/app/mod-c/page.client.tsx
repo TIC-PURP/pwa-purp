@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { moduleCMode } from "@/lib/permissions";
 import BackButton from "@/components/common/back-button";
+import { FilesTest } from "@/components/common/files-test";
 
 export default function ModuleCPage() {
   // Datos del usuario autenticado y utilidades de enrutamiento.
@@ -50,6 +51,17 @@ export default function ModuleCPage() {
             )}
           </CardContent>
         </Card>
+
+      {/* Sección de pruebas de archivos genéricos */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Pruebas de Archivos</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* Permitir cargar archivos sólo si el usuario tiene acceso completo; en modo lectura mostrar lista pero sin acciones */}
+          <FilesTest readOnly={mode === "READ"} />
+        </CardContent>
+      </Card>
       </main>
     </RouteGuard>
   );

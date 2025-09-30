@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import type { ComponentProps } from "react";
-import { PhotosTest } from "@/components/mod-b/photos-test";
+import { PhotosTest } from "@/components/common/photos-test";
 import { deletePhoto, getPhotoThumbUrl, listPhotos, savePhoto } from "@/lib/database";
 import authReducer, { type AuthState } from "@/lib/store/authSlice";
 import type { User } from "@/lib/types";
