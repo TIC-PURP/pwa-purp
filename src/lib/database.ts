@@ -8,6 +8,37 @@ let localDB: any = null;
 let remoteDB: any = null;
 let syncHandler: any = null;
 
+function hasAuthSessionCookie() {
+  if (typeof document === "undefined") return false;
+  return /(?:^|;\s*)AuthSession=/.test(document.cookie);
+}
+
+function readStoredAuthCredentials(): { email: string; password: string; token?: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem("auth");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const token = typeof parsed?.token === "string" ? parsed.token : undefined;
+    const user = parsed?.user ?? null;
+    if (!user) return null;
+    const email = String(user.email || user.name || "").trim();
+    const password = String(user.password || "").trim();
+    if (!email || !password) return null;
+    return { email, password, token };
+  } catch {
+    return null;
+  }
+}
+
+function getErrorStatus(err: any): number | null {
+  const raw = err?.status ?? err?.statusCode ?? err?.code;
+  const value = typeof raw === "string" ? parseInt(raw, 10) : raw;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+let renewSessionPromise: Promise<boolean> | null = null;
+
 export type CouchEnv = {
   serverBase: string;
   dbName: string;
@@ -167,7 +198,7 @@ function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
 }
 async function saveDocViaAdmin(doc: any) {
   try {
-    const res = await fetch("/api/admin/couch/app-users", {
+    const res = await fetch("/api/admin/couch/users", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       credentials: "include",
@@ -325,10 +356,61 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
 
 /** Cierra la sesión del servidor */
 export async function logoutOnlineSession() {
-  const base = getRemoteBase();
   try {
-    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
-  } catch {}
+    const res = await fetch(`/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok && res.status !== 401 && res.status !== 403) {
+      throw new Error(`logout failed ${res.status}`);
+    }
+  } catch (err) {
+    try { await fetch(`/api/couch/_session`, { method: "DELETE", credentials: "include" }); } catch {}
+  }
+}
+
+async function ensureOnlineAuthSession(force = false): Promise<boolean> {
+  if (!isClient) return false;
+  if (!force && hasAuthSessionCookie()) return true;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+  if (renewSessionPromise) return renewSessionPromise;
+  const creds = readStoredAuthCredentials();
+  if (!creds || creds.token === "offline-session") return false;
+  renewSessionPromise = (async () => {
+    try {
+      await loginOnlineToCouchDB(creds.email, creds.password);
+      return hasAuthSessionCookie();
+    } catch (error) {
+      console.warn("[db] ensureOnlineAuthSession failed", (error as any)?.message || error);
+      return false;
+    } finally {
+      renewSessionPromise = null;
+    }
+  })();
+  return renewSessionPromise;
+}
+
+async function runWithRemoteAuth<T>(operation: () => Promise<T>): Promise<T | null> {
+  if (!remoteDB) return null;
+  const sessionOk = await ensureOnlineAuthSession(false);
+  if (!sessionOk) return null;
+  let attempt = 0;
+  while (attempt < 2) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      const status = getErrorStatus(error);
+      if (attempt === 0 && status && (status === 401 || status === 403)) {
+        const renewed = await ensureOnlineAuthSession(true);
+        if (!renewed) return null;
+        attempt += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+  return null;
 }
 
 /** Login offline contra Pouch local */
@@ -1143,45 +1225,61 @@ export async function saveUserAvatar(
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
-      let rdoc = await remoteDB.get(_id).catch(() => null);
-      if (!rdoc) {
-        const base = sanitizeForCouch(latest);
-        const put = await remoteDB.put(base);
-        rdoc = { ...base, _rev: put.rev };
-      }
-      await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
-      // también miniatura remota
-      try {
-        const size = 64;
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
-        URL.revokeObjectURL(url);
-        const canvas = document.createElement("canvas");
-        canvas.width = size; canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          // @ts-ignore
-          ctx.imageSmoothingQuality = "high";
-          const r2 = Math.max(size / img.width, size / img.height);
-          const dw2 = img.width * r2, dh2 = img.height * r2;
-          const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
-          ctx.drawImage(img, dx2, dy2, dw2, dh2);
-          let d2 = "";
-          try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
-          catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
-          const thumb2 = await (await fetch(d2)).blob();
-          const rlatest0 = await remoteDB.get(_id);
-          await remoteDB.putAttachment(_id, "avatar_64", rlatest0._rev, thumb2, thumb2.type || "image/jpeg");
+      const remoteOp = async () => {
+        let remoteDoc = await remoteDB.get(_id).catch(() => null);
+        if (!remoteDoc) {
+          const base = sanitizeForCouch(latest);
+          const put = await remoteDB.put(base);
+          remoteDoc = { ...base, _rev: put.rev };
         }
-      } catch {}
-      // actualizar doc remoto con bandera por coherencia
-      const rlatest = await remoteDB.get(_id);
-      rlatest.hasAvatar = true;
-      rlatest.updatedAt = new Date().toISOString();
-      await remoteDB.put(sanitizeForCouch(rlatest));
+        const existing = remoteDoc?._rev ? remoteDoc : await remoteDB.get(_id);
+        let currentRev = existing?._rev;
+        if (!currentRev) {
+          const fallback = await remoteDB.get(_id);
+          currentRev = fallback?._rev;
+        }
+        if (!currentRev) throw new Error("missing-remote-rev");
+        const avatarResult = await remoteDB.putAttachment(_id, "avatar", currentRev, blob, contentType);
+        currentRev = avatarResult.rev;
+        try {
+          const size = 64;
+          const url = URL.createObjectURL(blob);
+          try {
+            const img = new Image();
+            await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+            const canvas = document.createElement("canvas");
+            canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              // @ts-ignore
+              ctx.imageSmoothingQuality = "high";
+              const r2 = Math.max(size / img.width, size / img.height);
+              const dw2 = img.width * r2, dh2 = img.height * r2;
+              const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
+              ctx.drawImage(img, dx2, dy2, dw2, dh2);
+              let d2 = "";
+              try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
+              catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
+              const thumb2 = await (await fetch(d2)).blob();
+              const latestDoc = await remoteDB.get(_id);
+              const thumbResult = await remoteDB.putAttachment(_id, "avatar_64", latestDoc._rev, thumb2, thumb2.type || "image/jpeg");
+              currentRev = thumbResult.rev;
+            }
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        } catch {}
+        const finalDoc = await remoteDB.get(_id);
+        finalDoc.hasAvatar = true;
+        finalDoc.updatedAt = new Date().toISOString();
+        await remoteDB.put(sanitizeForCouch(finalDoc));
+        return true;
+      };
+      await runWithRemoteAuth(remoteOp);
     }
-  } catch {}
+  } catch (error) {
+    console.warn("[db] remote avatar sync failed", (error as any)?.message || error);
+  }
 
   return { ok: true, _id: _id, _rev: res?.rev };
 }
@@ -1201,18 +1299,24 @@ export async function deleteUserAvatar(email: string) {
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
-      let rdoc = await remoteDB.get(_id).catch(() => null);
-      if (rdoc) {
-        let rrev = rdoc._rev;
-        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", rrev); rrev = rr1.rev; } catch {}
-        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", rrev); rrev = rr2.rev; } catch {}
-        const rlatest = await remoteDB.get(_id);
-        rlatest.hasAvatar = false;
-        rlatest.updatedAt = new Date().toISOString();
-        await remoteDB.put(sanitizeForCouch(rlatest));
-      }
+      await runWithRemoteAuth(async () => {
+        const remoteDoc = await remoteDB.get(_id).catch(() => null);
+        if (!remoteDoc) return null;
+        let currentRev = remoteDoc._rev;
+        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", currentRev); currentRev = rr1.rev; } catch {}
+        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", currentRev); currentRev = rr2.rev; } catch {}
+        const latest = await remoteDB.get(_id).catch(() => null);
+        if (latest) {
+          latest.hasAvatar = false;
+          latest.updatedAt = new Date().toISOString();
+          await remoteDB.put(sanitizeForCouch(latest));
+        }
+        return true;
+      });
     }
-  } catch {}
+  } catch (error) {
+    console.warn("[db] remote avatar delete failed", (error as any)?.message || error);
+  }
   return { ok: true } as const;
 }
 
@@ -1464,56 +1568,67 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     if (!isOnline) {
       logPhotoDb("save:remote-skip", { id, reason: "offline" });
     } else {
-      let rdoc: any = null;
-      try { rdoc = await remoteDB.get(id); } catch (error) {
-        logPhotoDb("save:remote-get-miss", { id, error });
-      }
-      // Si no existe el doc remoto, crearlo con la metadata actual
-      if (!rdoc) {
-        try {
-          const base = sanitizeForCouch(latest);
-          const put = await remoteDB.put(base);
-          rdoc = { ...base, _rev: put.rev };
-          logPhotoDb("save:remote-base-created", { id });
-        } catch (error) {
-          logPhotoDb("save:remote-base-error", { id, error }, "error");
-        }
-      }
-      if (rdoc) {
-        // Subir thumb y original, manejando las revisiones
-        try {
-          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
+      try {
+        const remoteResult = await runWithRemoteAuth(async () => {
+          let remoteDoc: any = null;
+          try { remoteDoc = await remoteDB.get(id); } catch (error) {
+            logPhotoDb("save:remote-get-miss", { id, error });
+          }
+          if (!remoteDoc) {
+            const base = sanitizeForCouch(latest);
+            const put = await remoteDB.put(base);
+            remoteDoc = { ...base, _rev: put.rev };
+            logPhotoDb("save:remote-base-created", { id });
+          }
+          if (!remoteDoc?._rev) {
+            remoteDoc = await remoteDB.get(id);
+          }
+          let currentRev = remoteDoc?._rev;
+          if (!currentRev) {
+            const fallback = await remoteDB.get(id);
+            currentRev = fallback?._rev;
+          }
+          if (!currentRev) throw new Error("missing-remote-rev");
+          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", currentRev, thumb, "image/webp");
           rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
           logPhotoDb("save:remote-attachments", { id });
-          // Actualizar flags y updatedAt en remoto
-          try {
-            const rlatest = await remoteDB.get(id);
-            rlatest.hasOriginal = true;
-            rlatest.hasThumb = true;
-            rlatest.updatedAt = new Date().toISOString();
-            await remoteDB.put(sanitizeForCouch(rlatest));
-            logPhotoDb("save:remote-meta", { id });
-          } catch (error) {
-            logPhotoDb("save:remote-meta-error", { id, error }, "error");
-          }
-        } catch (error) {
-          logPhotoDb("save:remote-attachments-error", { id, error }, "error");
-        }
-      }
-
-      // Confirmación opcional de que los attachments quedaron arriba
-      try {
-        const confirmation = await remoteDB.get(id, { attachments: false });
-        const attachmentKeys = confirmation?._attachments
-          ? Object.keys(confirmation._attachments)
-          : [];
-        logPhotoDb("save:remote-confirm", {
-          id,
-          rev: confirmation?._rev,
-          attachments: attachmentKeys,
+          const rlatest = await remoteDB.get(id);
+          rlatest.hasOriginal = true;
+          rlatest.hasThumb = true;
+          rlatest.updatedAt = new Date().toISOString();
+          await remoteDB.put(sanitizeForCouch(rlatest));
+          logPhotoDb("save:remote-meta", { id });
+          return true as const;
         });
+
+        if (!remoteResult) {
+          logPhotoDb("save:remote-skip", { id, reason: "no-session" });
+        } else {
+          try {
+            const confirmation = await runWithRemoteAuth(async () => {
+              return remoteDB.get(id, { attachments: false });
+            });
+            if (confirmation) {
+              const attachmentKeys = confirmation?._attachments
+                ? Object.keys(confirmation._attachments)
+                : [];
+              logPhotoDb("save:remote-confirm", {
+                id,
+                rev: confirmation?._rev,
+                attachments: attachmentKeys,
+              });
+            }
+          } catch (error) {
+            logPhotoDb("save:remote-confirm-error", { id, error }, "error");
+          }
+        }
       } catch (error) {
-        logPhotoDb("save:remote-confirm-error", { id, error }, "error");
+        const status = getErrorStatus(error);
+        logPhotoDb(
+          "save:remote-attachments-error",
+          { id, error: { status, message: (error as any)?.message || error } },
+          "error",
+        );
       }
     }
   } catch (error) {
@@ -1564,10 +1679,21 @@ export async function deletePhoto(id: string) {
   const doc = await (localDB as any).get(id);
   await (localDB as any).remove(doc);
   try {
-    if (remoteDB) {
-      const remoteDoc = await (remoteDB as any).get(id);
-      await (remoteDB as any).remove(remoteDoc);
-      logPhotoDb("delete:remote", { id });
+    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    if (!online) {
+      logPhotoDb("delete:remote-skip", { id, reason: "offline" });
+    } else {
+      const removed = await runWithRemoteAuth(async () => {
+        const remoteDoc = await remoteDB.get(id).catch(() => null);
+        if (!remoteDoc) return null;
+        await remoteDB.remove(remoteDoc);
+        return true as const;
+      });
+      if (removed) {
+        logPhotoDb("delete:remote", { id });
+      } else {
+        logPhotoDb("delete:remote-skip", { id, reason: "no-session" });
+      }
     }
   } catch (error) {
     logPhotoDb("delete:remote-error", { id, error }, "error");
