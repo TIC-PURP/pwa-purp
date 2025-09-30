@@ -270,7 +270,7 @@ export async function stopSync() {
 
 /** Login online contra /api/auth/login */
 export async function loginOnlineToCouchDB(email: string, password: string) {
-  console.log("[db] loginOnlineToCouchDB start", { email });
+  console.log("[db] loginOnlineToCouchDB inicio", { email });
   const body = JSON.stringify({ email, password });
   let res: Response;
   try {
@@ -1147,7 +1147,7 @@ export async function saveUserAvatar(
     }
   } catch {}
 
-  return { ok: true, _id, _rev: res?.rev };
+  return { ok: true, _id: _id, _rev: res?.rev };
 }
 
 export async function deleteUserAvatar(email: string) {

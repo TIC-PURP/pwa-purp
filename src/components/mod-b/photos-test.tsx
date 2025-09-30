@@ -71,32 +71,32 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
   }, [revokeUrl]);
 
   const refresh = useCallback(async () => {
-    logPhotoUI("refresh:start", { ownerId });
+    logPhotoUI("refrescar:inicio", { ownerId });
     if (!ownerId) {
       setPhotos([]);
       setUrls((prev) => {
         revokeUrls(prev);
         return {};
       });
-      logPhotoUI("refresh:skip", "no owner id");
+      logPhotoUI("refrescar:omitir", "sin id de propietario");
       return;
     }
     const list = await listPhotos({ owner: ownerId });
-    logPhotoUI("refresh:list", { count: list.length });
+    logPhotoUI("refrescar:lista", { cantidad: list.length });
     setPhotos(list as PhotoDoc[]);
     const map: Record<string, string> = {};
     for (const p of list) {
       try {
         map[p._id] = await getPhotoThumbUrl(p._id);
       } catch (error) {
-        logPhotoUI("refresh:thumb-error", { id: p._id, error });
+        logPhotoUI("refrescar:error-miniatura", { id: p._id, error });
       }
     }
     setUrls((prev) => {
       revokeUrls(prev);
       return map;
     });
-    logPhotoUI("refresh:done", { ownerId });
+    logPhotoUI("refrescar:fin", { ownerId });
   }, [ownerId, revokeUrls]);
 
   useEffect(() => {
@@ -123,30 +123,30 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
 
   const onPick = useCallback((file?: File | null) => {
     if (!file) {
-      logPhotoUI("pick:skip", { reason: "no file" });
+      logPhotoUI("seleccionar:omitir", { motivo: "sin archivo" });
       return;
     }
     if (!ownerId) {
-      logPhotoUI("pick:skip", { reason: "no owner" });
+      logPhotoUI("seleccionar:omitir", { motivo: "sin propietario" });
       return;
     }
     if (readOnly) {
-      logPhotoUI("pick:skip", { reason: "read only" });
+      logPhotoUI("seleccionar:omitir", { motivo: "solo lectura" });
       return;
     }
     if (isSaving) {
-      logPhotoUI("pick:skip", { reason: "saving in progress" });
+      logPhotoUI("seleccionar:omitir", { motivo: "guardado en progreso" });
       return;
     }
-    logPhotoUI("pick:file", { name: file.name, size: file.size, type: file.type });
+    logPhotoUI("seleccionar:archivo", { nombre: file.name, tamano: file.size, tipo: file.type });
     let url = "";
     try {
       if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
         url = URL.createObjectURL(file);
       }
     } catch (error) {
-      console.error("onPick error", error);
-      logPhotoUI("pick:error", error);
+      console.error("Error al preparar la foto seleccionada", error);
+      logPhotoUI("seleccionar:error", error);
       setErrorMsg("No se pudo preparar la foto, intenta nuevamente.");
     }
     const id = `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -158,13 +158,13 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
       size: file.size,
     };
     setPending((prev) => [...prev, item]);
-    logPhotoUI("pending:add", { id: item.id, name: item.name, size: item.size });
+    logPhotoUI("pendientes:agregar", { id: item.id, nombre: item.name, tamano: item.size });
     setErrorMsg(null);
   }, [isSaving, ownerId, readOnly]);
 
   const removePending = useCallback((id: string) => {
     if (isSaving) return;
-    logPhotoUI("pending:remove", { id });
+    logPhotoUI("pendientes:eliminar", { id });
     setPending((prev) => {
       const next: PendingPhoto[] = [];
       for (const item of prev) {
@@ -182,7 +182,7 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
     if (isSaving) return;
     setPending((prev) => {
       if (!prev.length) return prev;
-      logPhotoUI("pending:discard-all", { count: prev.length });
+      logPhotoUI("pendientes:descartar-todos", { cantidad: prev.length });
       prev.forEach((item) => revokeUrl(item.url));
       return [];
     });
@@ -191,7 +191,7 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
 
   const handleSave = useCallback(async () => {
     if (!ownerId || readOnly || isSaving || pending.length === 0) return;
-    logPhotoUI("save:begin", { pending: pending.length });
+    logPhotoUI("guardar:inicio", { pendientes: pending.length });
     setIsSaving(true);
     setErrorMsg(null);
     const queue = pending.slice();
@@ -205,7 +205,7 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
           ownerEmail,
         });
         savedIds.add(item.id);
-        logPhotoUI("save:success", { pendingId: item.id, docId: result?._id });
+        logPhotoUI("guardar:exito", { idPendiente: item.id, idDocumento: result?._id });
       }
       setPending((prev) => prev.filter((item) => {
         const shouldKeep = !savedIds.has(item.id);
@@ -213,10 +213,10 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
         return shouldKeep;
       }));
       await refresh();
-      logPhotoUI("save:refresh-done", { remainingPending: pending.length - savedIds.size });
+      logPhotoUI("guardar:refresco-completado", { pendientesRestantes: pending.length - savedIds.size });
     } catch (err) {
-      console.error(err);
-      logPhotoUI("save:error", err);
+      console.error("Error al guardar fotos", err);
+      logPhotoUI("guardar:error", err);
       setErrorMsg("No se pudieron guardar todas las fotos. Inténtalo nuevamente.");
       setPending((prev) => prev.filter((item) => {
         const shouldKeep = !savedIds.has(item.id);
@@ -225,15 +225,15 @@ export function PhotosTest({ readOnly = false }: PhotosTestProps) {
       }));
     } finally {
       setIsSaving(false);
-      logPhotoUI("save:end");
+      logPhotoUI("guardar:fin");
     }
   }, [isSaving, ownerEmail, ownerId, ownerName, pending, readOnly, refresh, revokeUrl]);
 
   const onDelete = useCallback(async (id: string) => {
     if (readOnly || isSaving) return;
-    logPhotoUI("delete:start", { id });
+    logPhotoUI("eliminar:inicio", { id });
     await deletePhoto(id);
-    logPhotoUI("delete:done", { id });
+    logPhotoUI("eliminar:fin", { id });
     await refresh();
   }, [isSaving, readOnly, refresh]);
 
