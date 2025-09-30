@@ -196,12 +196,35 @@ function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
   }
   return out as T;
 }
+async function fetchAdminUsers(path: string, init: RequestInit = {}) {
+  const options: RequestInit = { ...init };
+  options.credentials = init.credentials ?? "include";
+
+  let attempt = 0;
+  let response: Response | null = null;
+  while (attempt < 2) {
+    response = await fetch(path, options);
+    if (response && (response.status === 401 || response.status === 403) && attempt === 0) {
+      try {
+        const renewed = await ensureOnlineAuthSession(true);
+        if (renewed) {
+          attempt += 1;
+          continue;
+        }
+      } catch (error) {
+        console.warn("[database] admin fetch retry failed", (error as any)?.message || error);
+      }
+    }
+    break;
+  }
+  return response as Response;
+}
+
 async function saveDocViaAdmin(doc: any) {
   try {
-    const res = await fetch("/api/admin/couch/users", {
+    const res = await fetchAdminUsers("/api/admin/couch/users", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ doc }),
     });
     if (!res.ok) {
@@ -560,9 +583,8 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
  */
 export async function getAllUsersAsManager(): Promise<any[]> {
   try {
-    const res = await fetch(`/api/admin/couch/users`, {
+    const res = await fetchAdminUsers(`/api/admin/couch/users`, {
       method: "GET",
-      credentials: "include",
       headers: { Accept: "application/json" },
     });
 
@@ -1101,9 +1123,8 @@ export async function hardDeleteUser(idOrKey: any): Promise<boolean> {
           email = String(idOrKey.email || idOrKey.name || "");
         }
         if (email) {
-          await fetch(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
+          await fetchAdminUsers(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
             method: "DELETE",
-            credentials: "include",
           });
         }
       } catch {}
@@ -1368,10 +1389,9 @@ async function upsertRemoteAuthUser({
         roles: Array.isArray(roles) ? roles : [],
         ...extra,
       };
-      const createRes = await fetch(`/api/admin/couch/users`, {
+      const createRes = await fetchAdminUsers(`/api/admin/couch/users`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (createRes.ok || createRes.status === 201) return;
@@ -1381,10 +1401,9 @@ async function upsertRemoteAuthUser({
     const updatePayload: Record<string, any> = { name: n, ...extra };
     if (typeof password === "string" && password.trim()) updatePayload.password = password;
     if (Array.isArray(roles)) updatePayload.roles = roles;
-    await fetch(`/api/admin/couch/users`, {
+    await fetchAdminUsers(`/api/admin/couch/users`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      credentials: "include",
       body: JSON.stringify(updatePayload),
     });
   } catch (e) {
@@ -1397,9 +1416,8 @@ async function deleteRemoteAuthUser(name?: string) {
   const n = (name || "").trim();
   if (!n) return;
   try {
-    await fetch(`/api/admin/couch/users?name=${encodeURIComponent(n)}`, {
+    await fetchAdminUsers(`/api/admin/couch/users?name=${encodeURIComponent(n)}`, {
       method: "DELETE",
-      credentials: "include",
     });
   } catch {}
 }
