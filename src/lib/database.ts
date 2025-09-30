@@ -200,8 +200,23 @@ async function fetchAdminUsers(path: string, init: RequestInit = {}) {
   const options: RequestInit = { ...init };
   options.credentials = init.credentials ?? "include";
 
+  // Pre-check solo en cliente: si no hay cookie e imposible renovar, devolver 401 sintético.
+  if (isClient) {
+    // Evita trabajo si ya tenemos cookie válida
+    if (!hasAuthSessionCookie()) {
+      const sessionReady = await ensureOnlineAuthSession(false);
+      if (!sessionReady) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing_auth_session" }),
+          { status: 401, headers: { "content-type": "application/json" } },
+        );
+      }
+    }
+  }
+
   let attempt = 0;
   let response: Response | null = null;
+
   while (attempt < 2) {
     response = await fetch(path, options);
     if (response && (response.status === 401 || response.status === 403) && attempt === 0) {
@@ -217,6 +232,7 @@ async function fetchAdminUsers(path: string, init: RequestInit = {}) {
     }
     break;
   }
+
   return response as Response;
 }
 
@@ -587,6 +603,14 @@ export async function getAllUsersAsManager(): Promise<any[]> {
       method: "GET",
       headers: { Accept: "application/json" },
     });
+
+    if (res.status === 401 || res.status === 403) {
+      try {
+        return await getAllUsers({ includeInactive: true, limit: 5000 });
+      } catch {
+        return [];
+      }
+    }
 
     if (!res.ok) {
       let detail = "";
