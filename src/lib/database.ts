@@ -19,11 +19,23 @@ export function getCouchEnv(): CouchEnv {
   if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no esta definido");
 
   const url = new URL(raw);
-  const path = url.pathname.replace(/\/+$/, "");
-  const parts = path.split("/").filter(Boolean);
-  const dbName = parts[parts.length - 1] || "pwa-purp";
+  const cleanPath = url.pathname.replace(/\/+$/, "");
+  const parts = cleanPath.split("/").filter(Boolean);
+  let dbName = parts.pop();
 
-  const serverBase = `${url.protocol}//${url.host}`;
+  if (!dbName) {
+    const envDb = (process.env.COUCHDB_DB || "").trim();
+    dbName = envDb || "pwa-purp";
+  }
+
+  if (!dbName) {
+    throw new Error("No se pudo determinar el nombre de la base de CouchDB");
+  }
+
+  const basePath = parts.join("/");
+  const origin = url.origin || `${url.protocol}//${url.host}`;
+  const serverBase = `${origin}${basePath ? `/${basePath}` : ""}`.replace(/\/+$/, "");
+
   return { serverBase, dbName };
 }
 
@@ -213,7 +225,7 @@ export async function openDatabases() {
   }
 
   if (!remoteDB) {
-    const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
+    const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`.replace(/\/+$/, "");
     remoteDB = new PouchDB(remoteUrl, {
       skip_setup: true,
       fetch: (url: RequestInfo, opts: any = {}) => {
@@ -223,6 +235,9 @@ export async function openDatabases() {
       },
       ajax: { withCredentials: true },
     });
+
+    const resolvedRemoteName = typeof remoteDB?.name === "string" ? remoteDB.name : remoteUrl;
+    console.info("[db] remote target", resolvedRemoteName);
   }
 
   return { localDB, remoteDB };
