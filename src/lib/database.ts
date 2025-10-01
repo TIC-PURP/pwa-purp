@@ -1569,6 +1569,56 @@ async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image
   }
 }
 
+async function ensureRemoteDocSeed(id: string, seed: any) {
+  if (!remoteDB) throw new Error("remote db not ready");
+  let remoteDoc: any = null;
+  try {
+    remoteDoc = await remoteDB.get(id);
+  } catch (error) {
+    if (getErrorStatus(error) !== 404) {
+      throw error;
+    }
+  }
+  if (remoteDoc) return remoteDoc;
+
+  const prepared = sanitizeForCouch(seed);
+  const remoteSeed = { ...prepared } as Record<string, any>;
+  delete remoteSeed._rev;
+  delete remoteSeed._attachments;
+  const put = await remoteDB.put(remoteSeed);
+  return { ...remoteSeed, _rev: put.rev };
+}
+
+async function uploadRemoteAttachments(
+  id: string,
+  startingRev: string,
+  attachments: Array<{ name: string; blob: Blob; contentType: string }>,
+) {
+  if (!remoteDB) throw new Error("remote db not ready");
+  let currentRev = startingRev;
+  for (const item of attachments) {
+    const result = await remoteDB.putAttachment(
+      id,
+      item.name,
+      currentRev,
+      item.blob,
+      item.contentType,
+    );
+    currentRev = result?.rev || currentRev;
+  }
+  return currentRev;
+}
+
+async function finalizeRemoteDocMetadata(id: string, patch: Record<string, any>) {
+  if (!remoteDB) throw new Error("remote db not ready");
+  const latestRemote = await remoteDB.get(id);
+  const nextDoc = {
+    ...latestRemote,
+    ...patch,
+  };
+  await remoteDB.put(sanitizeForCouch(nextDoc));
+}
+
 /** Guarda una foto con attachments (original + thumb) en PouchDB (replica a CouchDB) */
 export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   await openDatabases();
@@ -1638,32 +1688,27 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
       try {
         const remoteResult = await runWithRemoteAuth(async () => {
           let remoteDoc: any = null;
-          try { remoteDoc = await remoteDB.get(id); } catch (error) {
+          try {
+            remoteDoc = await remoteDB.get(id);
+          } catch (error) {
             logPhotoDb("save:remote-get-miss", { id, error });
           }
           if (!remoteDoc) {
-            const base = sanitizeForCouch(latest);
-            const put = await remoteDB.put(base);
-            remoteDoc = { ...base, _rev: put.rev };
+            remoteDoc = await ensureRemoteDocSeed(id, latest);
             logPhotoDb("save:remote-base-created", { id });
           }
-          if (!remoteDoc?._rev) {
-            remoteDoc = await remoteDB.get(id);
-          }
-          let currentRev = remoteDoc?._rev;
-          if (!currentRev) {
-            const fallback = await remoteDB.get(id);
-            currentRev = fallback?._rev;
-          }
-          if (!currentRev) throw new Error("missing-remote-rev");
-          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", currentRev, thumb, "image/webp");
-          rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
-          logPhotoDb("save:remote-attachments", { id });
-          const rlatest = await remoteDB.get(id);
-          rlatest.hasOriginal = true;
-          rlatest.hasThumb = true;
-          rlatest.updatedAt = new Date().toISOString();
-          await remoteDB.put(sanitizeForCouch(rlatest));
+          const remoteRev = remoteDoc?._rev;
+          if (!remoteRev) throw new Error("missing-remote-rev");
+          const finalRev = await uploadRemoteAttachments(id, remoteRev, [
+            { name: "thumb.webp", blob: thumb, contentType: "image/webp" },
+            { name: "original.jpg", blob: original, contentType: "image/jpeg" },
+          ]);
+          logPhotoDb("save:remote-attachments", { id, rev: finalRev });
+          await finalizeRemoteDocMetadata(id, {
+            hasOriginal: true,
+            hasThumb: true,
+            updatedAt: new Date().toISOString(),
+          });
           logPhotoDb("save:remote-meta", { id });
           return true as const;
         });
@@ -1895,33 +1940,16 @@ export async function saveFileDoc(file: Blob, meta: FileMeta = {}) {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
       await runWithRemoteAuth(async () => {
-        // Obtener doc remoto o crearlo base
-        let remoteDoc: any = null;
-        try {
-          remoteDoc = await remoteDB.get(id);
-        } catch {}
-        if (!remoteDoc) {
-          const base = sanitizeForCouch(latest);
-          const baseWithoutAttachments = { ...base } as Record<string, any>;
-          delete baseWithoutAttachments._attachments;
-          const put = await remoteDB.put(baseWithoutAttachments);
-          remoteDoc = { ...baseWithoutAttachments, _rev: put.rev };
-        }
-        let currentRev = remoteDoc?._rev;
-        if (!currentRev) {
-          const fallback = await remoteDB.get(id).catch(() => null);
-          currentRev = fallback?._rev;
-        }
-        if (!currentRev) throw new Error("missing-remote-rev");
-        // Subir attachment remoto
-        const attRes = await remoteDB.putAttachment(id, attName, currentRev, file, contentType);
-        const nextRev = attRes?.rev;
-        const rlatest = nextRev
-          ? await remoteDB.get(id, { rev: nextRev }).catch(() => remoteDB.get(id))
-          : await remoteDB.get(id);
-        rlatest.hasAttachment = true;
-        rlatest.updatedAt = new Date().toISOString();
-        await remoteDB.put(sanitizeForCouch(rlatest));
+        const remoteDoc = await ensureRemoteDocSeed(id, latest);
+        const remoteRev = remoteDoc?._rev;
+        if (!remoteRev) throw new Error("missing-remote-rev");
+        await uploadRemoteAttachments(id, remoteRev, [
+          { name: attName, blob: file, contentType },
+        ]);
+        await finalizeRemoteDocMetadata(id, {
+          hasAttachment: true,
+          updatedAt: new Date().toISOString(),
+        });
         return true;
       });
     }
