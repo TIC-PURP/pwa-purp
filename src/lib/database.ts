@@ -1902,8 +1902,10 @@ export async function saveFileDoc(file: Blob, meta: FileMeta = {}) {
         } catch {}
         if (!remoteDoc) {
           const base = sanitizeForCouch(latest);
-          const put = await remoteDB.put(base);
-          remoteDoc = { ...base, _rev: put.rev };
+          const baseWithoutAttachments = { ...base } as Record<string, any>;
+          delete baseWithoutAttachments._attachments;
+          const put = await remoteDB.put(baseWithoutAttachments);
+          remoteDoc = { ...baseWithoutAttachments, _rev: put.rev };
         }
         let currentRev = remoteDoc?._rev;
         if (!currentRev) {
@@ -1913,7 +1915,10 @@ export async function saveFileDoc(file: Blob, meta: FileMeta = {}) {
         if (!currentRev) throw new Error("missing-remote-rev");
         // Subir attachment remoto
         const attRes = await remoteDB.putAttachment(id, attName, currentRev, file, contentType);
-        const rlatest = await remoteDB.get(id);
+        const nextRev = attRes?.rev;
+        const rlatest = nextRev
+          ? await remoteDB.get(id, { rev: nextRev }).catch(() => remoteDB.get(id))
+          : await remoteDB.get(id);
         rlatest.hasAttachment = true;
         rlatest.updatedAt = new Date().toISOString();
         await remoteDB.put(sanitizeForCouch(rlatest));
