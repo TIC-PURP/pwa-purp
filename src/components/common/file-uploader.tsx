@@ -2,37 +2,53 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  listFiles,
-  saveFileDoc,
-  getFileUrl,
-  deleteFile,
-  type FileDoc,
-} from "@/lib/database";
+import { listFiles, saveFileDoc, getFileUrl, deleteFile, type FileDoc } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
 
 /**
- * Componente de prueba para cargar y listar archivos genéricos. Permite al
- * usuario seleccionar cualquier tipo de archivo desde la galería o desde
- * la cámara (si está disponible) y guardarlo como attachment usando la
- * función saveFileDoc. También permite listar archivos existentes y
- * eliminarlos. Este componente es similar a PhotosTest pero sin
- * redimensionamiento ni miniaturas; las vistas previas se limitan a un
- * enlace de descarga.
+ * FileUploader es un componente reutilizable para cargar y listar archivos
+ * genéricos. Permite al usuario seleccionar cualquier tipo de archivo
+ * desde la galería y guardarlo como attachment usando saveFileDoc. El
+ * componente acepta metadatos del propietario por props o, si no se
+ * proporcionan, los toma del usuario autenticado. También expone un
+ * callback onSaved para notificar al padre cuando finaliza un guardado
+ * exitoso.
  */
-export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
-  const user = useAppSelector((s) => s.auth.user);
-  const ownerId = user?._id ?? user?.id ?? null;
-  const ownerName = (user?.name || "").trim() || user?.email || undefined;
-  const ownerEmail = user?.email || undefined;
+export interface FileUploaderProps {
+  /** Identificador único del propietario. Si falta se usa el usuario actual. */
+  ownerId?: string | null;
+  /** Nombre del propietario para metadata. */
+  ownerName?: string;
+  /** Correo electrónico del propietario para metadata. */
+  ownerEmail?: string;
+  /** Desactiva acciones si está en modo solo lectura. */
+  readOnly?: boolean;
+  /** Límite de archivos a obtener en listFiles. */
+  limit?: number;
+  /** Callback que se dispara tras guardar exitosamente. */
+  onSaved?: () => void;
+}
 
-  type PendingFile = {
-    id: string;
-    file: File;
-    url: string;
-    name: string;
-    size: number;
-  };
+type PendingFile = {
+  id: string;
+  file: File;
+  url: string;
+  name: string;
+  size: number;
+};
+
+export function FileUploader({
+  ownerId: propOwnerId,
+  ownerName: propOwnerName,
+  ownerEmail: propOwnerEmail,
+  readOnly = false,
+  limit = 50,
+  onSaved,
+}: FileUploaderProps) {
+  const user = useAppSelector((s) => s.auth.user);
+const ownerId = propOwnerId ?? (user?._id ?? user?.id ?? null);
+const ownerName = propOwnerName ?? (((user?.name || "").trim()) || user?.email || undefined);
+const ownerEmail = propOwnerEmail ?? (user?.email || undefined);
 
   const [files, setFiles] = useState<FileDoc[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -42,28 +58,22 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Revoca un URL de objeto para liberar memoria
   const revokeUrl = useCallback((value: string) => {
     if (!value) return;
-    if (typeof URL === "undefined") return;
-    if (typeof URL.revokeObjectURL !== "function") return;
+    if (typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") return;
     try {
       URL.revokeObjectURL(value);
     } catch {}
   }, []);
 
-  // Revoca todos los URLs del mapa
-  const revokeUrls = useCallback(
-    (map: Record<string, string>) => {
-      if (!map) return;
-      for (const value of Object.values(map)) {
-        revokeUrl(value);
-      }
-    },
-    [revokeUrl],
-  );
+  const revokeUrls = useCallback((map: Record<string, string>) => {
+    if (!map) return;
+    for (const value of Object.values(map)) {
+      revokeUrl(value);
+    }
+  }, [revokeUrl]);
 
-  // Refresca la lista de archivos del usuario actual
+  // Refresca la lista de archivos
   const refresh = useCallback(async () => {
     if (!ownerId) {
       setFiles([]);
@@ -73,31 +83,27 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
       });
       return;
     }
-    const list = await listFiles({ owner: ownerId });
+    const list = await listFiles({ owner: ownerId, limit });
     setFiles(list);
     const map: Record<string, string> = {};
     for (const f of list) {
       try {
         map[f._id] = await getFileUrl(f._id);
-      } catch (error) {
-        console.warn("[files-ui] error obteniendo URL de archivo", {
-          id: f._id,
-          error,
-        });
+      } catch {
+        // URL fallida, ignorar
       }
     }
     setUrls((prev) => {
       revokeUrls(prev);
       return map;
     });
-  }, [ownerId, revokeUrls]);
+  }, [ownerId, revokeUrls, limit]);
 
-  // Cargar inicial
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // Revocar URLs al desmontar
+  // Al desmontar, revocar URLs
   useEffect(() => {
     return () => {
       revokeUrls(urls);
@@ -105,7 +111,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
     };
   }, [urls, revokeUrls, pending, revokeUrl]);
 
-  // Reiniciar pendientes cuando cambia owner o modo de solo lectura
+  // Reiniciar pendientes cuando cambia owner o readonly
   useEffect(() => {
     if (!ownerId || readOnly) {
       setPending((prev) => {
@@ -117,55 +123,42 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
   }, [ownerId, readOnly, revokeUrl]);
 
   // Selección de archivo
-  const onPick = useCallback(
-    (file?: File | null) => {
-      if (!file) return;
-      if (!ownerId) return;
-      if (readOnly) return;
-      if (isSaving) return;
-      let url = "";
-      try {
-        if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
-          url = URL.createObjectURL(file);
-        }
-      } catch (error) {
-        console.error("Error al crear vista previa del archivo", error);
-        setErrorMsg("No se pudo preparar el archivo seleccionado, intenta nuevamente.");
+  const onPick = useCallback((file?: File | null) => {
+    if (!file) return;
+    if (!ownerId) return;
+    if (readOnly || isSaving) return;
+    let url = "";
+    try {
+      if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+        url = URL.createObjectURL(file);
       }
-      const id = `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const item: PendingFile = {
-        id,
-        file,
-        url,
-        name: file.name,
-        size: file.size,
-      };
-      setPending((prev) => [...prev, item]);
-      setErrorMsg(null);
-    },
-    [isSaving, ownerId, readOnly],
-  );
+    } catch (error) {
+      console.error("Error al crear vista previa del archivo", error);
+      setErrorMsg("No se pudo preparar el archivo seleccionado, intenta nuevamente.");
+    }
+    const id = `pending-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const item: PendingFile = { id, file, url, name: file.name, size: file.size };
+    setPending((prev) => [...prev, item]);
+    setErrorMsg(null);
+  }, [ownerId, readOnly, isSaving]);
 
-  // Quitar un archivo pendiente
-  const removePending = useCallback(
-    (id: string) => {
-      if (isSaving) return;
-      setPending((prev) => {
-        const next: PendingFile[] = [];
-        for (const item of prev) {
-          if (item.id === id) {
-            revokeUrl(item.url);
-            continue;
-          }
-          next.push(item);
+  // Elimina un pendiente
+  const removePending = useCallback((id: string) => {
+    if (isSaving) return;
+    setPending((prev) => {
+      const next: PendingFile[] = [];
+      for (const item of prev) {
+        if (item.id === id) {
+          revokeUrl(item.url);
+          continue;
         }
-        return next;
-      });
-    },
-    [isSaving, revokeUrl],
-  );
+        next.push(item);
+      }
+      return next;
+    });
+  }, [isSaving, revokeUrl]);
 
-  // Descartar todos los pendientes
+  // Descarta todos
   const discardPending = useCallback(() => {
     if (isSaving) return;
     setPending((prev) => {
@@ -176,7 +169,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
     setErrorMsg(null);
   }, [isSaving, revokeUrl]);
 
-  // Guardar todos los archivos pendientes
+  // Guardar todos los pendientes
   const handleSave = useCallback(async () => {
     if (!ownerId || readOnly || isSaving || pending.length === 0) return;
     setIsSaving(true);
@@ -192,7 +185,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
           fileName: item.file.name,
           mimeType: item.file.type,
         });
-        savedIds.add(item.id);
+        if (result?._id) savedIds.add(item.id);
       }
       setPending((prev) => prev.filter((item) => {
         const shouldKeep = !savedIds.has(item.id);
@@ -200,6 +193,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
         return shouldKeep;
       }));
       await refresh();
+      onSaved?.();
     } catch (err) {
       console.error("Error al guardar archivos", err);
       setErrorMsg("No se pudieron guardar todos los archivos. Inténtalo nuevamente.");
@@ -211,14 +205,14 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
     } finally {
       setIsSaving(false);
     }
-  }, [isSaving, ownerId, ownerName, ownerEmail, pending, readOnly, revokeUrl, refresh]);
+  }, [ownerId, readOnly, isSaving, pending, ownerName, ownerEmail, revokeUrl, refresh, onSaved]);
 
   // Eliminar un archivo guardado
   const onDelete = useCallback(async (id: string) => {
     if (readOnly || isSaving) return;
     await deleteFile(id);
     await refresh();
-  }, [isSaving, readOnly, refresh]);
+  }, [readOnly, isSaving, refresh]);
 
   const hasPending = pending.length > 0;
   const disableSelect = !ownerId || readOnly || isSaving;
@@ -228,6 +222,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <div className="space-y-4">
+      {/* Selector de archivos */}
       <div className="flex flex-wrap gap-2">
         <input
           ref={fileRef}
@@ -243,28 +238,23 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
             <Button disabled={disableSave} onClick={() => void handleSave()}>
               {isSaving ? "Guardando..." : saveLabel}
             </Button>
-            <Button
-              aria-label="Descartar pendientes"
-              disabled={disableDiscard}
-              onClick={discardPending}
-              variant="outline"
-            >
+            <Button aria-label="Descartar pendientes" disabled={disableDiscard} onClick={discardPending} variant="outline">
               Descartar
             </Button>
           </>
         )}
       </div>
+      {/* Mensajes */}
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
       {(!ownerId || readOnly) && !hasPending && (
         <p className="text-sm text-muted-foreground">
           {!ownerId ? "Debes iniciar sesión para subir o ver tus archivos." : "Tus permisos actuales son de solo lectura."}
         </p>
       )}
+      {/* Pendientes */}
       {hasPending && (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">
-            Pendientes por guardar ({pending.length})
-          </p>
+          <p className="text-sm font-medium text-muted-foreground">Pendientes por guardar ({pending.length})</p>
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {pending.map((item) => (
               <li key={item.id} className="relative group border rounded-xl p-2">
@@ -284,6 +274,7 @@ export function FilesTest({ readOnly = false }: { readOnly?: boolean }) {
           </ul>
         </div>
       )}
+      {/* Archivos guardados */}
       <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
         {files.map((f) => (
           <li key={f._id} className="relative group border rounded-xl p-2">

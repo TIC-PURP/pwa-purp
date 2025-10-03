@@ -13,16 +13,9 @@ describe('database', () => {
     jest.resetModules();
     jest.clearAllMocks();
     process.env.NEXT_PUBLIC_COUCHDB_URL = 'http://localhost:5984/gestion_pwa';
-    try { window.localStorage.clear(); } catch {}
-    try { document.cookie = 'AuthSession=; Max-Age=0; path=/;'; } catch {}
     // Stub de fetch global para evitar peticiones reales
     (global as any).fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => ({ ok: true, user: 'test@example.com', roles: [] }),
-        text: async () => '{}',
-      })
+      Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' })
     );
     try {
       Object.defineProperty(window.navigator, 'onLine', {
@@ -117,18 +110,7 @@ describe('database', () => {
     PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
 
     const fetchMock = (global as any).fetch as jest.Mock;
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ ok: true, user: 'online@example.com', roles: [] }),
-      text: async () => '{}',
-    });
-
-    window.localStorage.setItem(
-      'auth',
-      JSON.stringify({ user: { email: 'online@example.com', password: 'Secret123*' }, token: 'cookie-session' })
-    );
-    document.cookie = 'AuthSession=fake-session';
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}), text: async () => '{}' });
 
     const { createUser } = await import('@/lib/database');
     const result = await createUser({
@@ -279,18 +261,7 @@ describe('database', () => {
     PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
 
     const fetchMock = (global as any).fetch as jest.Mock;
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ ok: true, user: 'manager@example.com', roles: [] }),
-      text: async () => '{}',
-    });
-
-    window.localStorage.setItem(
-      'auth',
-      JSON.stringify({ user: { email: 'manager@example.com', password: 'Secret123*' }, token: 'cookie-session' })
-    );
-    document.cookie = 'AuthSession=fake-session';
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}), text: async () => '{}' });
 
     const { updateUser } = await import('@/lib/database');
     const result = await updateUser(existing._id, {
@@ -342,18 +313,7 @@ describe('database', () => {
     PouchDBMock.mockImplementationOnce(() => localDB).mockImplementationOnce(() => remoteDB);
 
     const fetchMock = (global as any).fetch as jest.Mock;
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, user: 'john@example.com', roles: [] }),
-      text: async () => '{}',
-    });
-
-    window.localStorage.setItem(
-      'auth',
-      JSON.stringify({ user: { email: 'john@example.com', password: 'Secret123*' }, token: 'cookie-session' })
-    );
-    document.cookie = 'AuthSession=fake-session';
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' });
 
     const { updateUser } = await import('@/lib/database');
     await updateUser(existing._id, {

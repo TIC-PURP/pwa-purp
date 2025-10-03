@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { moduleDMode } from "@/lib/permissions";
 import BackButton from "@/components/common/back-button";
+import { PolygonDrawer } from "@/components/common/polygon-drawer";
 
 export default function ModuleDPage() {
   // Información del usuario autenticado para controlar los permisos.
@@ -41,13 +42,23 @@ export default function ModuleDPage() {
           <CardContent>
             {mode === "READ" ? (
               <p className="text-sm text-muted-foreground">
-                Modo lectura: si existieran formularios, estarían deshabilitados.
+                Modo lectura: puedes consultar tus polígonos pero no crear ni eliminar.
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Acceso completo.
+                Acceso completo: puedes crear y administrar polígonos.
               </p>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Funcionalidad de dibujo de polígonos */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Dibujar y guardar polígonos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PolygonDrawer readOnly={mode === "READ"} />
           </CardContent>
         </Card>
       </main>

@@ -8,37 +8,6 @@ let localDB: any = null;
 let remoteDB: any = null;
 let syncHandler: any = null;
 
-function hasAuthSessionCookie() {
-  if (typeof document === "undefined") return false;
-  return /(?:^|;\s*)AuthSession=/.test(document.cookie);
-}
-
-function readStoredAuthCredentials(): { email: string; password: string; token?: string } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem("auth");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const token = typeof parsed?.token === "string" ? parsed.token : undefined;
-    const user = parsed?.user ?? null;
-    if (!user) return null;
-    const email = String(user.email || user.name || "").trim();
-    const password = String(user.password || "").trim();
-    if (!email || !password) return null;
-    return { email, password, token };
-  } catch {
-    return null;
-  }
-}
-
-function getErrorStatus(err: any): number | null {
-  const raw = err?.status ?? err?.statusCode ?? err?.code;
-  const value = typeof raw === "string" ? parseInt(raw, 10) : raw;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-let renewSessionPromise: Promise<boolean> | null = null;
-
 export type CouchEnv = {
   serverBase: string;
   dbName: string;
@@ -49,56 +18,13 @@ export function getCouchEnv(): CouchEnv {
   const raw = (process.env.NEXT_PUBLIC_COUCHDB_URL || "").trim();
   if (!raw) throw new Error("NEXT_PUBLIC_COUCHDB_URL no esta definido");
 
-  // Nombre de la base proporcionado explícitamente vía entorno
-  const envDb = (process.env.COUCHDB_DB || "").trim();
+  const url = new URL(raw);
+  const path = url.pathname.replace(/\/+$/, "");
+  const parts = path.split("/").filter(Boolean);
+  const dbName = parts[parts.length - 1] || "pwa-purp";
 
-  // Cuando el valor es una URL absoluta utilizamos la API URL estándar
-  // para extraer host, origin y pathname.  Si es una ruta relativa (como
-  // "/api/couch") new URL lanzará una excepción; en ese caso hacemos un
-  // parseo manual para derivar el nombre de la base y el path base.
-  try {
-    const url = new URL(raw);
-    const cleanPath = url.pathname.replace(/\/+$/, "");
-    const parts = cleanPath.split("/").filter(Boolean);
-
-    let dbCandidate: string | undefined;
-    if (parts.length > 0) {
-      const last = parts[parts.length - 1];
-      if (!last.startsWith("_")) {
-        dbCandidate = last;
-      }
-    }
-
-    const dbName = (envDb || dbCandidate || "pwa-purp").trim();
-    if (!dbName) {
-      throw new Error("No se pudo determinar el nombre de la base de CouchDB");
-    }
-
-    const hasDbInUrl = Boolean(dbCandidate && dbCandidate === dbName);
-    const baseParts = hasDbInUrl ? parts.slice(0, -1) : parts;
-    const basePath = baseParts.join("/");
-    const origin = url.origin || `${url.protocol}//${url.host}`;
-    const serverBase = `${origin}${basePath ? `/${basePath}` : ""}`.replace(/\/+$/, "");
-
-    return { serverBase, dbName };
-  } catch {
-    // Ruta relativa: eliminar barras iniciales/finales y analizar partes
-    const clean = raw.replace(/^\/+/g, '').replace(/\/+$/g, '');
-    const parts = clean.split('/').filter(Boolean);
-    let dbCandidate: string | undefined;
-    if (parts.length > 0) {
-      const last = parts[parts.length - 1];
-      if (!last.startsWith('_')) {
-        dbCandidate = last;
-      }
-    }
-    const dbName = (envDb || dbCandidate || 'pwa-purp').trim();
-    // En rutas relativas no podemos derivar un origin; utilizamos el valor raw
-    // tal cual para serverBase.  Esto es adecuado porque en cliente el
-    // servidor remoto lo determinará getRemoteBase() devolviendo "/api/couch".
-    const serverBase = raw.replace(/\/+$/, '');
-    return { serverBase, dbName };
-  }
+  const serverBase = `${url.protocol}//${url.host}`;
+  return { serverBase, dbName };
 }
 
 /** Cuando corre en el navegador usamos el proxy /couchdb (same-origin con cookie); en SSR va directo */
@@ -115,7 +41,7 @@ function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, ms =
   return fetch(input, opts).finally(() => clearTimeout(timer));
 }
 
-// --- Helpers para reintentar operaciones locales si IndexedDB está cerrando ---
+// --- Helpers para reintentar operaciones locales si IndexedDB esta cerrando ---
 function isClosingError(err: any) {
   const name = (err && err.name) || "";
   const msg = (err && err.message) || "";
@@ -221,51 +147,12 @@ function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
   }
   return out as T;
 }
-async function fetchAdminUsers(path: string, init: RequestInit = {}) {
-  const options: RequestInit = { ...init };
-  options.credentials = init.credentials ?? "include";
-
-  // Pre-check solo en cliente: si no hay cookie e imposible renovar, devolver 401 sintético.
-  if (isClient) {
-    // Evita trabajo si ya tenemos cookie válida
-    if (!hasAuthSessionCookie()) {
-      const sessionReady = await ensureOnlineAuthSession(false);
-      if (!sessionReady) {
-        return new Response(
-          JSON.stringify({ ok: false, error: "missing_auth_session" }),
-          { status: 401, headers: { "content-type": "application/json" } },
-        );
-      }
-    }
-  }
-
-  let attempt = 0;
-  let response: Response | null = null;
-
-  while (attempt < 2) {
-    response = await fetch(path, options);
-    if (response && (response.status === 401 || response.status === 403) && attempt === 0) {
-      try {
-        const renewed = await ensureOnlineAuthSession(true);
-        if (renewed) {
-          attempt += 1;
-          continue;
-        }
-      } catch (error) {
-        console.warn("[database] admin fetch retry failed", (error as any)?.message || error);
-      }
-    }
-    break;
-  }
-
-  return response as Response;
-}
-
 async function saveDocViaAdmin(doc: any) {
   try {
-    const res = await fetchAdminUsers("/api/admin/couch/users", {
+    const res = await fetch("/api/admin/couch/app-users", {
       method: "PUT",
       headers: { "content-type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ doc }),
     });
     if (!res.ok) {
@@ -326,7 +213,7 @@ export async function openDatabases() {
   }
 
   if (!remoteDB) {
-    const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`.replace(/\/+$/, "");
+    const remoteUrl = `${remoteBase}/${encodeURIComponent(dbName)}`;
     remoteDB = new PouchDB(remoteUrl, {
       skip_setup: true,
       fetch: (url: RequestInfo, opts: any = {}) => {
@@ -336,23 +223,12 @@ export async function openDatabases() {
       },
       ajax: { withCredentials: true },
     });
-
-    const resolvedRemoteName = typeof remoteDB?.name === "string" ? remoteDB.name : remoteUrl;
-    console.info("[db] remote target", resolvedRemoteName);
   }
 
   return { localDB, remoteDB };
 }
 
 /** Arranca replicacion continua (local <-> remote) */
-const enableSyncLogs = typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_SYNC === "true";
-
-function logSyncEvent(label: string, payload?: unknown) {
-  if (!enableSyncLogs) return;
-  const logger = label === "error" ? console.error : console.debug;
-  logger(`[sync] ${label}`, payload);
-}
-
 export async function startSync() {
   if (!isClient) return;
   await openDatabases();
@@ -363,10 +239,10 @@ export async function startSync() {
   const opts: any = { live: true, retry: true, heartbeat: 25000, timeout: 55000 };
   syncHandler = localDB.sync(remoteDB, opts);
   syncHandler
-    .on("change", (i: any) => logSyncEvent("change", i.direction))
-    .on("paused", (e: any) => logSyncEvent("paused", e?.message || "ok"))
-    .on("active", () => logSyncEvent("active"))
-    .on("error", (e: any) => logSyncEvent("error", e));
+    .on("change", (i: any) => console.log("[sync] change", i.direction))
+    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
+    .on("active", () => console.log("[sync] active"))
+    .on("error", (e: any) => console.error("[sync] error", e));
   return syncHandler;
 }
 
@@ -374,7 +250,7 @@ export async function startSync() {
 export async function stopSync() {
   try {
     // Evitar cuelgues: no esperar a que cancel() resuelva
-    // Algunos adaptadores de PouchDB no devuelven una Promise resoluble aquí
+    // Algunos adaptadores de PouchDB no devuelven una Promise resoluble aqu
     // y dejar await puede colgar flujos como el login.
     // @ts-ignore
     if (syncHandler?.cancel) {
@@ -386,7 +262,7 @@ export async function stopSync() {
 
 /** Login online contra /api/auth/login */
 export async function loginOnlineToCouchDB(email: string, password: string) {
-  console.log("[db] loginOnlineToCouchDB inicio", { email });
+  console.log("[db] loginOnlineToCouchDB start", { email });
   const body = JSON.stringify({ email, password });
   let res: Response;
   try {
@@ -405,11 +281,11 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
     );
   } catch (err) {
     console.error("[db] loginOnlineToCouchDB fetch error", err);
-    throw new Error("No hay conexión a internet. Revisa tu conexión e inténtalo nuevamente.");
+    throw new Error("No hay conexin a internet. Revisa tu conexin e intntalo nuevamente.");
   }
   const data = await res.json().catch(() => ({}));
   console.log("[db] loginOnlineToCouchDB response", res.status, data);
-  // Mejor manejo de errores: si el API devolvió error, propagar mensaje claro
+  // Mejor manejo de errores: si el API devolvi error, propagar mensaje claro
   if (!res.ok || !data?.ok) {
     const msg = (data && (data.error || data.reason)) || res.statusText || "login failed";
     throw new Error(String(msg));
@@ -418,63 +294,12 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
   return data as any; // { ok: boolean, user?: string, roles?: string[] }
 }
 
-/** Cierra la sesión del servidor */
+/** Cierra la sesin del servidor */
 export async function logoutOnlineSession() {
+  const base = getRemoteBase();
   try {
-    const res = await fetch(`/api/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok && res.status !== 401 && res.status !== 403) {
-      throw new Error(`logout failed ${res.status}`);
-    }
-  } catch (err) {
-    try { await fetch(`/api/couch/_session`, { method: "DELETE", credentials: "include" }); } catch {}
-  }
-}
-
-async function ensureOnlineAuthSession(force = false): Promise<boolean> {
-  if (!isClient) return false;
-  if (!force && hasAuthSessionCookie()) return true;
-  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
-  if (renewSessionPromise) return renewSessionPromise;
-  const creds = readStoredAuthCredentials();
-  if (!creds || creds.token === "offline-session") return false;
-  renewSessionPromise = (async () => {
-    try {
-      await loginOnlineToCouchDB(creds.email, creds.password);
-      return hasAuthSessionCookie();
-    } catch (error) {
-      console.warn("[db] ensureOnlineAuthSession failed", (error as any)?.message || error);
-      return false;
-    } finally {
-      renewSessionPromise = null;
-    }
-  })();
-  return renewSessionPromise;
-}
-
-async function runWithRemoteAuth<T>(operation: () => Promise<T>): Promise<T | null> {
-  if (!remoteDB) return null;
-  const sessionOk = await ensureOnlineAuthSession(false);
-  if (!sessionOk) return null;
-  let attempt = 0;
-  while (attempt < 2) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      const status = getErrorStatus(error);
-      if (attempt === 0 && status && (status === 401 || status === 403)) {
-        const renewed = await ensureOnlineAuthSession(true);
-        if (!renewed) return null;
-        attempt += 1;
-        continue;
-      }
-      throw error;
-    }
-  }
-  return null;
+    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
+  } catch {}
 }
 
 /** Login offline contra Pouch local */
@@ -482,7 +307,7 @@ export async function authenticateUser(identifier: string, password: string) {
   await openDatabases();
   if (!localDB) throw new Error("localDB no inicializado");
 
-  // 1) Intentar match exacto por email (más robusto)
+  // 1) Intentar match exacto por email (ms robusto)
   try {
     await ensureUserIndexes();
     const r = await localDB.find({ selector: { type: "user", email: identifier }, limit: 1 });
@@ -556,7 +381,7 @@ export async function guardarUsuarioOffline(user: any) {
    ==========  USERS  =========
    ============================ */
 
-/** Índices para consultas */
+/** ndices para consultas */
 async function ensureUserIndexes() {
   await openDatabases();
   if (!localDB) return;
@@ -619,42 +444,20 @@ export async function getAllUsers(opts?: { includeInactive?: boolean; limit?: nu
 }
 
 /**
- * Lista cuentas de CouchDB /_users via API admin (solo manager/admin).
+ * Lista cuentas de CouchDB /_users va API admin (solo manager/admin).
  * Devuelve usuarios mapeados al shape de la app con permisos derivados.
  */
 export async function getAllUsersAsManager(): Promise<any[]> {
   try {
-    const res = await fetchAdminUsers(`/api/admin/couch/users`, {
+    const res = await fetch(`/api/admin/couch/users`, {
       method: "GET",
+      credentials: "include",
       headers: { Accept: "application/json" },
     });
-
-    if (res.status === 401 || res.status === 403) {
-      try {
-        return await getAllUsers({ includeInactive: true, limit: 5000 });
-      } catch {
-        return [];
-      }
-    }
-
-    if (!res.ok) {
-      let detail = "";
-      try {
-        const errJson = await res.clone().json();
-        detail = String((errJson as any)?.error || (errJson as any)?.message || "").trim();
-      } catch {
-        try {
-          detail = String(await res.clone().text()).trim();
-        } catch {}
-      }
-      const statusInfo = `${res.status || ""}${res.statusText ? ` ${res.statusText}` : ""}`.trim();
-      throw new Error(`Remote users request failed${statusInfo ? ` (${statusInfo})` : ""}${detail ? `: ${detail}` : ""}`);
-    }
-
     const data = await res.json().catch(() => ({} as any));
     const list = Array.isArray((data as any)?.users) ? (data as any).users : [];
 
-    // Traer también lo local para fusionar metadatos si existen
+    // Traer tambien lo local para fusionar metadatos si existen
     let locals: Record<string, any> = {};
     try {
       const localList = await getAllUsers({ includeInactive: true, limit: 5000 });
@@ -762,7 +565,7 @@ function normalizeUserDocShape(u: any) {
   return out;
 }
 
-/** Limpia campos inválidos (como ___writePath) de documentos de usuario existentes */
+/** Limpia campos invlidos (como ___writePath) de documentos de usuario existentes */
 export async function cleanupUserDocs(): Promise<number> {
   await openDatabases();
   if (!localDB) return 0;
@@ -1054,7 +857,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   await safeLocalPut(toLocal);
   return { ...toLocal, ___writePath: "local" } as any;
 }
-/** Borrado lógico - LOCAL FIRST */
+/** Borrado logico - LOCAL FIRST */
 // deprecated: no longer used; keep for reference
 /* removed: softDeleteUser(idOrKey: any) {
   await openDatabases();
@@ -1065,7 +868,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     doc = await localDB.get(_id);
   } catch (e: any) {
     if (e?.status === 404) {
-      // Crear doc base para permitir desactivación de usuarios listados desde _users
+      // Crear doc base para permitir desactivacion de usuarios listados desde _users
       const email = typeof idOrKey === "object" ? (idOrKey.email || idOrKey.name || "") : (key.includes("@") ? key : "");
       doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email, name: email ? (email.split("@")[0]) : key });
     } else {
@@ -1125,7 +928,7 @@ export async function deleteUserById(idOrKey: string): Promise<boolean> {
   for (const candidate of candidates) {
     try {
       const doc = await localDB.get(candidate);
-      await localDB.remove(doc); // la sync replicará el delete
+      await localDB.remove(doc); // la sync replicara el delete
       return true;
     } catch (err: any) {
       if (err?.status === 404) continue;
@@ -1172,8 +975,9 @@ export async function hardDeleteUser(idOrKey: any): Promise<boolean> {
           email = String(idOrKey.email || idOrKey.name || "");
         }
         if (email) {
-          await fetchAdminUsers(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
+          await fetch(`/api/admin/couch/users?name=${encodeURIComponent(email)}`, {
             method: "DELETE",
+            credentials: "include",
           });
         }
       } catch {}
@@ -1200,7 +1004,7 @@ export async function findUserByEmail(email: string) {
   return null;
 }
 
-/** Watch de cambios del doc de usuario (replicación) */
+/** Watch de cambios del doc de usuario (replicacion) */
 export async function watchUserDocByEmail(
   email: string,
   onUpdate: (doc: any) => void,
@@ -1252,7 +1056,7 @@ export async function saveUserAvatar(
   let doc: any;
   try { doc = await localDB.get(_id); } catch (e: any) {
     if (e?.status === 404) {
-      // crear base mínima
+      // crear base minima
       doc = buildUserDocFromData({ _id, id: _id.replace(":", "_"), email });
       try { await localDB.put(sanitizeForCouch(doc)); } catch {}
       doc = await localDB.get(_id);
@@ -1260,7 +1064,7 @@ export async function saveUserAvatar(
   }
   // putAttachment local-first
   const res = await localDB.putAttachment(_id, "avatar", doc._rev, blob, contentType);
-  // también miniatura 64x64
+  // tambien miniatura 64x64
   try {
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -1295,64 +1099,49 @@ export async function saveUserAvatar(
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
-      const remoteOp = async () => {
-        let remoteDoc = await remoteDB.get(_id).catch(() => null);
-        if (!remoteDoc) {
-          const base = sanitizeForCouch(latest);
-          const put = await remoteDB.put(base);
-          remoteDoc = { ...base, _rev: put.rev };
+      let rdoc = await remoteDB.get(_id).catch(() => null);
+      if (!rdoc) {
+        const base = sanitizeForCouch(latest);
+        const put = await remoteDB.put(base);
+        rdoc = { ...base, _rev: put.rev };
+      }
+      const r = await remoteDB.putAttachment(_id, "avatar", rdoc._rev, blob, contentType);
+      // tambien miniatura remota
+      try {
+        const size = 64;
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
+        URL.revokeObjectURL(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // @ts-ignore
+          ctx.imageSmoothingQuality = "high";
+          const r2 = Math.max(size / img.width, size / img.height);
+          const dw2 = img.width * r2, dh2 = img.height * r2;
+          const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
+          ctx.drawImage(img, dx2, dy2, dw2, dh2);
+          let d2 = "";
+          try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
+          catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
+          const thumb2 = await (await fetch(d2)).blob();
+          const rlatest0 = await remoteDB.get(_id);
+          await remoteDB.putAttachment(_id, "avatar_64", rlatest0._rev, thumb2, thumb2.type || "image/jpeg");
         }
-        const existing = remoteDoc?._rev ? remoteDoc : await remoteDB.get(_id);
-        let currentRev = existing?._rev;
-        if (!currentRev) {
-          const fallback = await remoteDB.get(_id);
-          currentRev = fallback?._rev;
-        }
-        if (!currentRev) throw new Error("missing-remote-rev");
-        const avatarResult = await remoteDB.putAttachment(_id, "avatar", currentRev, blob, contentType);
-        currentRev = avatarResult.rev;
-        try {
-          const size = 64;
-          const url = URL.createObjectURL(blob);
-          try {
-            const img = new Image();
-            await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = url; });
-            const canvas = document.createElement("canvas");
-            canvas.width = size; canvas.height = size;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              // @ts-ignore
-              ctx.imageSmoothingQuality = "high";
-              const r2 = Math.max(size / img.width, size / img.height);
-              const dw2 = img.width * r2, dh2 = img.height * r2;
-              const dx2 = (size - dw2) / 2, dy2 = (size - dh2) / 2;
-              ctx.drawImage(img, dx2, dy2, dw2, dh2);
-              let d2 = "";
-              try { d2 = canvas.toDataURL("image/webp", 0.8); if (!d2.startsWith("data:image/webp")) throw new Error(); }
-              catch { d2 = canvas.toDataURL("image/jpeg", 0.8); }
-              const thumb2 = await (await fetch(d2)).blob();
-              const latestDoc = await remoteDB.get(_id);
-              const thumbResult = await remoteDB.putAttachment(_id, "avatar_64", latestDoc._rev, thumb2, thumb2.type || "image/jpeg");
-              currentRev = thumbResult.rev;
-            }
-          } finally {
-            URL.revokeObjectURL(url);
-          }
-        } catch {}
-        const finalDoc = await remoteDB.get(_id);
-        finalDoc.hasAvatar = true;
-        finalDoc.updatedAt = new Date().toISOString();
-        await remoteDB.put(sanitizeForCouch(finalDoc));
-        return true;
-      };
-      await runWithRemoteAuth(remoteOp);
+      } catch {}
+      // actualizar doc remoto con bandera por coherencia
+      const rlatest = await remoteDB.get(_id);
+      rlatest.hasAvatar = true;
+      rlatest.updatedAt = new Date().toISOString();
+      await remoteDB.put(sanitizeForCouch(rlatest));
     }
-  } catch (error) {
-    console.warn("[db] remote avatar sync failed", (error as any)?.message || error);
-  }
+  } catch {}
 
-  return { ok: true, _id: _id, _rev: res?.rev };
+  return { ok: true, _id, _rev: res?.rev };
 }
+
 
 export async function deleteUserAvatar(email: string) {
   await openDatabases();
@@ -1369,28 +1158,20 @@ export async function deleteUserAvatar(email: string) {
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
-      await runWithRemoteAuth(async () => {
-        const remoteDoc = await remoteDB.get(_id).catch(() => null);
-        if (!remoteDoc) return null;
-        let currentRev = remoteDoc._rev;
-        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", currentRev); currentRev = rr1.rev; } catch {}
-        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", currentRev); currentRev = rr2.rev; } catch {}
-        const latest = await remoteDB.get(_id).catch(() => null);
-        if (latest) {
-          latest.hasAvatar = false;
-          latest.updatedAt = new Date().toISOString();
-          await remoteDB.put(sanitizeForCouch(latest));
-        }
-        return true;
-      });
+      let rdoc = await remoteDB.get(_id).catch(() => null);
+      if (rdoc) {
+        let rrev = rdoc._rev;
+        try { const rr1 = await remoteDB.removeAttachment(_id, "avatar", rrev); rrev = rr1.rev; } catch {}
+        try { const rr2 = await remoteDB.removeAttachment(_id, "avatar_64", rrev); rrev = rr2.rev; } catch {}
+        const rlatest = await remoteDB.get(_id);
+        rlatest.hasAvatar = false;
+        rlatest.updatedAt = new Date().toISOString();
+        await remoteDB.put(sanitizeForCouch(rlatest));
+      }
     }
-  } catch (error) {
-    console.warn("[db] remote avatar delete failed", (error as any)?.message || error);
-  }
+  } catch {}
   return { ok: true } as const;
-}
-
-export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
+}export async function getUserAvatarBlob(email: string): Promise<Blob | null> {
   await openDatabases();
   if (!localDB) return null;
   const _id = toUserDocId(email);
@@ -1438,9 +1219,10 @@ async function upsertRemoteAuthUser({
         roles: Array.isArray(roles) ? roles : [],
         ...extra,
       };
-      const createRes = await fetchAdminUsers(`/api/admin/couch/users`, {
+      const createRes = await fetch(`/api/admin/couch/users`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (createRes.ok || createRes.status === 201) return;
@@ -1450,9 +1232,10 @@ async function upsertRemoteAuthUser({
     const updatePayload: Record<string, any> = { name: n, ...extra };
     if (typeof password === "string" && password.trim()) updatePayload.password = password;
     if (Array.isArray(roles)) updatePayload.roles = roles;
-    await fetchAdminUsers(`/api/admin/couch/users`, {
+    await fetch(`/api/admin/couch/users`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(updatePayload),
     });
   } catch (e) {
@@ -1465,8 +1248,9 @@ async function deleteRemoteAuthUser(name?: string) {
   const n = (name || "").trim();
   if (!n) return;
   try {
-    await fetchAdminUsers(`/api/admin/couch/users?name=${encodeURIComponent(n)}`, {
+    await fetch(`/api/admin/couch/users?name=${encodeURIComponent(n)}`, {
       method: "DELETE",
+      credentials: "include",
     });
   } catch {}
 }
@@ -1500,7 +1284,7 @@ type PhotoDoc = {
   updatedAt?: string;
 };
 
-/** Crea índices para búsqueda de fotos */
+/** Crea indices para búsqueda de fotos */
 async function ensurePhotoIndexes() {
   await openDatabases();
   if (!localDB) return;
@@ -1517,22 +1301,6 @@ async function ensurePhotoIndexes() {
     });
   } catch {}
 }
-const enablePhotoLogs =
-  typeof process !== "undefined"
-    ? process.env.NEXT_PUBLIC_DEBUG_PHOTOS === "true" ||
-      (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEBUG_PHOTOS !== "false")
-    : false;
-
-function logPhotoDb(label: string, payload?: unknown, level: "debug" | "error" = "debug") {
-  if (!enablePhotoLogs) return;
-  const logger = level === "error" ? console.error : console.log;
-  if (typeof payload === "undefined") {
-    logger(`[photos-db] ${label}`);
-  } else {
-    logger(`[photos-db] ${label}`, payload);
-  }
-}
-
 
 /** Genera un id corto aleatorio */
 function rid(len = 6) {
@@ -1557,7 +1325,6 @@ async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image
     canvas.width = cw; canvas.height = ch;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("no-2d");
-    // @ts-ignore
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, 0, 0, cw, ch);
     const mime = as;
@@ -1567,56 +1334,6 @@ async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-async function ensureRemoteDocSeed(id: string, seed: any) {
-  if (!remoteDB) throw new Error("remote db not ready");
-  let remoteDoc: any = null;
-  try {
-    remoteDoc = await remoteDB.get(id);
-  } catch (error) {
-    if (getErrorStatus(error) !== 404) {
-      throw error;
-    }
-  }
-  if (remoteDoc) return remoteDoc;
-
-  const prepared = sanitizeForCouch(seed);
-  const remoteSeed = { ...prepared } as Record<string, any>;
-  delete remoteSeed._rev;
-  delete remoteSeed._attachments;
-  const put = await remoteDB.put(remoteSeed);
-  return { ...remoteSeed, _rev: put.rev };
-}
-
-async function uploadRemoteAttachments(
-  id: string,
-  startingRev: string,
-  attachments: Array<{ name: string; blob: Blob; contentType: string }>,
-) {
-  if (!remoteDB) throw new Error("remote db not ready");
-  let currentRev = startingRev;
-  for (const item of attachments) {
-    const result = await remoteDB.putAttachment(
-      id,
-      item.name,
-      currentRev,
-      item.blob,
-      item.contentType,
-    );
-    currentRev = result?.rev || currentRev;
-  }
-  return currentRev;
-}
-
-async function finalizeRemoteDocMetadata(id: string, patch: Record<string, any>) {
-  if (!remoteDB) throw new Error("remote db not ready");
-  const latestRemote = await remoteDB.get(id);
-  const nextDoc = {
-    ...latestRemote,
-    ...patch,
-  };
-  await remoteDB.put(sanitizeForCouch(nextDoc));
 }
 
 /** Guarda una foto con attachments (original + thumb) en PouchDB (replica a CouchDB) */
@@ -1639,21 +1356,11 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     hasThumb: true,
     updatedAt: nowIso,
   };
-  logPhotoDb("save:start", {
-    id,
-    owner: meta.owner,
-    ownerName: meta.ownerName,
-    ownerEmail: meta.ownerEmail,
-    size: (file as any)?.size ?? null,
-    type: (file as any)?.type ?? null,
-  });
   // 1) Crear doc base
-  try { await (localDB as any).put(sanitizeForCouch(doc)); logPhotoDb("save:local-put", { id }); } catch (e: any) {
-    logPhotoDb("save:local-put-error", { id, error: e }, "error");
+  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
     if (e?.status === 409) {
       const existing = await (localDB as any).get(id);
       await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
-      logPhotoDb("save:local-put-conflict-resolved", { id });
     } else { throw e; }
   }
 
@@ -1661,93 +1368,51 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
   let latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
-  logPhotoDb("save:local-thumb", { id });
 
   // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
   const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
   latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
-  logPhotoDb("save:local-original", { id });
 
   // 4) Update metadata
   latest = await (localDB as any).get(id);
   latest.updatedAt = new Date().toISOString();
   await (localDB as any).put(sanitizeForCouch(latest));
-  logPhotoDb("save:local-meta", { id });
 
-  // Best-effort: subir attachments y metadata al remoto si hay internet.
-  // Similar a saveUserAvatar(). Si no hay conexión, la replicación continua lo subirá.
+  // Best-effort: subir attachments y metadata al remoto si hay internet.  
+  // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
+  // similar a lo que hace saveUserAvatar(). Si no hay conexión, los adjuntos  
+  // se sincronizarán automáticamente cuando startSync() esté activo.  
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    const isOnline = Boolean(online);
-    logPhotoDb("save:remote-check", { id, online: isOnline });
-
-    if (!isOnline) {
-      logPhotoDb("save:remote-skip", { id, reason: "offline" });
-    } else {
-      try {
-        const remoteResult = await runWithRemoteAuth(async () => {
-          let remoteDoc: any = null;
+    if (online) {
+      let rdoc: any = null;
+      try { rdoc = await remoteDB.get(id); } catch {}
+      // Si no existe el doc remoto, crearlo con la metadata actual
+      if (!rdoc) {
+        try {
+          const base = sanitizeForCouch(latest);
+          const put = await remoteDB.put(base);
+          rdoc = { ...base, _rev: put.rev };
+        } catch {}
+      }
+      if (rdoc) {
+        // Subir thumb y original, manejando las revisiones
+        try {
+          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
+          rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
+          // Actualizar flags y updatedAt en remoto
           try {
-            remoteDoc = await remoteDB.get(id);
-          } catch (error) {
-            logPhotoDb("save:remote-get-miss", { id, error });
-          }
-          if (!remoteDoc) {
-            remoteDoc = await ensureRemoteDocSeed(id, latest);
-            logPhotoDb("save:remote-base-created", { id });
-          }
-          const remoteRev = remoteDoc?._rev;
-          if (!remoteRev) throw new Error("missing-remote-rev");
-          const finalRev = await uploadRemoteAttachments(id, remoteRev, [
-            { name: "thumb.webp", blob: thumb, contentType: "image/webp" },
-            { name: "original.jpg", blob: original, contentType: "image/jpeg" },
-          ]);
-          logPhotoDb("save:remote-attachments", { id, rev: finalRev });
-          await finalizeRemoteDocMetadata(id, {
-            hasOriginal: true,
-            hasThumb: true,
-            updatedAt: new Date().toISOString(),
-          });
-          logPhotoDb("save:remote-meta", { id });
-          return true as const;
-        });
-
-        if (!remoteResult) {
-          logPhotoDb("save:remote-skip", { id, reason: "no-session" });
-        } else {
-          try {
-            const confirmation = await runWithRemoteAuth(async () => {
-              return remoteDB.get(id, { attachments: false });
-            });
-            if (confirmation) {
-              const attachmentKeys = confirmation?._attachments
-                ? Object.keys(confirmation._attachments)
-                : [];
-              logPhotoDb("save:remote-confirm", {
-                id,
-                rev: confirmation?._rev,
-                attachments: attachmentKeys,
-              });
-            }
-          } catch (error) {
-            logPhotoDb("save:remote-confirm-error", { id, error }, "error");
-          }
-        }
-      } catch (error) {
-        const status = getErrorStatus(error);
-        logPhotoDb(
-          "save:remote-attachments-error",
-          { id, error: { status, message: (error as any)?.message || error } },
-          "error",
-        );
+            const rlatest = await remoteDB.get(id);
+            rlatest.hasOriginal = true;
+            rlatest.hasThumb = true;
+            rlatest.updatedAt = new Date().toISOString();
+            await remoteDB.put(sanitizeForCouch(rlatest));
+          } catch {}
+        } catch {}
       }
     }
-  } catch (error) {
-    logPhotoDb("save:remote-unexpected-error", { id, error }, "error");
-  }
-
-  logPhotoDb("save:done", { id });
+  } catch {}
 
   return { ok: true, _id: id };
 }
@@ -1770,7 +1435,6 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
   const limit = opts?.limit ?? 50;
   const selector: any = { type: "photo" };
   if (opts?.owner) selector.owner = opts.owner;
-  logPhotoDb("list:query", { selector, limit });
   const sort = opts?.owner
     ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
     : [{ type: "asc" }, { createdAt: "desc" }];
@@ -1780,90 +1444,59 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
     limit,
   });
   const docs = (res.docs || []).sort((a:any,b:any)=> String(b.createdAt).localeCompare(String(a.createdAt)));
-  logPhotoDb("list:result", { count: docs.length });
   return docs as PhotoDoc[];
 }
 
 /** Elimina la foto completa */
 export async function deletePhoto(id: string) {
   await openDatabases();
-  logPhotoDb("delete:start", { id });
   const doc = await (localDB as any).get(id);
   await (localDB as any).remove(doc);
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    if (!online) {
-      logPhotoDb("delete:remote-skip", { id, reason: "offline" });
-    } else {
-      const removed = await runWithRemoteAuth(async () => {
-        const remoteDoc = await remoteDB.get(id).catch(() => null);
-        if (!remoteDoc) return null;
-        await remoteDB.remove(remoteDoc);
-        return true as const;
-      });
-      if (removed) {
-        logPhotoDb("delete:remote", { id });
-      } else {
-        logPhotoDb("delete:remote-skip", { id, reason: "no-session" });
-      }
+    if (remoteDB) {
+      const remoteDoc = await (remoteDB as any).get(id);
+      await (remoteDB as any).remove(remoteDoc);
     }
-  } catch (error) {
-    logPhotoDb("delete:remote-error", { id, error }, "error");
-  }
-  logPhotoDb("delete:done", { id });
+  } catch {}
   return { ok: true };
 }
 
-// =======================
-// ===  FILES (generic) ===
-// =======================
-
-/**
- * Meta información para un archivo genérico. Incluye datos opcionales
- * como nombre, tipo MIME y propietario. El campo `owner` es obligatorio
- * para asegurar que sólo el usuario propietario pueda listar o eliminar
- * el archivo.
- */
-export type FileMeta = {
-  owner?: string;
+// =========================
+// ===  FILES (generic)  ===
+// =========================
+type FileMeta = {
+  owner: string;
   ownerName?: string;
   ownerEmail?: string;
-  /** Nombre original del archivo, útil para mostrar y descargar */
   fileName?: string;
-  /** Tipo MIME declarado al subir el archivo */
   mimeType?: string;
-  /** Etiquetas opcionales para clasificar los documentos */
-  tags?: string[];
 };
 
-/**
- * Documento de archivo. Los documentos de tipo `file` almacenan un único
- * attachment arbitrario (cualquier tipo de archivo). Se incluye metadatos
- * como nombre, tipo, propietario y fecha de creación. La bandera
- * `hasAttachment` se establece en true para indicar que el documento
- * contiene un attachment guardado por medio de PouchDB.
- */
 export type FileDoc = {
   _id: string;
   type: "file";
   owner?: string;
   ownerName?: string;
   ownerEmail?: string;
-  createdAt: string;
-  /** Nombre original del archivo */
   fileName?: string;
-  /** Tipo MIME del archivo */
   mimeType?: string;
-  /** Etiquetas opcionales */
-  tags?: string[];
-  hasAttachment: boolean;
+  size?: number;
+  attachmentName?: string;
+  createdAt?: string;
   updatedAt?: string;
 };
 
-/**
- * Crea índices para búsqueda de archivos. Permite buscar por
- * `type` y ordenar por `createdAt`, así como buscar por `owner`.
- */
+function sanitizeAttachmentName(name?: string, fallback = "file.bin") {
+  const base = (name || "").trim();
+  if (!base) return fallback;
+  const clean = base
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()!;
+  const normalized = clean.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  return normalized || fallback;
+}
+
 async function ensureFileIndexes() {
   await openDatabases();
   if (!localDB) return;
@@ -1881,154 +1514,329 @@ async function ensureFileIndexes() {
   } catch {}
 }
 
-/**
- * Guarda un archivo genérico como attachment en la base local (PouchDB) y
- * replica a la base remota si es posible. A diferencia de savePhoto, no se
- * realiza redimensionamiento ni compresión; el archivo se guarda tal cual.
- *
- * @param file Blob del archivo a guardar
- * @param meta Metadatos que incluyen el id del propietario y opcionalmente nombre y tipo
- * @returns Objeto con ok y _id
- */
-export async function saveFileDoc(file: Blob, meta: FileMeta = {}) {
+export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileDoc> {
+  if (!file) throw new Error("file is required");
+  const owner = (meta?.owner || "").trim();
+  if (!owner) throw new Error("owner is required to save file");
   await openDatabases();
+  await ensureFileIndexes();
   if (!localDB) throw new Error("DB not ready");
-  if (!meta.owner) throw new Error("owner id is required to save file");
   const nowIso = new Date().toISOString();
-  const id = `file:${nowIso}:${rid(4)}`;
-  const fileName = meta.fileName || (typeof (file as any).name === "string" && (file as any).name) || undefined;
-  const mimeType = meta.mimeType || (file && typeof file.type === "string" && file.type) || undefined;
-  const doc: FileDoc = {
+  const ownerSegment = slug(owner || "shared");
+  const id = `file:${ownerSegment}:${nowIso}:${rid(4)}`;
+  const attachmentName = sanitizeAttachmentName(
+    meta?.fileName || (file as any).name,
+    `file-${rid(4)}`,
+  );
+  const mime =
+    meta?.mimeType || ((file as any).type && String((file as any).type)) || "application/octet-stream";
+  const size = typeof (file as any).size === "number" ? (file as any).size : undefined;
+
+  const baseDoc: FileDoc = {
     _id: id,
     type: "file",
-    owner: meta.owner,
-    ownerName: meta.ownerName,
-    ownerEmail: meta.ownerEmail,
+    owner,
+    ownerName: meta?.ownerName,
+    ownerEmail: meta?.ownerEmail,
+    fileName: meta?.fileName || (file as any).name,
+    mimeType: mime,
+    size,
+    attachmentName,
     createdAt: nowIso,
-    fileName,
-    mimeType,
-    tags: meta.tags || [],
-    hasAttachment: true,
     updatedAt: nowIso,
   };
 
-  // 1) Crear documento base local
-  try {
-    await (localDB as any).put(sanitizeForCouch(doc));
-  } catch (e: any) {
-    if (e?.status === 409) {
-      const existing = await (localDB as any).get(id);
-      await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
-    } else {
-      throw e;
-    }
-  }
-
-  // 2) Adjuntar el archivo (sin modificaciones). Usamos el nombre original o "file".
-  let latest = await (localDB as any).get(id);
-  const attName = fileName || "file";
-  const contentType = mimeType || "application/octet-stream";
-  await (localDB as any).putAttachment(id, attName, latest._rev, file, contentType);
-
-  // 3) Actualizar metadata (updatedAt)
-  latest = await (localDB as any).get(id);
+  await safeLocalPut(sanitizeForCouch(baseDoc));
+  let latest = await safeLocalGet(id);
+  await (localDB as any).putAttachment(id, attachmentName, latest._rev, file, mime);
+  latest = await safeLocalGet(id);
   latest.updatedAt = new Date().toISOString();
-  await (localDB as any).put(sanitizeForCouch(latest));
+  if (typeof size === "number") latest.size = size;
+  latest.attachmentName = attachmentName;
+  await safeLocalPut(sanitizeForCouch(latest));
+  const finalDoc = (await safeLocalGet(id)) as FileDoc;
 
-  // 4) Mejor esfuerzo: subir attachment y metadata al remoto si hay conexión y sesión
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    if (online) {
-      await runWithRemoteAuth(async () => {
-        const remoteDoc = await ensureRemoteDocSeed(id, latest);
-        const remoteRev = remoteDoc?._rev;
-        if (!remoteRev) throw new Error("missing-remote-rev");
-        await uploadRemoteAttachments(id, remoteRev, [
-          { name: attName, blob: file, contentType },
-        ]);
-        await finalizeRemoteDocMetadata(id, {
-          hasAttachment: true,
-          updatedAt: new Date().toISOString(),
-        });
-        return true;
-      });
+    if (remoteDB) {
+      let remoteDoc: any = null;
+      try {
+        remoteDoc = await (remoteDB as any).get(id);
+      } catch {}
+      if (!remoteDoc) {
+        const base = sanitizeForCouch({ ...finalDoc });
+        delete (base as any)._attachments;
+        const putRes = await (remoteDB as any).put(base);
+        remoteDoc = { ...base, _rev: putRes.rev };
+      }
+      if (remoteDoc) {
+        await (remoteDB as any).putAttachment(id, attachmentName, remoteDoc._rev, file, mime);
+      }
     }
   } catch (error) {
-    // Si falla la subida remota, simplemente registramos en consola. La replicación
-    // continua levantará el cambio cuando haya conexión y sesión.
-    console.warn("[db] saveFileDoc remote sync failed", (error as any)?.message || error);
+    console.warn("[database] saveFileDoc remote attachment failed", error);
   }
-  return { ok: true, _id: id };
+
+  return finalDoc;
 }
 
-/**
- * Devuelve el Blob del attachment principal de un documento tipo file. Usa
- * la metadata del documento para determinar el nombre y tipo del attachment.
- */
-export async function getFileAttachment(id: string) {
-  await openDatabases();
-  if (!localDB) throw new Error("DB not ready");
-  const doc = await (localDB as any).get(id);
-  const fileName = doc?.fileName || "file";
-  const blob = await (localDB as any).getAttachment(id, fileName);
-  return { blob, fileName, mimeType: doc?.mimeType || blob.type };
-}
-
-/**
- * Devuelve una URL de objeto para un archivo, adecuada para <a href> o descarga.
- * Recuerda revocar con URL.revokeObjectURL cuando ya no se necesite.
- */
-export async function getFileUrl(id: string) {
-  const { blob } = await getFileAttachment(id);
-  return URL.createObjectURL(blob);
-}
-
-/**
- * Lista documentos de tipo file. Si se especifica owner, filtra por propietario.
- * Devuelve la lista ordenada descendentemente por fecha de creación.
- */
-export async function listFiles(opts?: { owner?: string; limit?: number; }) {
+export async function listFiles(opts: { owner?: string; limit?: number } = {}): Promise<FileDoc[]> {
   await ensureFileIndexes();
-  const limit = opts?.limit ?? 50;
+  if (!localDB) return [];
+  const limit = Math.max(1, opts.limit ?? 50);
   const selector: any = { type: "file" };
-  if (opts?.owner) selector.owner = opts.owner;
-  const sort = opts?.owner
+  if (opts.owner) selector.owner = opts.owner;
+  const sort = opts.owner
     ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
     : [{ type: "asc" }, { createdAt: "desc" }];
   const res = await (localDB as any).find({ selector, sort, limit });
-  const docs = (res.docs || []).sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
-  return docs as FileDoc[];
+  const docs = Array.isArray(res?.docs) ? res.docs : [];
+  docs.sort((a: any, b: any) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+  );
+  return docs.map((doc: any) => {
+    const attachmentName = sanitizeAttachmentName(
+      doc.attachmentName || doc.fileName,
+      `file-${String(doc._id || "").split(":").pop() || rid(4)}`,
+    );
+    return { ...doc, type: "file", attachmentName } as FileDoc;
+  });
 }
 
-/**
- * Elimina un documento tipo file local y, si es posible, remoto. Similar a
- * deletePhoto.
- */
+export async function getFileUrl(id: string): Promise<string> {
+  await openDatabases();
+  if (!localDB) return "";
+  try {
+    const doc: any = await safeLocalGet(id);
+    const attachmentName = sanitizeAttachmentName(
+      doc?.attachmentName || doc?.fileName,
+      "file.bin",
+    );
+    const blob = await (localDB as any).getAttachment(id, attachmentName);
+    if (!blob) return "";
+    return URL.createObjectURL(blob);
+  } catch (error) {
+    console.warn("[database] getFileUrl failed", error);
+    return "";
+  }
+}
+
 export async function deleteFile(id: string) {
   await openDatabases();
-  if (!localDB) throw new Error("DB not ready");
-  // Eliminar localmente
-  let doc;
+  if (!localDB) return { ok: false };
   try {
-    doc = await (localDB as any).get(id);
-  } catch (e: any) {
-    // Si no existe localmente, no hay nada que eliminar
-    return { ok: true };
+    const doc = await safeLocalGet(id);
+    await (localDB as any).remove(doc);
+  } catch (error) {
+    console.warn("[database] deleteFile local failed", error);
   }
-  await (localDB as any).remove(doc);
-  // Best-effort: eliminar en remoto
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    if (online) {
-      await runWithRemoteAuth(async () => {
-        const remoteDoc = await remoteDB.get(id).catch(() => null);
-        if (!remoteDoc) return null;
-        await remoteDB.remove(remoteDoc);
-        return true as const;
-      });
+    if (remoteDB) {
+      const remoteDoc = await (remoteDB as any).get(id);
+      await (remoteDB as any).remove(remoteDoc);
+    }
+  } catch {}
+  return { ok: true };
+}
+
+// ============================
+// ===  POLYGONS (shapes)   ===
+// ============================
+type PolygonMeta = {
+  owner: string;
+  ownerName?: string;
+  ownerEmail?: string;
+};
+
+type PolygonPoint = { lat: number; lng: number };
+
+export type PolygonDoc = {
+  _id: string;
+  type: "polygon";
+  owner?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  points: PolygonPoint[];
+  createdAt: string;
+  updatedAt?: string;
+};
+
+async function ensurePolygonIndexes() {
+  await openDatabases();
+  if (!localDB) return;
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "createdAt"] },
+      name: "idx-polygon-type-createdAt",
+    });
+  } catch {}
+  try {
+    await (localDB as any).createIndex({
+      index: { fields: ["type", "owner", "createdAt"] },
+      name: "idx-polygon-owner-createdAt",
+    });
+  } catch {}
+}
+
+export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta): Promise<PolygonDoc> {
+  if (!Array.isArray(points) || points.length < 3) {
+    throw new Error("polygon must include at least 3 points");
+  }
+  const owner = (meta?.owner || "").trim();
+  if (!owner) throw new Error("owner is required to save polygon");
+  await openDatabases();
+  await ensurePolygonIndexes();
+  if (!localDB) throw new Error("DB not ready");
+  const nowIso = new Date().toISOString();
+  const ownerSegment = slug(owner || "shared");
+  const id = `polygon:${ownerSegment}:${nowIso}:${rid(4)}`;
+  const normalizedPoints = points.map((pt) => ({
+    lat: Number(pt.lat),
+    lng: Number(pt.lng),
+  }));
+
+  const doc: PolygonDoc = {
+    _id: id,
+    type: "polygon",
+    owner,
+    ownerName: meta?.ownerName,
+    ownerEmail: meta?.ownerEmail,
+    points: normalizedPoints,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  await safeLocalPut(sanitizeForCouch(doc));
+  const stored = (await safeLocalGet(id)) as PolygonDoc;
+
+  try {
+    if (remoteDB) {
+      const base = sanitizeForCouch({ ...stored });
+      delete (base as any)._attachments;
+      try {
+        await (remoteDB as any).put(base);
+      } catch (error: any) {
+        if (error?.status === 409) {
+          const remoteExisting = await (remoteDB as any).get(id);
+          await (remoteDB as any).put({ ...remoteExisting, ...base, _rev: remoteExisting._rev });
+        } else {
+          throw error;
+        }
+      }
     }
   } catch (error) {
-    console.warn("[db] deleteFile remote sync failed", (error as any)?.message || error);
+    console.warn("[database] savePolygonDoc remote failed", error);
   }
+
+  return stored;
+}
+
+export async function listPolygons(opts: { owner?: string; limit?: number } = {}): Promise<PolygonDoc[]> {
+  await ensurePolygonIndexes();
+  if (!localDB) return [];
+  const limit = Math.max(1, opts.limit ?? 100);
+  const selector: any = { type: "polygon" };
+  if (opts.owner) selector.owner = opts.owner;
+  const sort = opts.owner
+    ? [{ type: "asc" }, { owner: "asc" }, { createdAt: "desc" }]
+    : [{ type: "asc" }, { createdAt: "desc" }];
+  const res = await (localDB as any).find({ selector, sort, limit });
+  const docs = Array.isArray(res?.docs) ? res.docs : [];
+  docs.sort((a: any, b: any) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+  );
+  return docs.map((doc: any) => ({
+    ...doc,
+    type: "polygon",
+    points: Array.isArray(doc.points) ? doc.points : [],
+  })) as PolygonDoc[];
+}
+
+export async function getPolygonPreviewUrl(id: string): Promise<string | null> {
+  if (!isClient || typeof document === "undefined") return null;
+  await openDatabases();
+  if (!localDB) return null;
+  try {
+    const doc: any = await safeLocalGet(id);
+    const points: PolygonPoint[] = Array.isArray(doc?.points) ? doc.points : [];
+    if (points.length < 3) return null;
+    const width = 320;
+    const height = 200;
+    const padding = 16;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#f3f4f6";
+    ctx.fillRect(0, 0, width, height);
+
+    const lats = points.map((p) => p.lat);
+    const lngs = points.map((p) => p.lng);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const latSpan = Math.max(1e-6, maxLat - minLat);
+    const lngSpan = Math.max(1e-6, maxLng - minLng);
+    const scaleX = (value: number) => padding + ((value - minLng) / lngSpan) * (width - padding * 2);
+    const scaleY = (value: number) => padding + ((maxLat - value) / latSpan) * (height - padding * 2);
+
+    ctx.beginPath();
+    points.forEach((pt, index) => {
+      const x = scaleX(pt.lng);
+      const y = scaleY(pt.lat);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(96, 165, 250, 0.35)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(37, 99, 235, 0.95)";
+    points.forEach((pt) => {
+      const x = scaleX(pt.lng);
+      const y = scaleY(pt.lat);
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    if (typeof canvas.toBlob !== "function") {
+      return canvas.toDataURL("image/png");
+    }
+    return await new Promise<string | null>((resolve) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          resolve(canvas.toDataURL("image/png"));
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        resolve(url);
+      }, "image/png");
+    });
+  } catch (error) {
+    console.warn("[database] getPolygonPreviewUrl failed", error);
+    return null;
+  }
+}
+
+export async function deletePolygon(id: string) {
+  await openDatabases();
+  if (!localDB) return { ok: false };
+  try {
+    const doc = await safeLocalGet(id);
+    await (localDB as any).remove(doc);
+  } catch (error) {
+    console.warn("[database] deletePolygon local failed", error);
+  }
+  try {
+    if (remoteDB) {
+      const remoteDoc = await (remoteDB as any).get(id);
+      await (remoteDB as any).remove(remoteDoc);
+    }
+  } catch {}
   return { ok: true };
 }

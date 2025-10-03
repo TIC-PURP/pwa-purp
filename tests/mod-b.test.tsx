@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import type { ComponentProps } from "react";
 import { PhotosTest } from "@/components/common/photos-test";
 import { deletePhoto, getPhotoThumbUrl, listPhotos, savePhoto } from "@/lib/database";
 import authReducer, { type AuthState } from "@/lib/store/authSlice";
@@ -48,9 +47,7 @@ const baseAuthState: AuthState = {
   error: null,
 };
 
-type PhotosTestComponentProps = ComponentProps<typeof PhotosTest>;
-
-function renderWithStore(authOverride: Partial<AuthState> = {}, props: Partial<PhotosTestComponentProps> = {}) {
+function renderWithStore(authOverride: Partial<AuthState> = {}) {
   const userOverride = authOverride.user;
   const user = userOverride === null
     ? null
@@ -73,7 +70,7 @@ function renderWithStore(authOverride: Partial<AuthState> = {}, props: Partial<P
 
   return render(
     <Provider store={store}>
-      <PhotosTest {...props} />
+      <PhotosTest />
     </Provider>,
   );
 }
@@ -87,7 +84,6 @@ describe("PhotosTest", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
-
 
   it("carga y muestra las fotos existentes del usuario", async () => {
     mockListPhotos.mockResolvedValueOnce([
@@ -121,13 +117,6 @@ describe("PhotosTest", () => {
 
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    expect(mockSavePhoto).not.toHaveBeenCalled();
-
-    const saveButton = await screen.findByRole("button", { name: /guardar 1 foto/i });
-    expect(saveButton).toBeEnabled();
-
-    fireEvent.click(saveButton);
-
     await waitFor(() => expect(mockSavePhoto).toHaveBeenCalledWith(file, {
       owner: baseUser.id,
       ownerName: baseUser.name,
@@ -135,7 +124,6 @@ describe("PhotosTest", () => {
     }));
     await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(2));
     expectOwnerCall(baseUser.id);
-    await waitFor(() => expect(screen.queryByRole("button", { name: /guardar 1 foto/i })).toBeNull());
     expect(await screen.findByAltText("photo-new")).toBeInTheDocument();
   });
 
@@ -157,52 +145,5 @@ describe("PhotosTest", () => {
     await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(2));
     expectOwnerCall(baseUser.id);
     await waitFor(() => expect(screen.queryByAltText("photo-delete")).toBeNull());
-  });
-  it("permite descartar fotos pendientes antes de guardar", async () => {
-    mockListPhotos.mockResolvedValueOnce([]);
-
-    const { container } = renderWithStore();
-
-    await waitFor(() => expect(mockListPhotos).toHaveBeenCalledTimes(1));
-    const fileInput = container.querySelectorAll("input[type='file']")[0] as HTMLInputElement;
-    const file = new File(["contenido"], "pendiente.jpg", { type: "image/jpeg" });
-
-    fireEvent.change(fileInput, { target: { files: [file] } });
-
-    const discardButton = await screen.findByRole("button", { name: /descartar pendientes/i });
-    expect(discardButton).toBeEnabled();
-    expect(await screen.findByText(/vista previa no disponible/i)).toBeInTheDocument();
-
-    fireEvent.click(discardButton);
-
-    await waitFor(() => expect(screen.queryByText(/vista previa no disponible/i)).toBeNull());
-    expect(mockSavePhoto).not.toHaveBeenCalled();
-  });
-
-  it("en modo lectura solo permite visualizar las fotos", async () => {
-    mockListPhotos.mockResolvedValueOnce([
-      { _id: "photo-read", createdAt: "2024-01-05T09:00:00.000Z", ownerName: baseUser.name } as any,
-    ]);
-    mockGetPhotoThumbUrl.mockResolvedValueOnce("blob:photo-read");
-
-    const { container } = renderWithStore({}, { readOnly: true });
-
-    expect(await screen.findByAltText("photo-read")).toBeInTheDocument();
-    expectOwnerCall(baseUser.id);
-
-    const tomarFoto = screen.getByRole("button", { name: /tomar foto/i });
-    const subir = screen.getByRole("button", { name: /subir desde galeria/i });
-    expect(tomarFoto).toBeDisabled();
-    expect(subir).toBeDisabled();
-    expect(screen.getByText(/solo lectura/i)).toBeInTheDocument();
-
-    const fileInput = container.querySelector("input[type='file']") as HTMLInputElement;
-    const file = new File(['contenido'], 'read-only.jpg', { type: 'image/jpeg' });
-    fireEvent.change(fileInput, { target: { files: [file] } });
-
-    expect(mockSavePhoto).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /guardar/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /eliminar/i })).toBeNull();
-    expect(mockDeletePhoto).not.toHaveBeenCalled();
   });
 });

@@ -54,7 +54,7 @@ export default function ModuleBPage() {
             <CardTitle>Pruebas de Fotos</CardTitle>
           </CardHeader>
           <CardContent>
-            <PhotosTest readOnly={mode === "READ"} />
+            <PhotosTest />
           </CardContent>
         </Card>
 

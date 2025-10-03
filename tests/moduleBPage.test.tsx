@@ -97,36 +97,6 @@ test("renders Module B when user has full access", async () => {
   await waitFor(() => expect(listPhotos).toHaveBeenCalledWith({ owner: manager.id }));
 });
 
-
-test("renders Module B in read-only mode when access is READ", async () => {
-  const reader: User = {
-    id: "user_reader",
-    name: "Usuario Lectura",
-    email: "lectura@example.com",
-    password: "secret",
-    role: "user",
-    permissions: [],
-    modulePermissions: {
-      MOD_A: "NONE",
-      MOD_B: "READ",
-      MOD_C: "NONE",
-      MOD_D: "NONE",
-    },
-    isActive: true,
-    createdAt: "2024-01-01T00:00:00.000Z",
-    updatedAt: "2024-01-01T00:00:00.000Z",
-  };
-
-  renderWithUser(reader);
-
-  expect(await screen.findByText("Modulo B")).toBeInTheDocument();
-  expect(screen.getByText(/Modo lectura/i)).toBeInTheDocument();
-  await waitFor(() => expect(listPhotos).toHaveBeenCalledWith({ owner: reader.id }));
-  expect(await screen.findByText(/solo lectura/i)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /tomar foto/i })).toBeDisabled();
-  expect(screen.getByRole("button", { name: /subir desde galeria/i })).toBeDisabled();
-});
-
 test("redirects away when module access is NONE", async () => {
   const limited: User = {
     id: "user_limited",

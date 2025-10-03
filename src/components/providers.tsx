@@ -122,11 +122,8 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           if (email && user.password) {
             await loginOnlineToCouchDB(email, user.password);
             await startSync();
-            // Sembrar cache local de usuarios para panel offline solo si el rol lo permite
-            const canSeedUsers = user.role === "manager" || user.role === "admin";
-            if (canSeedUsers) {
-              try { await getAllUsersAsManager(); } catch {}
-            }
+            // Sembrar cache local de usuarios para panel offline si tiene permisos
+            try { await getAllUsersAsManager(); } catch {}
             // Precalentar rutas HTML para uso offline tras login online
             try { await warmRoutes(); } catch {}
             // Tras login/sync, limpiar documentos locales antiguos si los hubiera
