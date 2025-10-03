@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Script from "next/script";
@@ -8,6 +8,7 @@ import {
   listPolygons,
   getPolygonPreviewUrl,
   deletePolygon,
+  updatePolygonDoc,
   type PolygonDoc,
 } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
@@ -71,6 +72,7 @@ export function PolygonDrawer({
     GOOGLE_MAPS_API_KEY ? null : "Falta la variable NEXT_PUBLIC_GOOGLE_MAPS_API_KEY",
   );
   const [savedPolygons, setSavedPolygons] = useState<PolygonDoc[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
 
   const refreshSaved = useCallback(async () => {
@@ -112,6 +114,19 @@ export function PolygonDrawer({
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
+
+  useEffect(() => {
+    if (!ownerId) {
+      setEditingId(null);
+      setPoints([]);
+    }
+  }, [ownerId]);
+
+  useEffect(() => {
+    if (readOnly) {
+      setEditingId(null);
+    }
+  }, [readOnly]);
 
   useEffect(() => {
     if (!mapsApi && typeof window !== "undefined" && window.google?.maps) {
@@ -278,31 +293,64 @@ export function PolygonDrawer({
     setPoints([]);
   }, [readOnly, isSaving]);
 
+  const cancelEditing = useCallback(() => {
+    if (isSaving) return;
+    setEditingId(null);
+    setPoints([]);
+    setErrorMsg(null);
+  }, [isSaving]);
+
   const savePolygon = useCallback(async () => {
     if (!ownerId || readOnly || isSaving || points.length < 3) return;
     setIsSaving(true);
     setErrorMsg(null);
     try {
-      const result = await savePolygonDoc(points, { owner: ownerId, ownerName, ownerEmail });
-      if (result?._id) {
-        await refreshSaved();
-        clearPoints();
-        onSaved?.();
+      if (editingId) {
+        await updatePolygonDoc(editingId, points, { owner: ownerId, ownerName, ownerEmail });
+      } else {
+        const result = await savePolygonDoc(points, { owner: ownerId, ownerName, ownerEmail });
+        if (!result?._id) {
+          throw new Error('polygon save failed');
+        }
       }
+      await refreshSaved();
+      setPoints([]);
+      setEditingId(null);
+      onSaved?.();
     } catch (error) {
-      console.error("Error al guardar polígono", error);
-      setErrorMsg("No se pudo guardar el polígono. Inténtalo nuevamente.");
+      console.error(editingId ? 'Error al actualizar polígono' : 'Error al guardar polígono', error);
+      setErrorMsg(editingId ? 'No se pudo actualizar el polígono. Inténtalo nuevamente.' : 'No se pudo guardar el polígono. Inténtalo nuevamente.');
     } finally {
       setIsSaving(false);
     }
-  }, [ownerId, readOnly, isSaving, points, ownerName, ownerEmail, clearPoints, onSaved, refreshSaved]);
+  }, [ownerId, readOnly, isSaving, points, ownerName, ownerEmail, onSaved, refreshSaved, editingId, updatePolygonDoc]);
 
   const handleDeletePolygon = useCallback(async (id: string) => {
     if (readOnly) return;
     await deletePolygon(id);
+    if (editingId === id) {
+      setEditingId(null);
+      setPoints([]);
+    }
     await refreshSaved();
-  }, [readOnly, refreshSaved]);
+  }, [readOnly, refreshSaved, editingId]);
 
+  const handleEditPolygon = useCallback((doc: PolygonDoc) => {
+    if (readOnly || isSaving) return;
+    const normalized = Array.isArray(doc.points)
+      ? doc.points.map((pt) => ({ lat: Number(pt.lat), lng: Number(pt.lng) }))
+      : [];
+    setPoints(normalized);
+    setEditingId(doc._id);
+    setErrorMsg(null);
+  }, [readOnly, isSaving]);
+
+  const isEditingActive = Boolean(editingId);
+  const primaryButtonLabel = isSaving
+    ? (isEditingActive ? "Actualizando..." : "Guardando...")
+    : (isEditingActive ? "Actualizar polígono" : "Guardar polígono");
+  const disablePrimary = readOnly || isSaving || points.length < 3 || !ownerId;
+  const disableClear = readOnly || isSaving || points.length === 0;
   return (
     <div className="space-y-6">
       {GOOGLE_MAPS_API_KEY && (
@@ -336,13 +384,18 @@ export function PolygonDrawer({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={readOnly || isSaving || points.length < 3 || !ownerId} onClick={() => void savePolygon()}>
-          {isSaving ? "Guardando..." : "Guardar polígono"}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={disablePrimary} onClick={() => void savePolygon()}>
+          {primaryButtonLabel}
         </Button>
-        <Button disabled={readOnly || isSaving || points.length === 0} onClick={clearPoints} variant="secondary">
+        <Button disabled={disableClear} onClick={clearPoints} variant="secondary">
           Limpiar
         </Button>
+        {isEditingActive && (
+          <Button disabled={isSaving} onClick={cancelEditing} variant="outline">
+            Cancelar edición
+          </Button>
+        )}
         {points.length > 0 && (
           <span className="self-center text-sm text-muted-foreground">Puntos: {points.length}</span>
         )}
@@ -380,31 +433,49 @@ export function PolygonDrawer({
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Polígonos guardados</h3>
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {savedPolygons.map((p) => (
-              <li key={p._id} className="relative overflow-hidden rounded-xl border">
-                {previewUrls[p._id] ? (
-                  <img src={previewUrls[p._id]} alt={p._id} className="h-40 w-full object-cover" />
-                ) : (
-                  <div className="flex h-40 w-full items-center justify-center bg-muted text-muted-foreground">
-                    Sin vista previa
+            {savedPolygons.map((p) => {
+              const isEditing = editingId === p._id;
+              return (
+                <li
+                  key={p._id}
+                  className={`relative group overflow-hidden rounded-xl border ${isEditing ? "ring-2 ring-primary" : ""}`}
+                >
+                  {!readOnly && (
+                    <div className="absolute inset-x-2 top-2 z-10 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleEditPolygon(p)}
+                        disabled={isSaving || isEditing}
+                        className={`rounded px-2 py-1 text-xs font-medium transition ${isEditing ? "bg-primary text-primary-foreground shadow" : "bg-muted text-foreground hover:bg-muted/80"}`}
+                      >
+                        {isEditing ? "Editando" : "Editar"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePolygon(p._id)}
+                        disabled={isSaving}
+                        className="rounded bg-destructive px-2 py-1 text-xs text-destructive-foreground shadow transition hover:bg-destructive/90 disabled:opacity-60"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  )}
+                  {previewUrls[p._id] ? (
+                    <img src={previewUrls[p._id]} alt={p._id} className="h-40 w-full object-cover" />
+                  ) : (
+                    <div className="flex h-40 w-full items-center justify-center bg-muted text-muted-foreground">
+                      Sin vista previa
+                    </div>
+                  )}
+                  <div className="space-y-1 p-2">
+                    <p className="truncate font-medium">{p._id}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {p.createdAt ? new Date(p.createdAt).toLocaleString() : ""}
+                    </p>
                   </div>
-                )}
-                <div className="space-y-1 p-2">
-                  <p className="truncate font-medium">{p._id}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {p.createdAt ? new Date(p.createdAt).toLocaleString() : ""}
-                  </p>
-                </div>
-                {!readOnly && (
-                  <button
-                    onClick={() => handleDeletePolygon(p._id)}
-                    className="absolute right-1 top-1 rounded bg-destructive px-2 py-1 text-xs text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                  >
-                    Eliminar
-                  </button>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

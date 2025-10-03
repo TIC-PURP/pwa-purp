@@ -7,6 +7,7 @@ let PouchDB: any = null;
 let localDB: any = null;
 let remoteDB: any = null;
 let syncHandler: any = null;
+let securityEnsured = false;
 
 export type CouchEnv = {
   serverBase: string;
@@ -244,6 +245,30 @@ export async function startSync() {
     .on("active", () => console.log("[sync] active"))
     .on("error", (e: any) => console.error("[sync] error", e));
   return syncHandler;
+}
+
+/** Ajusta la seguridad de CouchDB para roles de la app */
+export async function ensureCouchSecurity() {
+  if (securityEnsured) return;
+  try {
+    const res = await fetch("/api/admin/couch/security", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+    });
+    if (res.status === 401 || res.status === 403) {
+      securityEnsured = true;
+      return;
+    }
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.warn("[database] ensureCouchSecurity failed", res.status, detail);
+      return;
+    }
+    securityEnsured = true;
+  } catch (error) {
+    console.warn("[database] ensureCouchSecurity error", error);
+  }
 }
 
 /** Detiene replicacion */
@@ -1727,6 +1752,56 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
     console.warn("[database] savePolygonDoc remote failed", error);
   }
 
+  return stored;
+}
+
+export async function updatePolygonDoc(id: string, points: PolygonPoint[], meta: Partial<PolygonMeta> = {}): Promise<PolygonDoc> {
+  if (!Array.isArray(points) || points.length < 3) {
+    throw new Error("polygon must include at least 3 points");
+  }
+  await openDatabases();
+  await ensurePolygonIndexes();
+  if (!localDB) throw new Error("DB not ready");
+  const existing = (await safeLocalGet(id)) as PolygonDoc & { _rev?: string };
+  if (!existing) throw new Error("polygon document not found");
+  const owner = String(meta.owner ?? existing.owner ?? "").trim();
+  if (!owner) throw new Error("owner is required to update polygon");
+  const normalizedPoints = points.map((pt) => ({
+    lat: Number(pt.lat),
+    lng: Number(pt.lng),
+  }));
+  const nowIso = new Date().toISOString();
+  const updatedDoc = {
+    ...existing,
+    owner,
+    ownerName: meta.ownerName ?? existing.ownerName,
+    ownerEmail: meta.ownerEmail ?? existing.ownerEmail,
+    points: normalizedPoints,
+    updatedAt: nowIso,
+  } as PolygonDoc & { _rev?: string };
+  await safeLocalPut(sanitizeForCouch(updatedDoc));
+  const stored = (await safeLocalGet(id)) as PolygonDoc;
+  try {
+    if (remoteDB) {
+      const base = sanitizeForCouch({ ...stored });
+      delete (base as any)._attachments;
+      let remoteExisting: any = null;
+      try {
+        remoteExisting = await (remoteDB as any).get(id);
+      } catch (error: any) {
+        if (error?.status && error.status !== 404) {
+          throw error;
+        }
+      }
+      if (remoteExisting) {
+        await (remoteDB as any).put({ ...remoteExisting, ...base, _rev: remoteExisting._rev });
+      } else {
+        await (remoteDB as any).put(base);
+      }
+    }
+  } catch (error) {
+    console.warn("[database] updatePolygonDoc remote failed", error);
+  }
   return stored;
 }
 

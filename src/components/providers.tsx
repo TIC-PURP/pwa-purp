@@ -1,8 +1,8 @@
-﻿// src/components/providers.tsx
+// src/components/providers.tsx
 // Proveedores globales: Redux, autenticacion y sincronizacion
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/lib/store";
@@ -16,6 +16,7 @@ import {
   guardarUsuarioOffline,
   cleanupUserDocs,
   getAllUsersAsManager,
+  ensureCouchSecurity,
 } from "@/lib/database";
 
 /** Bootstrap de autenticacion/sincronizacion y observador del usuario */
@@ -43,7 +44,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     "/sentry-example-page",
   ];
 
-  const warmRoutes = async () => {
+  const warmRoutes = useCallback(async () => {
     if (typeof window === "undefined") return;
     if (warmedRef.current) return;
     const origin = window.location.origin;
@@ -85,7 +86,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       }
       warmedRef.current = true;
     } catch {}
-  };
+  }, []);
 
   // Aplicar tema guardado (por defecto claro)
   useEffect(() => {
@@ -121,6 +122,9 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
           const email = user.email || user.name;
           if (email && user.password) {
             await loginOnlineToCouchDB(email, user.password);
+            if (user.role === "admin" || user.role === "manager") {
+              try { await ensureCouchSecurity(); } catch {}
+            }
             await startSync();
             // Sembrar cache local de usuarios para panel offline si tiene permisos
             try { await getAllUsersAsManager(); } catch {}
@@ -134,7 +138,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
         }
       }
     })();
-  }, [user]);
+  }, [user, warmRoutes]);
 
   // Watcher del documento del usuario (replicacion -> actualiza Redux y storage)
   useEffect(() => {
@@ -203,14 +207,36 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   // Reintentar sync y calentar rutas al volver online
   useEffect(() => {
     const onOnline = () => {
-      if (isAuthenticated) {
+      if (!isAuthenticated || !user) return;
+      const identifier = (user.email || user.name || "").trim();
+      const password = (user.password || "").trim();
+      if (!identifier || !password) {
         startSync().catch(() => {});
         warmRoutes().catch(() => {});
+        return;
       }
+
+      void (async () => {
+        try {
+          (window as any).__lastLoginUserId = null;
+          await loginOnlineToCouchDB(identifier, password);
+          (window as any).__lastLoginUserId = user.id || user.email || user.name;
+        } catch (error) {
+          console.warn("[providers] loginOnlineToCouchDB on reconnect failed", error);
+        }
+
+        if (user.role === "admin" || user.role === "manager") {
+          try { await ensureCouchSecurity(); } catch {}
+        }
+        try { await startSync(); } catch {}
+        try { await getAllUsersAsManager(); } catch {}
+        try { await warmRoutes(); } catch {}
+        try { await cleanupUserDocs(); } catch {}
+      })();
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user, warmRoutes]);
 
     // Prefetch dynamic modules when authenticated and online
   useEffect(() => {
@@ -228,7 +254,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     if (typeof navigator === "undefined" || !('serviceWorker' in navigator)) return;
     const handler = (event: MessageEvent) => {
       const type = (event && (event as any).data && (event as any).data.type) || "";
-      if (type === 'BG_SYNC_QUEUED') notify.info('Acción encolada. Se enviará al recuperar internet.');
+      if (type === 'BG_SYNC_QUEUED') notify.info('Accion encolada. Se enviara al recuperar internet.');
       else if (type === 'BG_SYNC_SUCCESS') notify.success('Acciones sincronizadas correctamente.');
       else if (type === 'BG_SYNC_FAILURE') notify.warn('No se pudieron sincronizar algunas acciones.');
     };
