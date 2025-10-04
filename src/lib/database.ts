@@ -1,4 +1,4 @@
-// src/lib/database.ts
+﻿// src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login via /couchdb/_session
 
 const isClient = typeof window !== "undefined";
@@ -239,10 +239,10 @@ export async function startSync() {
 
   const opts: any = { live: true, retry: true, heartbeat: 25000, timeout: 55000 };
   syncHandler = localDB.sync(remoteDB, opts);
+  const logSync = process.env.NODE_ENV !== "production";
   syncHandler
-    .on("change", (i: any) => console.log("[sync] change", i.direction))
-    .on("paused", (e: any) => console.log("[sync] paused", e?.message || "ok"))
-    .on("active", () => console.log("[sync] active"))
+    .on("paused", (e: any) => { if (logSync) console.log("[sync] paused", e?.message || "ok"); })
+    .on("active", () => { if (logSync) console.log("[sync] active"); })
     .on("error", (e: any) => console.error("[sync] error", e));
   return syncHandler;
 }
@@ -1309,7 +1309,7 @@ type PhotoDoc = {
   updatedAt?: string;
 };
 
-/** Crea indices para búsqueda de fotos */
+/** Crea indices para bÃºsqueda de fotos */
 async function ensurePhotoIndexes() {
   await openDatabases();
   if (!localDB) return;
@@ -1335,7 +1335,7 @@ function rid(len = 6) {
   return s;
 }
 
-/** Redimensiona a un maxSide px y devuelve Blob webp/jpeg según soporte */
+/** Redimensiona a un maxSide px y devuelve Blob webp/jpeg segÃºn soporte */
 async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image/jpeg"="image/jpeg", quality = 0.85): Promise<Blob> {
   const url = URL.createObjectURL(input);
   try {
@@ -1394,7 +1394,7 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
   let latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
 
-  // 3) Adjuntar original (hasta 1600px para balance tamaño/calidad)
+  // 3) Adjuntar original (hasta 1600px para balance tamaÃ±o/calidad)
   const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
   latest = await (localDB as any).get(id);
   await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
@@ -1406,8 +1406,8 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
 
   // Best-effort: subir attachments y metadata al remoto si hay internet.  
   // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
-  // similar a lo que hace saveUserAvatar(). Si no hay conexión, los adjuntos  
-  // se sincronizarán automáticamente cuando startSync() esté activo.  
+  // similar a lo que hace saveUserAvatar(). Si no hay conexiÃ³n, los adjuntos  
+  // se sincronizarÃ¡n automÃ¡ticamente cuando startSync() estÃ© activo.  
   try {
     const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
     if (online) {
@@ -1915,3 +1915,4 @@ export async function deletePolygon(id: string) {
   } catch {}
   return { ok: true };
 }
+

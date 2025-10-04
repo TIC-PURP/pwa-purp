@@ -1,4 +1,4 @@
-// src/components/providers.tsx
+﻿// src/components/providers.tsx
 // Proveedores globales: Redux, autenticacion y sincronizacion
 "use client";
 
@@ -273,4 +273,3 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     </ReduxProvider>
   );
 }
-
