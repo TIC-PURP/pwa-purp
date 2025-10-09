@@ -60,16 +60,16 @@ async function requireRole(req: NextRequest): Promise<
 }
 
 function getAdminAuthHeader() {
-  const user = process.env.COUCH_ADMIN_USER || "";
-  const pass = process.env.COUCH_ADMIN_PASS || "";
+  const user = process.env.COUCHDB_ADMIN_USER || process.env.COUCH_ADMIN_USER || "";
+  const pass = process.env.COUCHDB_ADMIN_PASS || process.env.COUCH_ADMIN_PASS || "";
   if (!user || !pass) return null;
   const token = Buffer.from(`${user}:${pass}`, "utf8").toString("base64");
   return `Basic ${token}`;
 }
 
 function getUsersUrlBase() {
-  const host = process.env.COUCH_HOST;
-  if (!host) throw new Error("Missing COUCH_HOST env");
+  const host = process.env.COUCH_HOST || process.env.COUCHDB_URL || "";
+  if (!host) throw new Error("Missing COUCH_HOST or COUCHDB_URL env");
   return `${host.replace(/\/$/, "")}/_users`;
 }
 

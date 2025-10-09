@@ -88,9 +88,38 @@ export default function UsersPage() {
 
   // Obtiene todos los usuarios de la base local o remota
   const loadUsers = async () => {
-    // Intentar listado manager siempre (el API validará por cookie/rol). Tiene fallback a locales.
-    const allUsers = await getAllUsersAsManager();
-    setUsers(allUsers as any);
+    try {
+      const role = me?.role;
+      const isManager = role === "admin" || role === "manager";
+      if (isManager) {
+        const allUsers = await getAllUsersAsManager();
+        setUsers(allUsers as any);
+        return;
+      }
+
+      const locals = await getAllUsers({ includeInactive: true });
+      if (!me) {
+        setUsers(locals as any);
+        return;
+      }
+      const meEmail = String(me.email || "").toLowerCase();
+      const meId = String(me._id || me.id || "").toLowerCase();
+      const filtered = locals.filter((u: any) => {
+        const email = String(u.email || "").toLowerCase();
+        const id = String(u._id || u.id || "").toLowerCase();
+        return (meEmail && email === meEmail) || (meId && id === meId);
+      });
+      setUsers(filtered as any);
+    } catch (error) {
+      console.error("loadUsers failed", error);
+      try {
+        const fallback = await getAllUsers({ includeInactive: true });
+        setUsers(fallback as any);
+      } catch (fallbackError) {
+        console.error("loadUsers fallback failed", fallbackError);
+        setUsers([]);
+      }
+    }
   };
 
   // Crea un nuevo usuario y sincroniza según la conexión

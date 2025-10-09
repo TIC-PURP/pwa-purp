@@ -386,12 +386,22 @@ export async function loginOnlineToCouchDB(email: string, password: string) {
   return data as any; // { ok: boolean, user?: string, roles?: string[] }
 }
 
-/** Cierra la sesin del servidor */
+/** Cierra la sesion del servidor */
 export async function logoutOnlineSession() {
-  const base = getRemoteBase();
   try {
-    await fetch(`${base}/_session`, { method: "DELETE", credentials: "include" });
-  } catch {}
+    const res = await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.warn("[db] logoutOnlineSession non-200", res.status, detail);
+    }
+  } catch (error) {
+    console.warn("[db] logoutOnlineSession request failed", error);
+  }
+  securityEnsured = false;
 }
 
 /** Login offline contra Pouch local */
@@ -1904,6 +1914,14 @@ async function uploadFileViaAdminFallback(doc: any, attachmentName: string, file
     },
   };
 
+  const resolveAdminDoc = (body: any) => {
+    const existingDoc = body?.doc ?? null;
+    const value = body?.value ?? null;
+    const derivedRev = (existingDoc && existingDoc._rev) || body?.rev || value?.rev || undefined;
+    const deleted = Boolean(body?.deleted || value?.deleted || existingDoc?._deleted);
+    return { existingDoc, derivedRev, deleted };
+  };
+
   const attemptPut = async (payload: any) => {
     const res = await fetch("/api/admin/couch/files", {
       method: "PUT",
@@ -1920,17 +1938,25 @@ async function uploadFileViaAdminFallback(doc: any, attachmentName: string, file
 
   if (!res.ok && res.status === 409) {
     try {
-      const latestRes = await fetch(`/api/admin/couch/files?id=${encodeURIComponent(doc._id)}`, {
-        method: "GET",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      });
+      const latestRes = await fetch(
+        `/api/admin/couch/files?id=${encodeURIComponent(doc._id)}&includeDeleted=1&includeConflicts=1`,
+        {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        },
+      );
       const latestBody = await latestRes.json().catch(() => ({}));
-      const latestDoc = latestBody?.doc || latestBody;
-      if (latestRes.ok && latestDoc?._rev) {
-        const merged = sanitizeForCouch({ ...latestDoc, ...doc, _rev: latestDoc._rev });
+      const { existingDoc, derivedRev, deleted } = resolveAdminDoc(latestBody);
+      if (latestRes.ok && derivedRev) {
+        const merged = sanitizeForCouch({ ...(existingDoc || {}), ...doc, _rev: derivedRev });
         delete (merged as any)._attachments;
+        if ((merged as any)._deleted) delete (merged as any)._deleted;
         ({ res, data } = await attemptPut({ doc: merged, attachments, forceAttachments: true }));
+      } else if (latestRes.ok && existingDoc && !deleted) {
+        // Doc already exists remotely even if we failed to merge; treat as success.
+        console.warn("[FILE] Fallback admin conflict but remote doc exists, reusing remote revision", existingDoc._rev);
+        return { ok: true, id: existingDoc._id, rev: existingDoc._rev };
       }
     } catch (err) {
       console.warn("[FILE] No se pudo recuperar doc actual para fallback admin", err);
@@ -1938,6 +1964,27 @@ async function uploadFileViaAdminFallback(doc: any, attachmentName: string, file
   }
 
   if (!res.ok) {
+    try {
+      const probeRes = await fetch(
+        `/api/admin/couch/files?id=${encodeURIComponent(doc._id)}&includeDeleted=1&includeConflicts=1`,
+        {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        },
+      );
+      const probeBody = await probeRes.json().catch(() => ({}));
+      const { existingDoc, derivedRev, deleted } = resolveAdminDoc(probeBody);
+      if (probeRes.ok && existingDoc && derivedRev && !deleted) {
+        console.warn(
+          "[FILE] Fallback admin PUT conflict persisted but remote doc exists, treating as success",
+          derivedRev,
+        );
+        return { ok: true, id: existingDoc._id, rev: derivedRev };
+      }
+    } catch (probeErr) {
+      console.warn("[FILE] Remote doc probe after admin PUT failure failed", probeErr);
+    }
     console.warn("[FILE] Fallback admin PUT falló", res.status, data);
     return null;
   }
@@ -2349,6 +2396,14 @@ async function uploadPolygonViaAdminFallback(doc: any, preview: Blob | null, att
     };
   }
 
+  const resolveAdminDoc = (body: any) => {
+    const existingDoc = body?.doc ?? null;
+    const value = body?.value ?? null;
+    const derivedRev = (existingDoc && existingDoc._rev) || body?.rev || value?.rev || undefined;
+    const deleted = Boolean(body?.deleted || value?.deleted || existingDoc?._deleted);
+    return { existingDoc, derivedRev, deleted };
+  };
+
   const attemptPut = async (payload: any) => {
     const res = await fetch("/api/admin/couch/polygons", {
       method: "PUT",
@@ -2365,17 +2420,27 @@ async function uploadPolygonViaAdminFallback(doc: any, preview: Blob | null, att
 
   if (!res.ok && res.status === 409) {
     try {
-      const latestRes = await fetch(`/api/admin/couch/polygons?id=${encodeURIComponent(doc._id)}`, {
-        method: "GET",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      });
+      const latestRes = await fetch(
+        `/api/admin/couch/polygons?id=${encodeURIComponent(doc._id)}&includeDeleted=1&includeConflicts=1`,
+        {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        },
+      );
       const latestBody = await latestRes.json().catch(() => ({}));
-      const latestDoc = latestBody?.doc || latestBody;
-      if (latestRes.ok && latestDoc?._rev) {
-        const merged = sanitizeForCouch({ ...latestDoc, ...doc, _rev: latestDoc._rev });
+      const { existingDoc, derivedRev, deleted } = resolveAdminDoc(latestBody);
+      if (latestRes.ok && derivedRev) {
+        const merged = sanitizeForCouch({ ...(existingDoc || {}), ...doc, _rev: derivedRev });
         delete (merged as any)._attachments;
+        if ((merged as any)._deleted) delete (merged as any)._deleted;
         ({ res, data } = await attemptPut({ doc: merged, attachments, forceAttachments: true }));
+      } else if (latestRes.ok && existingDoc && !deleted) {
+        console.warn(
+          "[POLYGON] Fallback admin conflict but remote doc exists, reusing remote revision",
+          existingDoc._rev,
+        );
+        return { ok: true, id: existingDoc._id, rev: existingDoc._rev };
       }
     } catch (err) {
       console.warn("[POLYGON] No se pudo recuperar doc actual para fallback admin", err);
@@ -2383,6 +2448,27 @@ async function uploadPolygonViaAdminFallback(doc: any, preview: Blob | null, att
   }
 
   if (!res.ok) {
+    try {
+      const probeRes = await fetch(
+        `/api/admin/couch/polygons?id=${encodeURIComponent(doc._id)}&includeDeleted=1&includeConflicts=1`,
+        {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        },
+      );
+      const probeBody = await probeRes.json().catch(() => ({}));
+      const { existingDoc, derivedRev, deleted } = resolveAdminDoc(probeBody);
+      if (probeRes.ok && existingDoc && derivedRev && !deleted) {
+        console.warn(
+          "[POLYGON] Fallback admin PUT conflict persisted but remote doc exists, treating as success",
+          derivedRev,
+        );
+        return { ok: true, id: existingDoc._id, rev: derivedRev };
+      }
+    } catch (probeErr) {
+      console.warn("[POLYGON] Remote doc probe after admin PUT failure failed", probeErr);
+    }
     console.warn("[POLYGON] Fallback admin PUT falló", res.status, data);
     return null;
   }

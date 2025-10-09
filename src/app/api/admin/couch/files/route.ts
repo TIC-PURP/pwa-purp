@@ -41,6 +41,22 @@ function couchDocUrl(id?: string, rev?: string) {
   return `${base}/${encodeURIComponent(id)}${qs}`;
 }
 
+function couchAllDocsUrl(id: string, opts: { includeDocs?: boolean; includeConflicts?: boolean } = {}) {
+  const base = `${getCouchHost()}/${encodeURIComponent(getCouchDbName())}/_all_docs`;
+  const params = new URLSearchParams();
+  params.set("key", JSON.stringify(id));
+  if (opts.includeDocs) params.set("include_docs", "true");
+  if (opts.includeConflicts) params.set("conflicts", "true");
+  params.set("limit", "1");
+  return `${base}?${params.toString()}`;
+}
+
+function parseBooleanParam(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 function buildHeaders(extra: Record<string, string> = {}) {
   const headers: Record<string, string> = {
     Authorization: getAdminAuthHeader(),
@@ -103,17 +119,45 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
+    const includeDeleted = parseBooleanParam(searchParams.get("includeDeleted"));
+    const includeConflicts = parseBooleanParam(searchParams.get("includeConflicts"));
     if (!id) {
       return new Response(JSON.stringify({ error: "id query param requerido" }), { status: 400 });
     }
     console.log("[admin/files] GET", { id, target: couchDocUrl(id) });
-    const res = await fetch(couchDocUrl(id), { headers: buildHeaders() });
+    const headers = buildHeaders();
+    const res = await fetch(couchDocUrl(id), { headers });
     const data = await res.json().catch(() => ({}));
     console.log("[admin/files] GET respuesta", res.status, data);
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: "couch_get_failed", status: res.status, data }), { status: res.status });
+    if (res.ok) {
+      return new Response(JSON.stringify({ ok: true, doc: data }), { status: 200 });
     }
-    return new Response(JSON.stringify({ ok: true, doc: data }), { status: 200 });
+    if (res.status === 404 && includeDeleted) {
+      try {
+        const metaUrl = couchAllDocsUrl(id, { includeDocs: true, includeConflicts });
+        const metaRes = await fetch(metaUrl, { headers });
+        const meta = await metaRes.json().catch(() => ({}));
+        console.log("[admin/files] GET fallback _all_docs", metaRes.status, meta);
+        if (metaRes.ok && Array.isArray(meta?.rows) && meta.rows.length > 0) {
+          const row = meta.rows[0] || {};
+          const doc = row.doc || null;
+          const value = row.value || null;
+          const rev = (doc && doc._rev) || (value && value.rev) || null;
+          const deleted = Boolean(value?.deleted || doc?._deleted);
+          return new Response(JSON.stringify({ ok: true, doc, value, rev, deleted }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ error: "couch_get_failed", status: metaRes.status, data: meta }),
+          { status: metaRes.status || 404 },
+        );
+      } catch (metaError: any) {
+        return new Response(
+          JSON.stringify({ error: "meta_lookup_failed", message: metaError?.message || String(metaError) }),
+          { status: 500 },
+        );
+      }
+    }
+    return new Response(JSON.stringify({ error: "couch_get_failed", status: res.status, data }), { status: res.status });
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err?.message || "unknown" }), { status: 500 });
   }
@@ -166,4 +210,3 @@ export async function DELETE(req: NextRequest) {
     return new Response(JSON.stringify({ error: err?.message || "unknown" }), { status: 500 });
   }
 }
-
