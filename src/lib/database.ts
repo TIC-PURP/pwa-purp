@@ -1660,12 +1660,15 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}): Promise<Photo
     }
   } else if (wasOffline) {
     console.warn(`[FOTO] No hay conexión remota, la foto se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else {
     console.warn(`[FOTO] remoteDB no inicializado, la foto se sincronizará luego: ${id}`);
     remoteError = "No se pudo acceder a la base remota";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUseAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUseAdminFallback) {
     const fallbackDoc = { ...latest };
     delete (fallbackDoc as any)._attachments;
     if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
@@ -1784,11 +1787,14 @@ export async function deletePhoto(id: string): Promise<PhotoDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[FOTO] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUseAdminDeleteFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUseAdminDeleteFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
@@ -2099,11 +2105,14 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileSaveR
     }
   } else if (wasOffline) {
     console.warn(`[FILE] Archivo guardado sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUseFileAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUseFileAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2219,11 +2228,14 @@ export async function deleteFile(id: string): Promise<FileDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[FILE] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUseFileDeleteAdminFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUseFileDeleteAdminFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
@@ -2594,11 +2606,14 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Guardado sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUsePolygonAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2747,11 +2762,14 @@ export async function updatePolygonDoc(
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Actualización sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUsePolygonUpdateAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonUpdateAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2908,11 +2926,14 @@ export async function deletePolygon(id: string): Promise<PolygonDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUsePolygonDeleteAdminFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonDeleteAdminFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
