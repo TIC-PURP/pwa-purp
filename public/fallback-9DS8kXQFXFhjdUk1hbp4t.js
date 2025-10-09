@@ -1,1 +1,0 @@
-(()=>{"use strict";try{importScripts("fallback.js");}catch(o){self.fallback=self.fallback||(async(e)=>{if("document"===e?.destination||"navigate"===e?.mode)return(await caches.match("/offline.html",{ignoreSearch:!0}))||Response.error();return Response.error();});}})();
