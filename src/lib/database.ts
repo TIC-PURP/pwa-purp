@@ -1,6 +1,8 @@
 ﻿// src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login via /couchdb/_session
 
+import { isNavigatorOnline } from "./network";
+
 const isClient = typeof window !== "undefined";
 
 let PouchDB: any = null;
@@ -714,7 +716,7 @@ export async function cleanupUserDocs(): Promise<number> {
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
-  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+  const online = isNavigatorOnline() && remoteDB;
 
   const sanitizedDoc = sanitizeForCouch(doc);
 
@@ -756,7 +758,7 @@ export async function createUser(data: any) {
   await localDB.put(toLocal); // LOCAL ONLY. La replicacion lo sube.
   // If online, still try to create _users auth so the user can login immediately
   try {
-    const online2 = typeof navigator !== "undefined" && navigator.onLine;
+    const online2 = isNavigatorOnline();
     if (online2) {
       const roles = [doc.role].filter(Boolean) as string[];
       await upsertRemoteAuthUser({
@@ -850,7 +852,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     updatedAt: new Date().toISOString(),
   } as any;
 
-  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+  const online = isNavigatorOnline() && remoteDB;
 
   const syncAuthAccount = async (previous: any, current: any) => {
     try {
@@ -981,7 +983,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   doc.updatedAt = new Date().toISOString();
   await localDB.put(sanitizeForCouch(doc)); // << LOCAL ONLY
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine;
+    const online = isNavigatorOnline();
     if (online) await deleteRemoteAuthUser(doc.email || doc.name);
   } catch {}
   return sanitizeForCouch(doc);
@@ -1058,7 +1060,7 @@ export async function hardDeleteUser(idOrKey: any): Promise<boolean> {
   // Best-effort: remove CouchDB _users account before deleting local doc
   try {
     await openDatabases();
-    const online = typeof navigator !== "undefined" && navigator.onLine;
+    const online = isNavigatorOnline();
     if (online) {
       try {
         let email = "";
@@ -1199,7 +1201,7 @@ export async function saveUserAvatar(
 
   // Best-effort: subir a remoto si hay internet
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    const online = isNavigatorOnline() && remoteDB;
     if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (!rdoc) {
@@ -1258,7 +1260,7 @@ export async function deleteUserAvatar(email: string) {
     await localDB.put(sanitizeForCouch(latest));
   } catch {}
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    const online = isNavigatorOnline() && remoteDB;
     if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (rdoc) {
@@ -1578,7 +1580,7 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}): Promise<Photo
   let remoteRevForFallback: string | undefined;
   let remoteError: string | undefined;
   let remotePath: PhotoSaveResult["path"] = "local-only";
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -1658,12 +1660,15 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}): Promise<Photo
     }
   } else if (wasOffline) {
     console.warn(`[FOTO] No hay conexión remota, la foto se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else {
     console.warn(`[FOTO] remoteDB no inicializado, la foto se sincronizará luego: ${id}`);
     remoteError = "No se pudo acceder a la base remota";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUseAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUseAdminFallback) {
     const fallbackDoc = { ...latest };
     delete (fallbackDoc as any)._attachments;
     if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
@@ -1746,7 +1751,7 @@ export async function deletePhoto(id: string): Promise<PhotoDeleteResult> {
     await safeLocalRemove(doc);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -1782,11 +1787,14 @@ export async function deletePhoto(id: string): Promise<PhotoDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[FOTO] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUseAdminDeleteFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUseAdminDeleteFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
@@ -2042,7 +2050,7 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileSaveR
   let remotePath: FileSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2097,11 +2105,14 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileSaveR
     }
   } else if (wasOffline) {
     console.warn(`[FILE] Archivo guardado sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUseFileAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUseFileAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2181,7 +2192,7 @@ export async function deleteFile(id: string): Promise<FileDeleteResult> {
     console.warn("[database] deleteFile local failed", error);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2217,11 +2228,14 @@ export async function deleteFile(id: string): Promise<FileDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[FILE] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUseFileDeleteAdminFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUseFileDeleteAdminFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
@@ -2528,7 +2542,7 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
   let remotePath: PolygonSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2592,11 +2606,14 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Guardado sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUsePolygonAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2685,7 +2702,7 @@ export async function updatePolygonDoc(
   let remotePath: PolygonSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2745,11 +2762,14 @@ export async function updatePolygonDoc(
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Actualización sin conexión, se sincronizará luego: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteSynced && !wasOffline) {
+  const shouldUsePolygonUpdateAdminFallback = !remoteSynced && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonUpdateAdminFallback) {
     try {
       const fallbackDoc = { ...finalDoc };
       delete (fallbackDoc as any)._attachments;
@@ -2870,7 +2890,7 @@ export async function deletePolygon(id: string): Promise<PolygonDeleteResult> {
     console.warn("[database] deletePolygon local failed", error);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2906,11 +2926,14 @@ export async function deletePolygon(id: string): Promise<PolygonDeleteResult> {
     }
   } else if (wasOffline) {
     console.warn(`[POLYGON] Eliminación remota pendiente por falta de conexión: ${id}`);
+    remoteError = remoteError ?? "Sin conexión detectada";
   } else if (!hasRemote) {
     remoteError = "remoteDB no inicializado";
   }
 
-  if (!remoteRemoved && !wasOffline) {
+  const shouldUsePolygonDeleteAdminFallback = !remoteRemoved && (!wasOffline || !!remoteError);
+
+  if (shouldUsePolygonDeleteAdminFallback) {
     try {
       const payload: { _id: string; _rev?: string } = { _id: id };
       try {
