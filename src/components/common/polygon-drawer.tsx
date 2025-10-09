@@ -12,6 +12,7 @@ import {
   type PolygonDoc,
 } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
+import { notify } from "@/lib/notify";
 
 /**
  * Un punto en formato latitud/longitud obtenido del mapa.
@@ -305,35 +306,99 @@ export function PolygonDrawer({
     setIsSaving(true);
     setErrorMsg(null);
     try {
-      if (editingId) {
-        await updatePolygonDoc(editingId, points, { owner: ownerId, ownerName, ownerEmail });
+      const result = editingId
+        ? await updatePolygonDoc(editingId, points, { owner: ownerId, ownerName, ownerEmail })
+        : await savePolygonDoc(points, { owner: ownerId, ownerName, ownerEmail });
+
+      if (result.path === "remote") {
+        notify.success(
+          result.action === "created"
+            ? "Poligono guardado en la nube."
+            : "Poligono actualizado en la nube.",
+        );
+      } else if (result.path === "remote-admin") {
+        notify.success(
+          result.action === "created"
+            ? "Poligono guardado en la nube (via canal seguro)."
+            : "Poligono actualizado en la nube (via canal seguro).",
+        );
+      } else if (result.wasOffline) {
+        notify.info(
+          result.action === "created"
+            ? "Poligono guardado sin conexion. Se sincronizara automaticamente."
+            : "Poligono actualizado sin conexion. Se sincronizara automaticamente.",
+        );
       } else {
-        const result = await savePolygonDoc(points, { owner: ownerId, ownerName, ownerEmail });
-        if (!result?._id) {
-          throw new Error('polygon save failed');
-        }
+        notify.warn(
+          result.action === "created"
+            ? "Poligono guardado localmente. Intentaremos subirlo a la nube."
+            : "Poligono actualizado localmente. Intentaremos sincronizarlo.",
+        );
       }
+      if (result.remoteError && !result.wasOffline) {
+        console.warn("save/updatePolygon remote warning:", result.remoteError);
+      }
+
       await refreshSaved();
       setPoints([]);
       setEditingId(null);
       onSaved?.();
     } catch (error) {
-      console.error(editingId ? 'Error al actualizar polígono' : 'Error al guardar polígono', error);
-      setErrorMsg(editingId ? 'No se pudo actualizar el polígono. Inténtalo nuevamente.' : 'No se pudo guardar el polígono. Inténtalo nuevamente.');
+      console.error(
+        editingId ? "Error al actualizar poligono" : "Error al guardar poligono",
+        error,
+      );
+      setErrorMsg(
+        editingId
+          ? "No se pudo actualizar el poligono. Intentalo nuevamente."
+          : "No se pudo guardar el poligono. Intentalo nuevamente.",
+      );
+      notify.error(
+        editingId ? "No se pudo actualizar el poligono." : "No se pudo guardar el poligono.",
+      );
     } finally {
       setIsSaving(false);
     }
-  }, [ownerId, readOnly, isSaving, points, ownerName, ownerEmail, onSaved, refreshSaved, editingId, updatePolygonDoc]);
+  }, [
+    ownerId,
+    readOnly,
+    isSaving,
+    points,
+    ownerName,
+    ownerEmail,
+    onSaved,
+    refreshSaved,
+    editingId,
+    updatePolygonDoc,
+    savePolygonDoc,
+  ]);
 
   const handleDeletePolygon = useCallback(async (id: string) => {
     if (readOnly) return;
-    await deletePolygon(id);
-    if (editingId === id) {
-      setEditingId(null);
-      setPoints([]);
+    try {
+      const result = await deletePolygon(id);
+      if (result.path === "remote") {
+        notify.success("Poligono eliminado de la nube.");
+      } else if (result.path === "remote-admin") {
+        notify.success("Poligono eliminado de la nube (via canal seguro).");
+      } else if (result.wasOffline) {
+        notify.info("Poligono eliminado sin conexion. El borrado se sincronizara automaticamente.");
+      } else {
+        notify.warn("Poligono eliminado localmente. Intentaremos borrarlo en la nube.");
+      }
+      if (result.remoteError && !result.wasOffline) {
+        console.warn("deletePolygon remote warning:", result.remoteError);
+      }
+      if (editingId === id) {
+        setEditingId(null);
+        setPoints([]);
+      }
+      await refreshSaved();
+    } catch (error) {
+      console.error("Error al eliminar poligono", error);
+      notify.error("No se pudo eliminar el poligono.");
     }
-    await refreshSaved();
-  }, [readOnly, refreshSaved, editingId]);
+  }, [readOnly, refreshSaved, editingId, deletePolygon]);
 
   const handleEditPolygon = useCallback((doc: PolygonDoc) => {
     if (readOnly || isSaving) return;

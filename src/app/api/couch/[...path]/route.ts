@@ -12,7 +12,8 @@ async function proxy(req: NextRequest, path: string[]) {
       return NextResponse.json({ ok: false, error: "Missing COUCH_HOST env" }, { status: 500 });
     }
     const search = req.nextUrl.search ?? "";
-    const target = `${targetBase}/${path.join("/")}${search}`;
+    const encodedPath = path.map((segment) => encodeURIComponent(segment)).join("/");
+    const target = `${targetBase}/${encodedPath}${search}`;
 
     // Transfiere encabezados relevantes
     const headers: Record<string, string> = {};
@@ -48,14 +49,18 @@ async function proxy(req: NextRequest, path: string[]) {
     );
 
     const hasBody = !["GET", "HEAD"].includes(method);
-    const body = hasBody ? await req.text() : undefined;
+    const body = hasBody ? await req.arrayBuffer() : undefined;
 
-    const res = await fetch(target, {
+    const init: RequestInit = {
       method,
       headers,
-      body,
       redirect: "manual",
-    });
+    };
+    if (hasBody && body) {
+      init.body = body;
+    }
+
+    const res = await fetch(target, init);
 
     const nextRes = new NextResponse(res.body, {
       status: res.status,

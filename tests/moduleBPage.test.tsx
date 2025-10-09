@@ -31,6 +31,15 @@ jest.mock("@/lib/database", () => ({
   deletePhoto: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
+jest.mock("@/lib/notify", () => ({
+  notify: {
+    success: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
 const baseAuthState: AuthState = {
   user: null,
   token: null,

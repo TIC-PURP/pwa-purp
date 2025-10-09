@@ -62,6 +62,57 @@ async function safeLocalPut(doc: any) {
     throw e;
   }
 }
+async function safeLocalPutAttachment(id: string, name: string, rev: string, data: any, mime: string) {
+  let attempts = 0;
+  let currentRev = rev;
+  // Reutilizamos safeLocalGet para recapturar _rev cuando sea necesario
+  while (attempts < 3) {
+    attempts += 1;
+    if (!localDB) throw new Error("DB not ready");
+    try {
+      return await (localDB as any).putAttachment(id, name, currentRev, data, mime);
+    } catch (error: any) {
+      const closing = isClosingError(error);
+      const conflict = Number(error?.status) === 409;
+      if ((closing || conflict) && attempts < 3) {
+        if (closing) {
+          try { /* @ts-ignore */ localDB = null; } catch {}
+          await openDatabases();
+        }
+        const latest = await safeLocalGet(id);
+        currentRev = latest?._rev;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("putAttachment-max-retries");
+}
+async function safeLocalRemove(doc: any) {
+  if (!doc) return;
+  let attempts = 0;
+  let currentDoc = doc;
+  while (attempts < 3) {
+    attempts += 1;
+    if (!localDB) throw new Error("DB not ready");
+    try {
+      return await (localDB as any).remove(currentDoc);
+    } catch (error: any) {
+      const closing = isClosingError(error);
+      const conflict = Number(error?.status) === 409;
+      if ((closing || conflict) && attempts < 3) {
+        if (closing) {
+          try { /* @ts-ignore */ localDB = null; } catch {}
+          await openDatabases();
+        }
+        currentDoc = await safeLocalGet(currentDoc?._id ?? currentDoc?.id);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("remove-max-retries");
+}
 
 /** Carga PouchDB y plugin find (solo en cliente) */
 async function ensurePouch() {
@@ -147,6 +198,22 @@ function sanitizeForCouch<T extends Record<string, any>>(doc: T): T {
     out[k] = (doc as any)[k];
   }
   return out as T;
+}
+function toErrorMessage(err: any): string {
+  if (!err) return "error desconocido";
+  if (typeof err === "string") return err;
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "object") {
+    const status = (err as any)?.status;
+    const reason = (err as any)?.reason || (err as any)?.message;
+    if (status) {
+      return reason ? `${status}: ${String(reason)}` : `status ${status}`;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {}
+  }
+  return String(err);
 }
 async function saveDocViaAdmin(doc: any) {
   try {
@@ -1305,8 +1372,21 @@ type PhotoDoc = {
   lng?: number;
   tags?: string[];
   hasOriginal: boolean;
-  hasThumb: boolean;
   updatedAt?: string;
+};
+
+export type PhotoSaveResult = {
+  ok: boolean;
+  _id?: string;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
+};
+export type PhotoDeleteResult = {
+  ok: boolean;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
 };
 
 /** Crea indices para bÃºsqueda de fotos */
@@ -1361,11 +1441,81 @@ async function resizeToBlob(input: Blob, maxSide = 1600, as: "image/webp"|"image
   }
 }
 
-/** Guarda una foto con attachments (original + thumb) en PouchDB (replica a CouchDB) */
-export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
+async function blobToBase64(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+      if (typeof result === "string") {
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      } else {
+        reject(new Error("reader-result-invalid"));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error("reader-error"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function uploadPhotoViaAdminFallback(doc: any, original: Blob, rev?: string) {
+  if (!doc || !doc._id) return null;
+  const baseDoc = sanitizeForCouch({ ...doc });
+  if (rev) baseDoc._rev = rev;
+  else delete baseDoc._rev;
+  delete (baseDoc as any)._attachments;
+
+  const attachments: Record<string, { content_type: string; data: string }> = {
+    "original.jpg": {
+      content_type: "image/jpeg",
+      data: await blobToBase64(original),
+    },
+  };
+
+  const attemptPut = async (payload: any) => {
+    const res = await fetch("/api/admin/couch/photos", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+
+  const putPayload = { doc: baseDoc, attachments, forceAttachments: true };
+  let { res, data } = await attemptPut(putPayload);
+
+  if (!res.ok && res.status === 409) {
+    try {
+      const latestRes = await fetch(`/api/admin/couch/photos?id=${encodeURIComponent(doc._id)}`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const latestBody = await latestRes.json().catch(() => ({}));
+      const latestDoc = latestBody?.doc || latestBody;
+      if (latestRes.ok && latestDoc?._rev) {
+        const merged = sanitizeForCouch({ ...latestDoc, ...doc, _rev: latestDoc._rev });
+        delete (merged as any)._attachments;
+        ({ res, data } = await attemptPut({ doc: merged, attachments, forceAttachments: true }));
+      }
+    } catch (err) {
+      console.warn("[FOTO] No se pudo recuperar doc actual para fallback admin", err);
+    }
+  }
+
+  if (!res.ok) {
+    console.warn("[FOTO] Fallback admin PUT falló", res.status, data);
+    return null;
+  }
+  return data || { ok: true };
+}
+/** Guarda una foto con attachment original en PouchDB (replica a CouchDB) */
+export async function savePhoto(file: Blob, meta: PhotoMeta = {}): Promise<PhotoSaveResult> {
   await openDatabases();
-  if (!localDB) throw new Error("DB not ready");
-  if (!meta.owner) throw new Error("owner id is required to save photo");
+  if (!localDB) throw new Error("DB no está lista");
+  if (!meta.owner) throw new Error("El id del owner es requerido para guardar la foto");
   const nowIso = new Date().toISOString();
   const id = `photo:${nowIso}:${rid(4)}`;
 
@@ -1378,80 +1528,180 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}) {
     createdAt: nowIso,
     lat: meta.lat, lng: meta.lng, tags: meta.tags || [],
     hasOriginal: true,
-    hasThumb: true,
     updatedAt: nowIso,
   };
-  // 1) Crear doc base
-  try { await (localDB as any).put(sanitizeForCouch(doc)); } catch (e: any) {
+  // 1) Crear doc base con reintentos seguros
+  try {
+    console.log(`[FOTO] Intentando guardar doc local: ${id}`, doc);
+    await safeLocalPut(sanitizeForCouch(doc));
+    console.log(`[FOTO] Documento local guardado correctamente: ${id}`);
+  } catch (e: any) {
+    console.error(`[FOTO] Error al guardar doc local: ${id}`, e);
     if (e?.status === 409) {
-      const existing = await (localDB as any).get(id);
-      await (localDB as any).put({ ...existing, ...doc, _rev: existing._rev });
-    } else { throw e; }
+      const existing = await safeLocalGet(id);
+      await safeLocalPut({ ...existing, ...doc, _rev: existing._rev });
+      console.log(`[FOTO] Documento local actualizado por conflicto: ${id}`);
+    } else {
+      throw e;
+    }
   }
 
-  // 2) Adjuntar thumb (320px webp)
-  const thumb = await resizeToBlob(file, 320, "image/webp", 0.75);
-  let latest = await (localDB as any).get(id);
-  await (localDB as any).putAttachment(id, "thumb.webp", latest._rev, thumb, "image/webp");
-
-  // 3) Adjuntar original (hasta 1600px para balance tamaÃ±o/calidad)
+  // 2) Adjuntar original (hasta 1600px para balance tamaño/calidad)
   const original = await resizeToBlob(file, 1600, "image/jpeg", 0.9);
-  latest = await (localDB as any).get(id);
-  await (localDB as any).putAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
+  let latest = await safeLocalGet(id);
+  try {
+    await safeLocalPutAttachment(id, "original.jpg", latest._rev, original, "image/jpeg");
+    console.log(`[FOTO] Original adjuntado correctamente: ${id}`);
+  } catch (e) {
+    console.error(`[FOTO] Error al adjuntar original: ${id}`, e);
+    throw e;
+  }
 
   // 4) Update metadata
-  latest = await (localDB as any).get(id);
+  latest = await safeLocalGet(id);
   latest.updatedAt = new Date().toISOString();
-  await (localDB as any).put(sanitizeForCouch(latest));
+  await safeLocalPut(sanitizeForCouch(latest));
+  console.log(`[FOTO] Metadata actualizada: ${id}`);
 
-  // Best-effort: subir attachments y metadata al remoto si hay internet.  
-  // Este bloque intenta replicar inmediatamente los adjuntos a la base remota,  
-  // similar a lo que hace saveUserAvatar(). Si no hay conexiÃ³n, los adjuntos  
-  // se sincronizarÃ¡n automÃ¡ticamente cuando startSync() estÃ© activo.  
-  try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
-    if (online) {
+  // Intento de replicación remota; si falla se usa fallback admin
+  let remoteSynced = false;
+  let remoteRevForFallback: string | undefined;
+  let remoteError: string | undefined;
+  let remotePath: PhotoSaveResult["path"] = "local-only";
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  if (canAttemptRemote) {
+    console.log(`[FOTO] Estado de conexión remota: online=${navigatorOnline}, remoteDB=${!!remoteDB}`);
+    try {
       let rdoc: any = null;
-      try { rdoc = await remoteDB.get(id); } catch {}
-      // Si no existe el doc remoto, crearlo con la metadata actual
+      try {
+        rdoc = await remoteDB!.get(id);
+        remoteRevForFallback = rdoc?._rev || remoteRevForFallback;
+        console.log(`[FOTO] Documento remoto ya existe: ${id}`);
+      } catch (err: any) {
+        if (err?.status && err.status !== 404) {
+          console.error(`[FOTO] Error al consultar doc remoto: ${id}`, err);
+          remoteError = toErrorMessage(err);
+        } else {
+          console.warn(`[FOTO] Documento remoto no existe, se creará: ${id}`);
+        }
+        if (!rdoc && err?.status !== 404) rdoc = null;
+      }
       if (!rdoc) {
         try {
           const base = sanitizeForCouch(latest);
-          const put = await remoteDB.put(base);
+          console.log("[FOTO] Creando doc remoto en CouchDB", { id, keys: Object.keys(base) });
+          const put = await remoteDB!.put(base);
           rdoc = { ...base, _rev: put.rev };
-        } catch {}
+          remoteRevForFallback = put?.rev || remoteRevForFallback;
+          console.log(`[FOTO] Documento remoto creado: ${id}`);
+        } catch (err: any) {
+          if (err?.status === 409) {
+            try {
+              rdoc = await remoteDB!.get(id);
+              remoteRevForFallback = rdoc?._rev || remoteRevForFallback;
+              console.warn(`[FOTO] Documento remoto ya existía al crear: ${id}`);
+            } catch (getErr) {
+              console.error(`[FOTO] Error al recuperar doc remoto tras conflicto: ${id}`, getErr);
+              remoteError = remoteError ?? toErrorMessage(getErr);
+            }
+          } else {
+            console.error(`[FOTO] Error al crear doc remoto: ${id}`, err);
+            remoteError = remoteError ?? toErrorMessage(err);
+          }
+        }
       }
       if (rdoc) {
-        // Subir thumb y original, manejando las revisiones
+        if (rdoc._rev) remoteRevForFallback = rdoc._rev;
         try {
-          let rr: any = await remoteDB.putAttachment(id, "thumb.webp", rdoc._rev, thumb, "image/webp");
-          rr = await remoteDB.putAttachment(id, "original.jpg", rr.rev, original, "image/jpeg");
-          // Actualizar flags y updatedAt en remoto
+          const rr: any = await remoteDB!.putAttachment(id, "original.jpg", rdoc._rev, original, "image/jpeg");
+          remoteRevForFallback = rr?.rev || remoteRevForFallback;
+          console.log(`[FOTO] Original remoto adjuntado: ${id}`);
           try {
-            const rlatest = await remoteDB.get(id);
+            const rlatest = await remoteDB!.get(id);
             rlatest.hasOriginal = true;
-            rlatest.hasThumb = true;
             rlatest.updatedAt = new Date().toISOString();
-            await remoteDB.put(sanitizeForCouch(rlatest));
+            const putMeta = await remoteDB!.put(sanitizeForCouch(rlatest));
+            remoteRevForFallback = putMeta?.rev || remoteRevForFallback;
+            console.log(`[FOTO] Metadata remota actualizada: ${id}`);
+            remoteSynced = true;
+            remotePath = "remote";
+          } catch (err) {
+            console.error(`[FOTO] Error al actualizar metadata remota: ${id}`, err);
+            remoteError = remoteError ?? toErrorMessage(err);
+          }
+        } catch (err) {
+          console.error(`[FOTO] Error al adjuntar attachments remotos: ${id}`, err);
+          remoteError = remoteError ?? toErrorMessage(err);
+          try {
+            const latestRemote = await remoteDB!.get(id);
+            remoteRevForFallback = latestRemote?._rev || remoteRevForFallback;
           } catch {}
-        } catch {}
+        }
       }
+    } catch (err) {
+      console.error(`[FOTO] Error general en replicación remota: ${id}`, err);
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch {}
+  } else if (wasOffline) {
+    console.warn(`[FOTO] No hay conexión remota, la foto se sincronizará luego: ${id}`);
+  } else {
+    console.warn(`[FOTO] remoteDB no inicializado, la foto se sincronizará luego: ${id}`);
+    remoteError = "No se pudo acceder a la base remota";
+  }
 
-  return { ok: true, _id: id };
+  if (!remoteSynced && !wasOffline) {
+    const fallbackDoc = { ...latest };
+    delete (fallbackDoc as any)._attachments;
+    if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
+    else delete (fallbackDoc as any)._rev;
+    try {
+      const adminResult = await uploadPhotoViaAdminFallback(fallbackDoc, original, remoteRevForFallback);
+      if (adminResult?.ok) {
+        console.log(`[FOTO] Documento remoto asegurado vía endpoint admin: ${id}`);
+        remoteSynced = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        console.warn(`[FOTO] Fallback admin no pudo guardar la foto: ${id}`);
+        remoteError = remoteError ?? "Fallback admin no pudo guardar la foto";
+      }
+    } catch (err) {
+      console.warn(`[FOTO] Fallback admin lanzó un error: ${id}`, err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    _id: id,
+    path: remoteSynced ? remotePath : "local-only",
+    remoteError: remoteSynced ? undefined : remoteError,
+    wasOffline,
+  };
 }
 
 /** Devuelve Blob del attachment requerido */
-export async function getPhotoAttachment(id: string, name: "thumb.webp"|"original.jpg") {
+export async function getPhotoAttachment(id: string, name = "original.jpg") {
   await openDatabases();
   return await (localDB as any).getAttachment(id, name);
 }
 
 /** Devuelve URL de objeto para usar en <img> (recuerda revocar cuando dejes de usarla) */
 export async function getPhotoThumbUrl(id: string) {
-  const blob = await getPhotoAttachment(id, "thumb.webp");
-  return URL.createObjectURL(blob);
+  if (!isClient) return null;
+  const original = await getPhotoAttachment(id, "original.jpg");
+  if (!original) return null;
+  try {
+    const preview = await resizeToBlob(original, 320, "image/jpeg", 0.75);
+    return URL.createObjectURL(preview);
+  } catch (error) {
+    console.warn("[database] getPhotoThumbUrl preview fallback", error);
+    return URL.createObjectURL(original);
+  }
 }
 
 /** Lista fotos (por owner opcional), ordenadas desc por createdAt */
@@ -1473,17 +1723,102 @@ export async function listPhotos(opts?: { owner?: string; limit?: number; }) {
 }
 
 /** Elimina la foto completa */
-export async function deletePhoto(id: string) {
+export async function deletePhoto(id: string): Promise<PhotoDeleteResult> {
   await openDatabases();
-  const doc = await (localDB as any).get(id);
-  await (localDB as any).remove(doc);
+  if (!localDB) throw new Error("DB no está lista");
+  let doc: any = null;
   try {
-    if (remoteDB) {
-      const remoteDoc = await (remoteDB as any).get(id);
-      await (remoteDB as any).remove(remoteDoc);
+    doc = await safeLocalGet(id);
+  } catch (err) {
+    console.warn(`[FOTO] No se encontró doc local al eliminar: ${id}`, err);
+  }
+  if (doc) {
+    await safeLocalRemove(doc);
+  }
+
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  let remoteRemoved = false;
+  let remoteError: string | undefined;
+  let remotePath: PhotoDeleteResult["path"] = "local-only";
+
+  if (canAttemptRemote) {
+    try {
+      let remoteDoc: any = null;
+      try {
+        remoteDoc = await remoteDB!.get(id);
+      } catch (err: any) {
+        if (err?.status === 404) {
+          remoteRemoved = true;
+          remotePath = "remote";
+        } else {
+          remoteError = toErrorMessage(err);
+        }
+      }
+      if (remoteDoc) {
+        try {
+          await remoteDB!.remove(remoteDoc);
+          remoteRemoved = true;
+          remotePath = "remote";
+        } catch (err: any) {
+          remoteError = toErrorMessage(err);
+        }
+      }
+    } catch (err: any) {
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch {}
-  return { ok: true };
+  } else if (wasOffline) {
+    console.warn(`[FOTO] Eliminación remota pendiente por falta de conexión: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
+  }
+
+  if (!remoteRemoved && !wasOffline) {
+    try {
+      const payload: { _id: string; _rev?: string } = { _id: id };
+      try {
+        const adminDocRes = await fetch(`/api/admin/couch/photos?id=${encodeURIComponent(id)}`, {
+          method: "GET",
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        const adminDoc = await adminDocRes.json().catch(() => ({}));
+        const full = adminDoc?.doc || adminDoc;
+        if (adminDocRes.ok && full?._rev) {
+          payload._rev = full._rev;
+        }
+      } catch (err) {
+        console.warn("[FOTO] No se pudo obtener _rev via admin antes de DELETE", err);
+      }
+      const adminRes = await fetch("/api/admin/couch/photos", {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (adminRes.ok) {
+        remoteRemoved = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        const detail = await adminRes.text().catch(() => "");
+        remoteError = remoteError ?? `DELETE admin ${adminRes.status} ${detail}`;
+      }
+    } catch (err) {
+      console.warn("[FOTO] delete fallback admin failed", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    path: remoteRemoved ? remotePath : "local-only",
+    remoteError: remoteRemoved ? undefined : remoteError,
+    wasOffline,
+  };
 }
 
 // =========================
@@ -1509,6 +1844,22 @@ export type FileDoc = {
   attachmentName?: string;
   createdAt?: string;
   updatedAt?: string;
+  _rev?: string;
+};
+
+export type FileSaveResult = {
+  ok: boolean;
+  _id?: string;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
+};
+
+export type FileDeleteResult = {
+  ok: boolean;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
 };
 
 function sanitizeAttachmentName(name?: string, fallback = "file.bin") {
@@ -1539,7 +1890,61 @@ async function ensureFileIndexes() {
   } catch {}
 }
 
-export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileDoc> {
+async function uploadFileViaAdminFallback(doc: any, attachmentName: string, file: Blob, mime: string, rev?: string) {
+  if (!doc || !doc._id) return null;
+  const baseDoc = sanitizeForCouch({ ...doc });
+  if (rev) baseDoc._rev = rev;
+  else delete baseDoc._rev;
+  delete (baseDoc as any)._attachments;
+
+  const attachments: Record<string, { content_type: string; data: string }> = {
+    [attachmentName]: {
+      content_type: mime,
+      data: await blobToBase64(file),
+    },
+  };
+
+  const attemptPut = async (payload: any) => {
+    const res = await fetch("/api/admin/couch/files", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+
+  const putPayload = { doc: baseDoc, attachments, forceAttachments: true };
+  let { res, data } = await attemptPut(putPayload);
+
+  if (!res.ok && res.status === 409) {
+    try {
+      const latestRes = await fetch(`/api/admin/couch/files?id=${encodeURIComponent(doc._id)}`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const latestBody = await latestRes.json().catch(() => ({}));
+      const latestDoc = latestBody?.doc || latestBody;
+      if (latestRes.ok && latestDoc?._rev) {
+        const merged = sanitizeForCouch({ ...latestDoc, ...doc, _rev: latestDoc._rev });
+        delete (merged as any)._attachments;
+        ({ res, data } = await attemptPut({ doc: merged, attachments, forceAttachments: true }));
+      }
+    } catch (err) {
+      console.warn("[FILE] No se pudo recuperar doc actual para fallback admin", err);
+    }
+  }
+
+  if (!res.ok) {
+    console.warn("[FILE] Fallback admin PUT falló", res.status, data);
+    return null;
+  }
+  return data || { ok: true };
+}
+
+export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileSaveResult> {
   if (!file) throw new Error("file is required");
   const owner = (meta?.owner || "").trim();
   if (!owner) throw new Error("owner is required to save file");
@@ -1573,7 +1978,12 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileDoc> 
 
   await safeLocalPut(sanitizeForCouch(baseDoc));
   let latest = await safeLocalGet(id);
-  await (localDB as any).putAttachment(id, attachmentName, latest._rev, file, mime);
+  try {
+    await safeLocalPutAttachment(id, attachmentName, latest._rev, file, mime);
+  } catch (error) {
+    console.error(`[FILE] Error al adjuntar archivo local: ${id}`, error);
+    throw error;
+  }
   latest = await safeLocalGet(id);
   latest.updatedAt = new Date().toISOString();
   if (typeof size === "number") latest.size = size;
@@ -1581,27 +1991,96 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileDoc> 
   await safeLocalPut(sanitizeForCouch(latest));
   const finalDoc = (await safeLocalGet(id)) as FileDoc;
 
-  try {
-    if (remoteDB) {
+  let remoteSynced = false;
+  let remotePath: FileSaveResult["path"] = "local-only";
+  let remoteError: string | undefined;
+  let remoteRevForFallback: string | undefined;
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  if (canAttemptRemote) {
+    try {
       let remoteDoc: any = null;
       try {
-        remoteDoc = await (remoteDB as any).get(id);
-      } catch {}
+        remoteDoc = await remoteDB!.get(id);
+        remoteRevForFallback = remoteDoc?._rev || remoteRevForFallback;
+      } catch (err: any) {
+        if (err?.status && err.status !== 404) {
+          remoteError = toErrorMessage(err);
+        }
+      }
       if (!remoteDoc) {
-        const base = sanitizeForCouch({ ...finalDoc });
-        delete (base as any)._attachments;
-        const putRes = await (remoteDB as any).put(base);
-        remoteDoc = { ...base, _rev: putRes.rev };
+        try {
+          const base = sanitizeForCouch({ ...finalDoc });
+          delete (base as any)._attachments;
+          const putRes = await remoteDB!.put(base);
+          remoteDoc = { ...base, _rev: putRes.rev };
+          remoteRevForFallback = putRes?.rev || remoteRevForFallback;
+        } catch (err: any) {
+          if (err?.status === 409) {
+            try {
+              remoteDoc = await remoteDB!.get(id);
+              remoteRevForFallback = remoteDoc?._rev || remoteRevForFallback;
+            } catch (getErr) {
+              remoteError = remoteError ?? toErrorMessage(getErr);
+            }
+          } else {
+            remoteError = remoteError ?? toErrorMessage(err);
+          }
+        }
       }
       if (remoteDoc) {
-        await (remoteDB as any).putAttachment(id, attachmentName, remoteDoc._rev, file, mime);
+        try {
+          const rr: any = await remoteDB!.putAttachment(id, attachmentName, remoteDoc._rev, file, mime);
+          remoteRevForFallback = rr?.rev || remoteRevForFallback;
+          remoteSynced = true;
+          remotePath = "remote";
+        } catch (err: any) {
+          remoteError = remoteError ?? toErrorMessage(err);
+          try {
+            const latestRemote = await remoteDB!.get(id);
+            remoteRevForFallback = latestRemote?._rev || remoteRevForFallback;
+          } catch {}
+        }
       }
+    } catch (err: any) {
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch (error) {
-    console.warn("[database] saveFileDoc remote attachment failed", error);
+  } else if (wasOffline) {
+    console.warn(`[FILE] Archivo guardado sin conexión, se sincronizará luego: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
   }
 
-  return finalDoc;
+  if (!remoteSynced && !wasOffline) {
+    try {
+      const fallbackDoc = { ...finalDoc };
+      delete (fallbackDoc as any)._attachments;
+      if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
+      else delete (fallbackDoc as any)._rev;
+      const adminResult = await uploadFileViaAdminFallback(fallbackDoc, attachmentName, file, mime, remoteRevForFallback);
+      if (adminResult?.ok) {
+        remoteSynced = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        remoteError = remoteError ?? "Fallback admin no pudo guardar el archivo";
+      }
+    } catch (err: any) {
+      console.warn("[FILE] Fallback admin lanzó un error", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    _id: id,
+    path: remoteSynced ? remotePath : "local-only",
+    remoteError: remoteSynced ? undefined : remoteError,
+    wasOffline,
+  };
 }
 
 export async function listFiles(opts: { owner?: string; limit?: number } = {}): Promise<FileDoc[]> {
@@ -1645,22 +2124,99 @@ export async function getFileUrl(id: string): Promise<string> {
   }
 }
 
-export async function deleteFile(id: string) {
+export async function deleteFile(id: string): Promise<FileDeleteResult> {
   await openDatabases();
-  if (!localDB) return { ok: false };
+  if (!localDB) throw new Error("DB no está lista");
   try {
     const doc = await safeLocalGet(id);
-    await (localDB as any).remove(doc);
+    await safeLocalRemove(doc);
   } catch (error) {
     console.warn("[database] deleteFile local failed", error);
   }
-  try {
-    if (remoteDB) {
-      const remoteDoc = await (remoteDB as any).get(id);
-      await (remoteDB as any).remove(remoteDoc);
+
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  let remoteRemoved = false;
+  let remoteError: string | undefined;
+  let remotePath: FileDeleteResult["path"] = "local-only";
+
+  if (canAttemptRemote) {
+    try {
+      let remoteDoc: any = null;
+      try {
+        remoteDoc = await remoteDB!.get(id);
+      } catch (err: any) {
+        if (err?.status === 404) {
+          remoteRemoved = true;
+          remotePath = "remote";
+        } else {
+          remoteError = toErrorMessage(err);
+        }
+      }
+      if (remoteDoc) {
+        try {
+          await remoteDB!.remove(remoteDoc);
+          remoteRemoved = true;
+          remotePath = "remote";
+        } catch (err: any) {
+          remoteError = toErrorMessage(err);
+        }
+      }
+    } catch (err: any) {
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch {}
-  return { ok: true };
+  } else if (wasOffline) {
+    console.warn(`[FILE] Eliminación remota pendiente por falta de conexión: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
+  }
+
+  if (!remoteRemoved && !wasOffline) {
+    try {
+      const payload: { _id: string; _rev?: string } = { _id: id };
+      try {
+        const adminDocRes = await fetch(`/api/admin/couch/files?id=${encodeURIComponent(id)}`, {
+          method: "GET",
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        const adminDoc = await adminDocRes.json().catch(() => ({}));
+        const full = adminDoc?.doc || adminDoc;
+        if (adminDocRes.ok && full?._rev) {
+          payload._rev = full._rev;
+        }
+      } catch (err) {
+        console.warn("[FILE] No se pudo obtener _rev via admin antes de DELETE", err);
+      }
+      const adminRes = await fetch("/api/admin/couch/files", {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (adminRes.ok) {
+        remoteRemoved = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        const detail = await adminRes.text().catch(() => "");
+        remoteError = remoteError ?? `DELETE admin ${adminRes.status} ${detail}`;
+      }
+    } catch (err) {
+      console.warn("[FILE] delete fallback admin failed", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    path: remoteRemoved ? remotePath : "local-only",
+    remoteError: remoteRemoved ? undefined : remoteError,
+    wasOffline,
+  };
 }
 
 // ============================
@@ -1683,6 +2239,25 @@ export type PolygonDoc = {
   points: PolygonPoint[];
   createdAt: string;
   updatedAt?: string;
+  hasPreview?: boolean;
+  previewAttachmentName?: string;
+  _rev?: string;
+};
+
+export type PolygonSaveResult = {
+  ok: boolean;
+  _id: string;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
+  action: "created" | "updated";
+};
+
+export type PolygonDeleteResult = {
+  ok: boolean;
+  path: "remote" | "remote-admin" | "local-only";
+  remoteError?: string;
+  wasOffline?: boolean;
 };
 
 async function ensurePolygonIndexes() {
@@ -1702,7 +2277,119 @@ async function ensurePolygonIndexes() {
   } catch {}
 }
 
-export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta): Promise<PolygonDoc> {
+async function createPolygonPreviewBlob(points: PolygonPoint[], width = 320, height = 200): Promise<Blob | null> {
+  if (typeof document === "undefined") return null;
+  if (!Array.isArray(points) || points.length < 3) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = "#f3f4f6";
+  ctx.fillRect(0, 0, width, height);
+
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const latSpan = Math.max(1e-6, maxLat - minLat);
+  const lngSpan = Math.max(1e-6, maxLng - minLng);
+  const padding = 16;
+  const scaleX = (value: number) => padding + ((value - minLng) / lngSpan) * (width - padding * 2);
+  const scaleY = (value: number) => padding + ((maxLat - value) / latSpan) * (height - padding * 2);
+
+  ctx.beginPath();
+  points.forEach((pt, index) => {
+    const x = scaleX(pt.lng);
+    const y = scaleY(pt.lat);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = "rgba(96, 165, 250, 0.35)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(37, 99, 235, 0.95)";
+  points.forEach((pt) => {
+    const x = scaleX(pt.lng);
+    const y = scaleY(pt.lat);
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  return await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null);
+        return;
+      }
+      resolve(blob);
+    }, "image/png");
+  });
+}
+
+async function uploadPolygonViaAdminFallback(doc: any, preview: Blob | null, attachmentName: string, rev?: string) {
+  if (!doc || !doc._id) return null;
+  const baseDoc = sanitizeForCouch({ ...doc });
+  if (rev) baseDoc._rev = rev;
+  else delete baseDoc._rev;
+  delete (baseDoc as any)._attachments;
+
+  const attachments: Record<string, { content_type: string; data: string }> = {};
+  if (preview) {
+    attachments[attachmentName] = {
+      content_type: preview.type || "image/png",
+      data: await blobToBase64(preview),
+    };
+  }
+
+  const attemptPut = async (payload: any) => {
+    const res = await fetch("/api/admin/couch/polygons", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+
+  const putPayload = { doc: baseDoc, attachments, forceAttachments: true };
+  let { res, data } = await attemptPut(putPayload);
+
+  if (!res.ok && res.status === 409) {
+    try {
+      const latestRes = await fetch(`/api/admin/couch/polygons?id=${encodeURIComponent(doc._id)}`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const latestBody = await latestRes.json().catch(() => ({}));
+      const latestDoc = latestBody?.doc || latestBody;
+      if (latestRes.ok && latestDoc?._rev) {
+        const merged = sanitizeForCouch({ ...latestDoc, ...doc, _rev: latestDoc._rev });
+        delete (merged as any)._attachments;
+        ({ res, data } = await attemptPut({ doc: merged, attachments, forceAttachments: true }));
+      }
+    } catch (err) {
+      console.warn("[POLYGON] No se pudo recuperar doc actual para fallback admin", err);
+    }
+  }
+
+  if (!res.ok) {
+    console.warn("[POLYGON] Fallback admin PUT falló", res.status, data);
+    return null;
+  }
+  return data || { ok: true };
+}
+
+export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta): Promise<PolygonSaveResult> {
   if (!Array.isArray(points) || points.length < 3) {
     throw new Error("polygon must include at least 3 points");
   }
@@ -1728,34 +2415,136 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
     points: normalizedPoints,
     createdAt: nowIso,
     updatedAt: nowIso,
+    hasPreview: false,
   };
 
   await safeLocalPut(sanitizeForCouch(doc));
-  const stored = (await safeLocalGet(id)) as PolygonDoc;
+  let latest = await safeLocalGet(id);
 
-  try {
-    if (remoteDB) {
-      const base = sanitizeForCouch({ ...stored });
-      delete (base as any)._attachments;
-      try {
-        await (remoteDB as any).put(base);
-      } catch (error: any) {
-        if (error?.status === 409) {
-          const remoteExisting = await (remoteDB as any).get(id);
-          await (remoteDB as any).put({ ...remoteExisting, ...base, _rev: remoteExisting._rev });
-        } else {
-          throw error;
-        }
-      }
+  const previewAttachmentName = "preview.png";
+  const previewBlob = await createPolygonPreviewBlob(normalizedPoints);
+  if (previewBlob) {
+    try {
+      await safeLocalPutAttachment(id, previewAttachmentName, latest._rev, previewBlob, previewBlob.type || "image/png");
+      latest = await safeLocalGet(id);
+      latest.hasPreview = true;
+      latest.previewAttachmentName = previewAttachmentName;
+      latest.updatedAt = new Date().toISOString();
+      await safeLocalPut(sanitizeForCouch(latest));
+    } catch (error) {
+      console.warn("[POLYGON] No se pudo adjuntar preview local", error);
     }
-  } catch (error) {
-    console.warn("[database] savePolygonDoc remote failed", error);
   }
 
-  return stored;
+  const finalDoc = (await safeLocalGet(id)) as PolygonDoc;
+
+  let remoteSynced = false;
+  let remotePath: PolygonSaveResult["path"] = "local-only";
+  let remoteError: string | undefined;
+  let remoteRevForFallback: string | undefined;
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  if (canAttemptRemote) {
+    try {
+      let remoteDoc: any = null;
+      try {
+        remoteDoc = await remoteDB!.get(id);
+        remoteRevForFallback = remoteDoc?._rev || remoteRevForFallback;
+      } catch (err: any) {
+        if (err?.status && err.status !== 404) {
+          remoteError = toErrorMessage(err);
+        }
+      }
+      if (!remoteDoc) {
+        try {
+          const base = sanitizeForCouch({ ...finalDoc });
+          delete (base as any)._attachments;
+          const putRes = await remoteDB!.put(base);
+          remoteDoc = { ...base, _rev: putRes.rev };
+          remoteRevForFallback = putRes?.rev || remoteRevForFallback;
+        } catch (err: any) {
+          if (err?.status === 409) {
+            try {
+              remoteDoc = await remoteDB!.get(id);
+              remoteRevForFallback = remoteDoc?._rev || remoteRevForFallback;
+            } catch (getErr) {
+              remoteError = remoteError ?? toErrorMessage(getErr);
+            }
+          } else {
+            remoteError = remoteError ?? toErrorMessage(err);
+          }
+        }
+      }
+      if (remoteDoc && previewBlob) {
+        try {
+          const rr: any = await remoteDB!.putAttachment(
+            id,
+            previewAttachmentName,
+            remoteDoc._rev,
+            previewBlob,
+            previewBlob.type || "image/png",
+          );
+          remoteRevForFallback = rr?.rev || remoteRevForFallback;
+          remoteSynced = true;
+          remotePath = "remote";
+        } catch (err: any) {
+          remoteError = remoteError ?? toErrorMessage(err);
+          try {
+            const latestRemote = await remoteDB!.get(id);
+            remoteRevForFallback = latestRemote?._rev || remoteRevForFallback;
+          } catch {}
+        }
+      } else if (remoteDoc) {
+        remoteSynced = true;
+        remotePath = "remote";
+      }
+    } catch (err: any) {
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  } else if (wasOffline) {
+    console.warn(`[POLYGON] Guardado sin conexión, se sincronizará luego: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
+  }
+
+  if (!remoteSynced && !wasOffline) {
+    try {
+      const fallbackDoc = { ...finalDoc };
+      delete (fallbackDoc as any)._attachments;
+      if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
+      else delete (fallbackDoc as any)._rev;
+      const adminResult = await uploadPolygonViaAdminFallback(fallbackDoc, previewBlob, previewAttachmentName, remoteRevForFallback);
+      if (adminResult?.ok) {
+        remoteSynced = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        remoteError = remoteError ?? "Fallback admin no pudo guardar el polígono";
+      }
+    } catch (err: any) {
+      console.warn("[POLYGON] Fallback admin lanzó un error", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    _id: id,
+    path: remoteSynced ? remotePath : "local-only",
+    remoteError: remoteSynced ? undefined : remoteError,
+    wasOffline,
+    action: "created",
+  };
 }
 
-export async function updatePolygonDoc(id: string, points: PolygonPoint[], meta: Partial<PolygonMeta> = {}): Promise<PolygonDoc> {
+export async function updatePolygonDoc(
+  id: string,
+  points: PolygonPoint[],
+  meta: Partial<PolygonMeta> = {},
+): Promise<PolygonSaveResult> {
   if (!Array.isArray(points) || points.length < 3) {
     throw new Error("polygon must include at least 3 points");
   }
@@ -1771,38 +2560,142 @@ export async function updatePolygonDoc(id: string, points: PolygonPoint[], meta:
     lng: Number(pt.lng),
   }));
   const nowIso = new Date().toISOString();
-  const updatedDoc = {
+  const updatedDoc: PolygonDoc & { _rev?: string } = {
     ...existing,
     owner,
     ownerName: meta.ownerName ?? existing.ownerName,
     ownerEmail: meta.ownerEmail ?? existing.ownerEmail,
     points: normalizedPoints,
     updatedAt: nowIso,
-  } as PolygonDoc & { _rev?: string };
+  };
   await safeLocalPut(sanitizeForCouch(updatedDoc));
-  const stored = (await safeLocalGet(id)) as PolygonDoc;
-  try {
-    if (remoteDB) {
-      const base = sanitizeForCouch({ ...stored });
+  let latest = await safeLocalGet(id);
+
+  const previewAttachmentName =
+    latest.previewAttachmentName || "preview.png";
+  const previewBlob = await createPolygonPreviewBlob(normalizedPoints);
+  if (previewBlob) {
+    try {
+      await safeLocalPutAttachment(
+        id,
+        previewAttachmentName,
+        latest._rev,
+        previewBlob,
+        previewBlob.type || "image/png",
+      );
+      latest = await safeLocalGet(id);
+      latest.hasPreview = true;
+      latest.previewAttachmentName = previewAttachmentName;
+      latest.updatedAt = new Date().toISOString();
+      await safeLocalPut(sanitizeForCouch(latest));
+    } catch (error) {
+      console.warn("[POLYGON] No se pudo actualizar preview local", error);
+    }
+  }
+
+  const finalDoc = (await safeLocalGet(id)) as PolygonDoc;
+
+  let remoteSynced = false;
+  let remotePath: PolygonSaveResult["path"] = "local-only";
+  let remoteError: string | undefined;
+  let remoteRevForFallback: string | undefined;
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  if (canAttemptRemote) {
+    try {
+      const base = sanitizeForCouch({ ...finalDoc });
       delete (base as any)._attachments;
-      let remoteExisting: any = null;
+      let remoteDoc: any = null;
       try {
-        remoteExisting = await (remoteDB as any).get(id);
-      } catch (error: any) {
-        if (error?.status && error.status !== 404) {
-          throw error;
+        remoteDoc = await remoteDB!.get(id);
+      } catch (err: any) {
+        if (err?.status && err.status !== 404) {
+          remoteError = toErrorMessage(err);
         }
       }
-      if (remoteExisting) {
-        await (remoteDB as any).put({ ...remoteExisting, ...base, _rev: remoteExisting._rev });
-      } else {
-        await (remoteDB as any).put(base);
+      try {
+        if (remoteDoc) {
+          const merged = { ...remoteDoc, ...base, _rev: remoteDoc._rev };
+          const putRes = await remoteDB!.put(merged);
+          remoteDoc = { ...merged, _rev: putRes.rev };
+          remoteRevForFallback = putRes?.rev || remoteRevForFallback;
+        } else {
+          const putRes = await remoteDB!.put(base);
+          remoteDoc = { ...base, _rev: putRes.rev };
+          remoteRevForFallback = putRes?.rev || remoteRevForFallback;
+        }
+        remotePath = "remote";
+        remoteSynced = true;
+      } catch (err: any) {
+        remoteSynced = false;
+        remoteError = remoteError ?? toErrorMessage(err);
       }
+
+      if (remoteSynced && previewBlob) {
+        try {
+          const rr: any = await remoteDB!.putAttachment(
+            id,
+            previewAttachmentName,
+            remoteDoc._rev,
+            previewBlob,
+            previewBlob.type || "image/png",
+          );
+          remoteRevForFallback = rr?.rev || remoteRevForFallback;
+        } catch (err: any) {
+          remoteSynced = false;
+          remoteError = remoteError ?? toErrorMessage(err);
+          try {
+            const latestRemote = await remoteDB!.get(id);
+            remoteRevForFallback = latestRemote?._rev || remoteRevForFallback;
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      remoteSynced = false;
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch (error) {
-    console.warn("[database] updatePolygonDoc remote failed", error);
+  } else if (wasOffline) {
+    console.warn(`[POLYGON] Actualización sin conexión, se sincronizará luego: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
   }
-  return stored;
+
+  if (!remoteSynced && !wasOffline) {
+    try {
+      const fallbackDoc = { ...finalDoc };
+      delete (fallbackDoc as any)._attachments;
+      if (remoteRevForFallback) fallbackDoc._rev = remoteRevForFallback;
+      else delete (fallbackDoc as any)._rev;
+      const adminResult = await uploadPolygonViaAdminFallback(
+        fallbackDoc,
+        previewBlob,
+        previewAttachmentName,
+        remoteRevForFallback,
+      );
+      if (adminResult?.ok) {
+        remoteSynced = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        remoteError = remoteError ?? "Fallback admin no pudo actualizar el polígono";
+      }
+    } catch (err: any) {
+      console.warn("[POLYGON] Fallback admin lanzó un error", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    _id: id,
+    path: remoteSynced ? remotePath : "local-only",
+    remoteError: remoteSynced ? undefined : remoteError,
+    wasOffline,
+    action: "updated",
+  };
 }
 
 export async function listPolygons(opts: { owner?: string; limit?: number } = {}): Promise<PolygonDoc[]> {
@@ -1831,88 +2724,148 @@ export async function getPolygonPreviewUrl(id: string): Promise<string | null> {
   await openDatabases();
   if (!localDB) return null;
   try {
-    const doc: any = await safeLocalGet(id);
+    const doc = await safeLocalGet(id);
     const points: PolygonPoint[] = Array.isArray(doc?.points) ? doc.points : [];
     if (points.length < 3) return null;
-    const width = 320;
-    const height = 200;
-    const padding = 16;
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.fillStyle = "#f3f4f6";
-    ctx.fillRect(0, 0, width, height);
-
-    const lats = points.map((p) => p.lat);
-    const lngs = points.map((p) => p.lng);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLng = Math.min(...lngs);
-    const maxLng = Math.max(...lngs);
-    const latSpan = Math.max(1e-6, maxLat - minLat);
-    const lngSpan = Math.max(1e-6, maxLng - minLng);
-    const scaleX = (value: number) => padding + ((value - minLng) / lngSpan) * (width - padding * 2);
-    const scaleY = (value: number) => padding + ((maxLat - value) / latSpan) * (height - padding * 2);
-
-    ctx.beginPath();
-    points.forEach((pt, index) => {
-      const x = scaleX(pt.lng);
-      const y = scaleY(pt.lat);
-      if (index === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.fillStyle = "rgba(96, 165, 250, 0.35)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(37, 99, 235, 0.95)";
-    points.forEach((pt) => {
-      const x = scaleX(pt.lng);
-      const y = scaleY(pt.lat);
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    if (typeof canvas.toBlob !== "function") {
-      return canvas.toDataURL("image/png");
-    }
-    return await new Promise<string | null>((resolve) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          resolve(canvas.toDataURL("image/png"));
-          return;
+    const attachmentName: string | undefined = doc?.previewAttachmentName;
+    if (attachmentName) {
+      try {
+        const blob = await (localDB as any).getAttachment(id, attachmentName);
+        if (blob) {
+          return URL.createObjectURL(blob);
         }
-        const url = URL.createObjectURL(blob);
-        resolve(url);
-      }, "image/png");
-    });
+      } catch (err) {
+        console.warn("[database] getPolygonPreviewUrl attachment failed", err);
+      }
+    }
+
+    const previewBlob = await createPolygonPreviewBlob(points);
+    if (!previewBlob) return null;
+    let url: string | null = null;
+    try {
+      url = URL.createObjectURL(previewBlob);
+    } catch (err) {
+      console.warn("[database] getPolygonPreviewUrl objectURL failed", err);
+      return null;
+    }
+    try {
+      const latest = await safeLocalGet(id);
+      if (latest?._rev) {
+        await safeLocalPutAttachment(
+          id,
+          attachmentName || "preview.png",
+          latest._rev,
+          previewBlob,
+          previewBlob.type || "image/png",
+        );
+        const updated = await safeLocalGet(id);
+        updated.hasPreview = true;
+        updated.previewAttachmentName = attachmentName || "preview.png";
+        updated.updatedAt = new Date().toISOString();
+        await safeLocalPut(sanitizeForCouch(updated));
+      }
+    } catch (err) {
+      console.warn("[database] No se pudo almacenar preview generado al vuelo", err);
+    }
+    return url;
   } catch (error) {
     console.warn("[database] getPolygonPreviewUrl failed", error);
     return null;
   }
 }
 
-export async function deletePolygon(id: string) {
+export async function deletePolygon(id: string): Promise<PolygonDeleteResult> {
   await openDatabases();
-  if (!localDB) return { ok: false };
+  if (!localDB) throw new Error("DB no está lista");
   try {
     const doc = await safeLocalGet(id);
-    await (localDB as any).remove(doc);
+    await safeLocalRemove(doc);
   } catch (error) {
     console.warn("[database] deletePolygon local failed", error);
   }
-  try {
-    if (remoteDB) {
-      const remoteDoc = await (remoteDB as any).get(id);
-      await (remoteDB as any).remove(remoteDoc);
+
+  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const hasRemote = Boolean(remoteDB);
+  const canAttemptRemote = navigatorOnline && hasRemote;
+  const wasOffline = !navigatorOnline;
+
+  let remoteRemoved = false;
+  let remoteError: string | undefined;
+  let remotePath: PolygonDeleteResult["path"] = "local-only";
+
+  if (canAttemptRemote) {
+    try {
+      let remoteDoc: any = null;
+      try {
+        remoteDoc = await remoteDB!.get(id);
+      } catch (err: any) {
+        if (err?.status === 404) {
+          remoteRemoved = true;
+          remotePath = "remote";
+        } else {
+          remoteError = toErrorMessage(err);
+        }
+      }
+      if (remoteDoc) {
+        try {
+          await remoteDB!.remove(remoteDoc);
+          remoteRemoved = true;
+          remotePath = "remote";
+        } catch (err: any) {
+          remoteError = toErrorMessage(err);
+        }
+      }
+    } catch (err: any) {
+      remoteError = remoteError ?? toErrorMessage(err);
     }
-  } catch {}
-  return { ok: true };
+  } else if (wasOffline) {
+    console.warn(`[POLYGON] Eliminación remota pendiente por falta de conexión: ${id}`);
+  } else if (!hasRemote) {
+    remoteError = "remoteDB no inicializado";
+  }
+
+  if (!remoteRemoved && !wasOffline) {
+    try {
+      const payload: { _id: string; _rev?: string } = { _id: id };
+      try {
+        const adminDocRes = await fetch(`/api/admin/couch/polygons?id=${encodeURIComponent(id)}`, {
+          method: "GET",
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        const adminDoc = await adminDocRes.json().catch(() => ({}));
+        const full = adminDoc?.doc || adminDoc;
+        if (adminDocRes.ok && full?._rev) {
+          payload._rev = full._rev;
+        }
+      } catch (err) {
+        console.warn("[POLYGON] No se pudo obtener _rev via admin antes de DELETE", err);
+      }
+      const adminRes = await fetch("/api/admin/couch/polygons", {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (adminRes.ok) {
+        remoteRemoved = true;
+        remotePath = "remote-admin";
+        remoteError = undefined;
+      } else {
+        const detail = await adminRes.text().catch(() => "");
+        remoteError = remoteError ?? `DELETE admin ${adminRes.status} ${detail}`;
+      }
+    } catch (err) {
+      console.warn("[POLYGON] delete fallback admin failed", err);
+      remoteError = remoteError ?? toErrorMessage(err);
+    }
+  }
+
+  return {
+    ok: true,
+    path: remoteRemoved ? remotePath : "local-only",
+    remoteError: remoteRemoved ? undefined : remoteError,
+    wasOffline,
+  };
 }
 

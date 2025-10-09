@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import { moduleBMode } from "@/lib/permissions";
 import BackButton from "@/components/common/back-button";
 import { useEffect } from "react";
-import { PhotosTest } from "@/components/common/photos-test";
+import { PhotosTest } from "@/components/common/photos";
 
 export default function ModuleBPage() {
   const { user } = useAppSelector((s) => s.auth);

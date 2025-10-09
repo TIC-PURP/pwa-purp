@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { listFiles, saveFileDoc, getFileUrl, deleteFile, type FileDoc } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
+import { notify } from "@/lib/notify";
 
 /**
  * FileUploader es un componente reutilizable para cargar y listar archivos
@@ -185,7 +186,21 @@ const ownerEmail = propOwnerEmail ?? (user?.email || undefined);
           fileName: item.file.name,
           mimeType: item.file.type,
         });
-        if (result?._id) savedIds.add(item.id);
+        if (result.ok && result._id) {
+          savedIds.add(item.id);
+          if (result.path === "remote") {
+            notify.success("Archivo guardado en la nube.");
+          } else if (result.path === "remote-admin") {
+            notify.success("Archivo guardado en la nube (vía canal seguro).");
+          } else if (result.wasOffline) {
+            notify.info("Archivo guardado sin conexión. Se sincronizará al recuperar internet.");
+          } else {
+            notify.warn("Archivo guardado localmente. Intentaremos subirlo a la nube en segundo plano.");
+          }
+          if (result.remoteError && !result.wasOffline) {
+            console.warn("saveFileDoc remote warning:", result.remoteError);
+          }
+        }
       }
       setPending((prev) => prev.filter((item) => {
         const shouldKeep = !savedIds.has(item.id);
@@ -196,6 +211,7 @@ const ownerEmail = propOwnerEmail ?? (user?.email || undefined);
       onSaved?.();
     } catch (err) {
       console.error("Error al guardar archivos", err);
+      notify.error("No se pudieron guardar los archivos.");
       setErrorMsg("No se pudieron guardar todos los archivos. Inténtalo nuevamente.");
       setPending((prev) => prev.filter((item) => {
         const shouldKeep = !savedIds.has(item.id);
@@ -210,8 +226,25 @@ const ownerEmail = propOwnerEmail ?? (user?.email || undefined);
   // Eliminar un archivo guardado
   const onDelete = useCallback(async (id: string) => {
     if (readOnly || isSaving) return;
-    await deleteFile(id);
-    await refresh();
+    try {
+      const result = await deleteFile(id);
+      if (result.path === "remote") {
+        notify.success("Archivo eliminado de la nube.");
+      } else if (result.path === "remote-admin") {
+        notify.success("Archivo eliminado de la nube (vía canal seguro).");
+      } else if (result.wasOffline) {
+        notify.info("Archivo eliminado sin conexión. El borrado se sincronizará al volver internet.");
+      } else {
+        notify.warn("Archivo eliminado localmente. Intentaremos borrar en la nube.");
+      }
+      if (result.remoteError && !result.wasOffline) {
+        console.warn("deleteFile remote warning:", result.remoteError);
+      }
+      await refresh();
+    } catch (error) {
+      console.error("Error al eliminar archivo", error);
+      notify.error("No se pudo eliminar el archivo.");
+    }
   }, [readOnly, isSaving, refresh]);
 
   const hasPending = pending.length > 0;

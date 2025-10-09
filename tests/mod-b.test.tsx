@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import { PhotosTest } from "@/components/common/photos-test";
+import { PhotosTest } from "@/components/common/photos";
 import { deletePhoto, getPhotoThumbUrl, listPhotos, savePhoto } from "@/lib/database";
 import authReducer, { type AuthState } from "@/lib/store/authSlice";
 import type { User } from "@/lib/types";
@@ -11,6 +11,15 @@ jest.mock("@/lib/database", () => ({
   savePhoto: jest.fn(),
   getPhotoThumbUrl: jest.fn(),
   deletePhoto: jest.fn(),
+}));
+
+jest.mock("@/lib/notify", () => ({
+  notify: {
+    success: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
 }));
 
 const mockListPhotos = listPhotos as jest.MockedFunction<typeof listPhotos>;
@@ -116,6 +125,9 @@ describe("PhotosTest", () => {
     const file = new File(["contenido"], "nueva.jpg", { type: "image/jpeg" });
 
     fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const saveButton = await screen.findByRole("button", { name: /guardar 1 foto/i });
+    fireEvent.click(saveButton);
 
     await waitFor(() => expect(mockSavePhoto).toHaveBeenCalledWith(file, {
       owner: baseUser.id,

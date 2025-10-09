@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { listPhotos, savePhoto, getPhotoThumbUrl, deletePhoto } from "@/lib/database";
 import { useAppSelector } from "@/lib/hooks";
+import { notify } from "@/lib/notify";
 
 type PhotoDoc = {
   _id: string;
@@ -64,7 +65,10 @@ export function PhotosTest() {
     const map: Record<string, string> = {};
     for (const p of list) {
       try {
-        map[p._id] = await getPhotoThumbUrl(p._id);
+        const thumb = await getPhotoThumbUrl(p._id);
+        if (thumb) {
+          map[p._id] = thumb;
+        }
       } catch {}
     }
     setUrls((prev) => {
@@ -146,15 +150,28 @@ export function PhotosTest() {
     const saved = new Set<string>();
     for (const item of queue) {
       try {
-        await savePhoto(item.file, {
+        const result = await savePhoto(item.file, {
           owner: ownerId,
           ownerName,
           ownerEmail,
         });
         saved.add(item.id);
+        if (result.path === "remote") {
+          notify.success("Foto guardada en la nube.");
+        } else if (result.path === "remote-admin") {
+          notify.success("Foto guardada en la nube (vía canal seguro).");
+        } else if (result.wasOffline) {
+          notify.info("Foto guardada sin conexión. Se sincronizará automáticamente al volver el internet.");
+        } else {
+          notify.warn("Foto guardada localmente. Reintentaremos subirla a la nube en segundo plano.");
+        }
+        if (result.remoteError && !result.wasOffline) {
+          console.warn("savePhoto remote warning:", result.remoteError);
+        }
       } catch (error) {
         console.error("Error al guardar foto", error);
         setErrorMsg("No se pudieron guardar todas las fotos. Intenta nuevamente.");
+        notify.error("No se pudo guardar la foto en el dispositivo.");
       }
     }
     setPending((prev) => {
@@ -173,8 +190,25 @@ export function PhotosTest() {
   }, [ownerId, pending, ownerName, ownerEmail, refresh, revokeUrl]);
 
   const onDelete = useCallback(async (id: string) => {
-    await deletePhoto(id);
-    await refresh();
+    try {
+      const result = await deletePhoto(id);
+      if (result.path === "remote") {
+        notify.success("Foto eliminada de la nube.");
+      } else if (result.path === "remote-admin") {
+        notify.success("Foto eliminada de la nube (vía canal seguro).");
+      } else if (result.wasOffline) {
+        notify.info("Foto eliminada sin conexión. Se sincronizará el borrado cuando vuelva el internet.");
+      } else {
+        notify.warn("Foto eliminada localmente. Reintentaremos borrar en la nube.");
+      }
+      if (result.remoteError && !result.wasOffline) {
+        console.warn("deletePhoto remote warning:", result.remoteError);
+      }
+      await refresh();
+    } catch (error) {
+      console.error("Error al eliminar foto", error);
+      notify.error("No se pudo eliminar la foto.");
+    }
   }, [refresh]);
 
   const hasPending = pending.length > 0;
