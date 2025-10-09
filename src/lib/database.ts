@@ -1,6 +1,8 @@
 ﻿// src/lib/database.ts
 // CouchDB + PouchDB (offline-first) con writes LOCAL-FIRST y login via /couchdb/_session
 
+import { isNavigatorOnline } from "./network";
+
 const isClient = typeof window !== "undefined";
 
 let PouchDB: any = null;
@@ -714,7 +716,7 @@ export async function cleanupUserDocs(): Promise<number> {
 export async function createUser(data: any) {
   await openDatabases();
   const doc = buildUserDocFromData(data);
-  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+  const online = isNavigatorOnline() && remoteDB;
 
   const sanitizedDoc = sanitizeForCouch(doc);
 
@@ -756,7 +758,7 @@ export async function createUser(data: any) {
   await localDB.put(toLocal); // LOCAL ONLY. La replicacion lo sube.
   // If online, still try to create _users auth so the user can login immediately
   try {
-    const online2 = typeof navigator !== "undefined" && navigator.onLine;
+    const online2 = isNavigatorOnline();
     if (online2) {
       const roles = [doc.role].filter(Boolean) as string[];
       await upsertRemoteAuthUser({
@@ -850,7 +852,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
     updatedAt: new Date().toISOString(),
   } as any;
 
-  const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+  const online = isNavigatorOnline() && remoteDB;
 
   const syncAuthAccount = async (previous: any, current: any) => {
     try {
@@ -981,7 +983,7 @@ export async function updateUser(idOrPatch: any, maybePatch?: any) {
   doc.updatedAt = new Date().toISOString();
   await localDB.put(sanitizeForCouch(doc)); // << LOCAL ONLY
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine;
+    const online = isNavigatorOnline();
     if (online) await deleteRemoteAuthUser(doc.email || doc.name);
   } catch {}
   return sanitizeForCouch(doc);
@@ -1058,7 +1060,7 @@ export async function hardDeleteUser(idOrKey: any): Promise<boolean> {
   // Best-effort: remove CouchDB _users account before deleting local doc
   try {
     await openDatabases();
-    const online = typeof navigator !== "undefined" && navigator.onLine;
+    const online = isNavigatorOnline();
     if (online) {
       try {
         let email = "";
@@ -1199,7 +1201,7 @@ export async function saveUserAvatar(
 
   // Best-effort: subir a remoto si hay internet
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    const online = isNavigatorOnline() && remoteDB;
     if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (!rdoc) {
@@ -1258,7 +1260,7 @@ export async function deleteUserAvatar(email: string) {
     await localDB.put(sanitizeForCouch(latest));
   } catch {}
   try {
-    const online = typeof navigator !== "undefined" && navigator.onLine && remoteDB;
+    const online = isNavigatorOnline() && remoteDB;
     if (online) {
       let rdoc = await remoteDB.get(_id).catch(() => null);
       if (rdoc) {
@@ -1578,7 +1580,7 @@ export async function savePhoto(file: Blob, meta: PhotoMeta = {}): Promise<Photo
   let remoteRevForFallback: string | undefined;
   let remoteError: string | undefined;
   let remotePath: PhotoSaveResult["path"] = "local-only";
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -1746,7 +1748,7 @@ export async function deletePhoto(id: string): Promise<PhotoDeleteResult> {
     await safeLocalRemove(doc);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2042,7 +2044,7 @@ export async function saveFileDoc(file: Blob, meta: FileMeta): Promise<FileSaveR
   let remotePath: FileSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2181,7 +2183,7 @@ export async function deleteFile(id: string): Promise<FileDeleteResult> {
     console.warn("[database] deleteFile local failed", error);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2528,7 +2530,7 @@ export async function savePolygonDoc(points: PolygonPoint[], meta: PolygonMeta):
   let remotePath: PolygonSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2685,7 +2687,7 @@ export async function updatePolygonDoc(
   let remotePath: PolygonSaveResult["path"] = "local-only";
   let remoteError: string | undefined;
   let remoteRevForFallback: string | undefined;
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
@@ -2870,7 +2872,7 @@ export async function deletePolygon(id: string): Promise<PolygonDeleteResult> {
     console.warn("[database] deletePolygon local failed", error);
   }
 
-  const navigatorOnline = typeof navigator !== "undefined" ? navigator.onLine : false;
+  const navigatorOnline = isNavigatorOnline();
   const hasRemote = Boolean(remoteDB);
   const canAttemptRemote = navigatorOnline && hasRemote;
   const wasOffline = !navigatorOnline;
