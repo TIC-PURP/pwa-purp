@@ -41,7 +41,6 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     "/mod-d",
     "/users",
     "/account",
-    "/sentry-example-page",
   ];
 
   const warmRoutes = useCallback(async () => {

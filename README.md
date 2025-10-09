@@ -51,8 +51,7 @@ pwa-purp/
    │  ├─ page.tsx
    │  └─ api/            # Endpoints internos
    │     ├─ auth/login/route.ts
-   │     ├─ couch/[...path]/route.ts
-   │     └─ sentry-example-api/route.ts
+   │     └─ couch/[...path]/route.ts
    └─ components/        # Componentes reutilizables
       ├─ ErrorBoundary.tsx
       ├─ InstallButton.tsx
@@ -91,7 +90,7 @@ pwa-purp/
 
 ### Lógica del Proyecto
 - src/app/: Sistema de rutas (App Router de Next.js).
-  - api/: Endpoints de autenticación, conexión con CouchDB y ejemplo de Sentry.
+  - api/: Endpoints de autenticación y conexión con CouchDB.
   - auth/login/page.tsx: Vista de login.
   - principal/page.tsx: Vista principal de la app.
   - users/page.tsx: Gestión de usuarios.
