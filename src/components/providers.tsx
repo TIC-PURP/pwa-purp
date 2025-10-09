@@ -9,6 +9,7 @@ import { store } from "@/lib/store";
 import { useAppDispatch, useAppSelector } from "@/lib/hooks";
 import { loadUserFromStorage, setUser } from "@/lib/store/authSlice";
 import { notify } from "@/lib/notify";
+import { isNavigatorOnline } from "@/lib/network";
 import {
   startSync,
   loginOnlineToCouchDB,
@@ -109,7 +110,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
   // Si hay sesion guardada y hay red  renovar cookie y arrancar sync
   useEffect(() => {
     (async () => {
-      if (user && typeof navigator !== "undefined" && navigator.onLine) {
+      if (user && isNavigatorOnline()) {
         // Evitar reintentos duplicados en dev/HMR: usar ref por identidad de usuario
         // @ts-ignore
         if (!(window as any).__lastLoginUserId) (window as any).__lastLoginUserId = null;
@@ -239,7 +240,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
 
     // Prefetch dynamic modules when authenticated and online
   useEffect(() => {
-    if (isAuthenticated && typeof navigator !== "undefined" && navigator.onLine) {
+    if (isAuthenticated && isNavigatorOnline()) {
       ROUTES_TO_WARM.forEach((route) => {
         try {
           router.prefetch(route);

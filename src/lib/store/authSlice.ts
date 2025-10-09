@@ -11,6 +11,7 @@ import {
   guardarUsuarioOffline,
   findUserByEmail,
 } from "../database";
+import { isNavigatorOffline } from "../network";
 
 export interface AuthState {
   user: User | null;
@@ -90,7 +91,7 @@ export const loginUser = createAsyncThunk<
 >("auth/login", async ({ email, password }, { rejectWithValue }) => {
   try {
     // Si no hay conexión, intentar autenticación local (offline-first)
-    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+    const isOffline = isNavigatorOffline();
     if (isOffline) {
       const local = await authenticateUser(email, password);
       if (!local) {

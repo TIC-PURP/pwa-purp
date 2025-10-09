@@ -9,6 +9,7 @@ import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAppSelector } from "@/lib/hooks";
 import { LoginForm } from "@/components/auth/login-form";
+import { isNavigatorOffline } from "@/lib/network";
 
 interface RouteGuardProps {
   children: React.ReactNode;
@@ -24,7 +25,7 @@ export function RouteGuard({
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAppSelector((s) => s.auth);
 
-  const offline = typeof navigator !== "undefined" ? !navigator.onLine : false;
+  const offline = isNavigatorOffline();
 
   const lacksAuthOrRole = useMemo(
     () => !isAuthenticated || (requiredRole && user?.role !== requiredRole),

@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 // Importar solo notify para evitar duplicados de estilos
 import { notify } from "@/lib/notify";
+import { isNavigatorOnline } from "@/lib/network";
 import { RouteGuard } from "@/components/auth/route-guard";
 import { Navbar } from "@/components/layout/navbar";
 import { UserForm } from "@/components/users/user-form";
@@ -239,7 +240,7 @@ export default function UsersPage() {
           deletingUser.email || deletingUser._id || deletingUser.id,
         );
         if (ok) {
-          if (typeof navigator !== "undefined" && navigator.onLine) {
+          if (isNavigatorOnline()) {
             notify.error("Usuario eliminado para siempre");
           } else {
             notify.info(
