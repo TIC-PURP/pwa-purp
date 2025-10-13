@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const maxBodySize = "50mb";
 export const maxDuration = 60;
 
 const knownDbNames = new Set<string>();
