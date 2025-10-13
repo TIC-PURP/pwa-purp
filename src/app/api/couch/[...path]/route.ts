@@ -3,6 +3,33 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+export const maxBodySize = "50mb";
+export const maxDuration = 60;
+
+const knownDbNames = new Set<string>();
+const dbEnvCandidates = [
+  process.env.COUCHDB_DB,
+  process.env.COUCHDB_DB_PHOTOS,
+  process.env.COUCHDB_DEFAULT_DB,
+  process.env.COUCH_DATABASE,
+  process.env.COUCH_DB,
+];
+for (const candidate of dbEnvCandidates) {
+  const value = candidate?.trim();
+  if (value) knownDbNames.add(value);
+}
+const publicDbUrl = process.env.NEXT_PUBLIC_COUCHDB_URL;
+if (publicDbUrl) {
+  try {
+    const url = new URL(publicDbUrl.trim());
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1];
+    if (last) knownDbNames.add(last);
+  } catch {
+    // ignore parse errors
+  }
+}
+
 const hopByHopHeaders = new Set([
   "connection",
   "keep-alive",
@@ -14,7 +41,12 @@ const hopByHopHeaders = new Set([
   "upgrade",
 ]);
 
-function resolveCouchBase(): string | null {
+function isKnownDbName(value?: string | null) {
+  if (!value) return false;
+  return knownDbNames.has(value.trim());
+}
+
+function resolveCouchBase(requestPath: string[]): string | null {
   const candidates = [
     process.env.COUCH_HOST,
     process.env.COUCHDB_HOST,
@@ -24,16 +56,41 @@ function resolveCouchBase(): string | null {
   ];
   for (const raw of candidates) {
     if (!raw) continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
     try {
-      const url = new URL(raw);
-      if (url.protocol && url.host) {
-        return `${url.protocol}//${url.host}`;
+      const url = new URL(trimmed);
+      if (!url.protocol || !url.host) continue;
+
+      const origin = `${url.protocol}//${url.host}`;
+      const pathname = url.pathname.replace(/\/+$/, "");
+      if (!pathname) return origin;
+
+      const pathSegments = pathname.split("/").filter(Boolean);
+      if (pathSegments.length === 0) {
+        return origin;
       }
+
+      const requestFirst = requestPath[0];
+      if (requestFirst) {
+        const lastSegment = pathSegments[pathSegments.length - 1];
+        if (requestFirst === lastSegment) {
+          pathSegments.pop();
+        } else if (requestFirst.startsWith("_")) {
+          const shouldDropLast = pathSegments.length > 1 || isKnownDbName(lastSegment);
+          if (shouldDropLast) {
+            pathSegments.pop();
+          }
+        }
+      }
+
+      const prefix = pathSegments.length ? `/${pathSegments.join("/")}` : "";
+      return `${origin}${prefix}`;
     } catch {
       // Ignore parse errors and try the next candidate.
     }
-    if (/^https?:\/\//i.test(raw)) {
-      return raw.replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed.replace(/\/+$/, "");
     }
   }
   return null;
@@ -64,7 +121,7 @@ function redactCookie(value?: string | null) {
 }
 
 async function proxy(req: NextRequest, path: string[]) {
-  const targetBase = resolveCouchBase();
+  const targetBase = resolveCouchBase(path);
   if (!targetBase) {
     console.error(
       "[couch-proxy] Missing CouchDB host env (expected COUCH_HOST / COUCHDB_URL / NEXT_PUBLIC_COUCHDB_URL)",
@@ -185,4 +242,3 @@ export function DELETE(req: NextRequest, { params }: { params: { path?: string[]
 export function PATCH(req: NextRequest, { params }: { params: { path?: string[] } }) {
   return proxy(req, Array.isArray(params?.path) ? params!.path : []);
 }
-
